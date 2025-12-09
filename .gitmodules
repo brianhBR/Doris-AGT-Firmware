@@ -1,0 +1,3 @@
+[submodule "SparkFun_Artemis_Global_Tracker"]
+	path = SparkFun_Artemis_Global_Tracker
+	url = https://github.com/sparkfun/SparkFun_Artemis_Global_Tracker.git
