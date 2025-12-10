@@ -44,7 +44,52 @@ Updated firmware and documentation to reflect the oceanographic drop camera depl
 - Adjacent pins for simpler wiring
 - No conflicts with other systems
 
-### 3. Documentation Updates ✅
+### 3. Meshtastic Protocol Correction ✅
+**Issue:** Original implementation incorrectly used AT commands for Meshtastic
+**Resolution:** Updated to use TEXT mode (TEXTMSG) protocol
+
+**Changes Made:**
+- **File**: `src/modules/meshtastic_interface.cpp`
+  - Removed all AT command code (`AT+SEND=`, `AT+RECV`, etc.)
+  - Implemented simple text-based protocol using `println()`
+  - Added new functions: `sendState()`, `sendAlert()`
+  - Updated message handling for incoming mesh messages
+  - Added detailed configuration instructions in comments
+
+- **File**: `include/modules/meshtastic_interface.h`
+  - Added protocol documentation in header
+  - Added function declarations for new functions
+  - Documented message format standards
+
+- **New File**: `MESHTASTIC_UPDATE.md`
+  - Complete protocol explanation
+  - RAK4603 configuration instructions
+  - Message format standards
+  - Testing procedures
+
+**RAK4603 Configuration Required:**
+RAK4603 must be pre-configured via Meshtastic CLI:
+```bash
+meshtastic --set serial.mode TEXTMSG
+meshtastic --set serial.enabled true
+meshtastic --set serial.baud BAUD_115200
+meshtastic --commit
+```
+
+**Message Formats:**
+- Position: `POS:<lat>,<lon>,<alt>m,<sats>sat`
+- State: `STATE:<state>,<time>s`
+- Telemetry: `TELEM:V=<volts>V,I=<amps>A`
+- Alert: `ALERT:<message>`
+
+**Benefits:**
+- Correct protocol (no more AT commands)
+- Simple implementation (no protobuf needed)
+- Human-readable messages
+- Easy debugging
+- Compatible with all Meshtastic devices
+
+### 4. Documentation Updates ✅
 
 #### README.md
 - Updated to reflect **oceanographic drop camera** application
@@ -84,6 +129,20 @@ Updated firmware and documentation to reflect the oceanographic drop camera depl
 - Removed I2C references for PSM
 - Updated relay descriptions for drop camera application
 
+**`docs/MESHTASTIC_PROTOCOL.md`** - Meshtastic communication protocol
+- Explains correct Protocol Buffer-based protocol
+- Documents why AT commands don't work
+- Recommends TEXT mode (TEXTMSG) as simplest solution
+- Provides RAK4603 configuration instructions
+- Message format recommendations and examples
+
+**`MESHTASTIC_UPDATE.md`** - Summary of Meshtastic changes
+- Problem description (AT commands incorrect)
+- Solution implementation (TEXT mode)
+- Code changes summary
+- Testing procedures
+- Message format standards
+
 ## Pin Allocation Summary
 
 | Function | GPIO | Header/Connection | Type |
@@ -119,8 +178,9 @@ Updated firmware and documentation to reflect the oceanographic drop camera depl
    - Current should read correctly with ADC calibration
 
 2. **Serial2 Test**: Verify Meshtastic communication on GPIO6/7
-   - Send AT commands to RAK4603
-   - Verify bidirectional communication
+   - RAK4603 must be in TEXTMSG mode first
+   - Send simple text messages to RAK4603
+   - Verify messages appear in Meshtastic app
    - Check on SPI header with multimeter/scope if needed
 
 3. **Relay Test**: Both relays should operate correctly
@@ -154,8 +214,18 @@ float voltage = (voltageADC / 16383.0) * 2.0 * 11.0;  // Apply calibration
 **Old**: GPIO0/GPIO1 (not accessible)
 **New**: GPIO6/GPIO7 (SPI header, easily accessible)
 
-### Serial Configuration
-No code changes needed in `meshtastic_interface.cpp` - just physical wiring change to SPI header.
+### Meshtastic Protocol
+**Old**: AT command-based (incorrect)
+```cpp
+MESHTASTIC_SERIAL.print("AT+SEND=");
+MESHTASTIC_SERIAL.println(message);
+```
+
+**New**: TEXT mode (correct)
+```cpp
+// Simply send text - RAK4603 handles mesh protocol
+MESHTASTIC_SERIAL.println("POS:37.422408,-122.084108,15.2m,12sat");
+```
 
 ## Known Limitations
 
