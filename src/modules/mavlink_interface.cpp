@@ -7,7 +7,6 @@
 
 // Include MAVLink v2 headers
 // Note: You may need to adjust the dialect based on your needs
-#define MAVLINK_USE_CONVENIENCE_FUNCTIONS
 #include <common/mavlink.h>
 
 // After MAVLink headers are included, set the runtime mavlink_system IDs
