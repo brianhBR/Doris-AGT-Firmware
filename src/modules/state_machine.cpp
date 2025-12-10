@@ -2,6 +2,7 @@
 #include "modules/relay_controller.h"
 #include "config.h"
 #include <Arduino.h>
+#include <RTC.h>
 
 // ============================================================================
 // STATE MACHINE IMPLEMENTATION
@@ -379,7 +380,7 @@ static void handleEmergencyState() {
 
 static void checkDropWeightTrigger() {
     // Check if it's time to release drop weight
-    extern APOLLOrtc myRTC;  // From main.cpp
+    extern Apollo3RTC &myRTC;  // From main.cpp (alias to platform `rtc`)
 
     if (dropWeightConfig.useAbsoluteTime) {
         // GMT mode - check RTC time

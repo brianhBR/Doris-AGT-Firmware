@@ -6,6 +6,7 @@
 // System states for LED indication
 enum LEDState {
     LED_STATE_BOOT,
+    LED_STATE_EMERGENCY,
     LED_STATE_GPS_SEARCH,
     LED_STATE_GPS_FIX,
     LED_STATE_IRIDIUM_TX,

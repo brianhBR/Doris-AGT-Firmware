@@ -43,8 +43,8 @@ bool IridiumManager_init(IridiumSBD* modem) {
     delay(1000);
 
     // Configure modem
-    modemPtr->attachConsole(Serial);
-    modemPtr->attachDiagnostics(Serial);
+    // The IridiumSBD library used here doesn't provide attachConsole/attachDiagnostics
+    // (those were present in other variants). Configure timeouts and power profile directly.
     modemPtr->setPowerProfile(IridiumSBD::DEFAULT_POWER_PROFILE);
     modemPtr->adjustSendReceiveTimeout(180);
 
@@ -181,7 +181,8 @@ bool IridiumManager_checkMessages(char* buffer, size_t* bufferSize) {
     delay(100);
 
     size_t rxBufferSize = *bufferSize;
-    int err = modemPtr->sendReceiveSBDText(nullptr, buffer, rxBufferSize);
+    // library expects a uint8_t* rx buffer
+    int err = modemPtr->sendReceiveSBDText(nullptr, (uint8_t*)buffer, rxBufferSize);
 
     if (IRIDIUM_SLEEP_ENABLED) {
         digitalWrite(IRIDIUM_SLEEP, LOW);

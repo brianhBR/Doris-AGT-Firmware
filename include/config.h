@@ -39,7 +39,7 @@
 // Serial1 - Iridium 9603N (pins 24/25: TX1/RX1)
 // Serial2 - Meshtastic RAK4603 (needs to be configured)
 
-#define MESHTASTIC_SERIAL    Serial2
+#define MESHTASTIC_SERIAL    Serial1
 #define IRIDIUM_SERIAL       Serial1
 #define DEBUG_SERIAL         Serial
 #define MAVLINK_SERIAL       Serial  // USB to Navigator

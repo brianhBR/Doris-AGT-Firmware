@@ -16,8 +16,7 @@
 #include <Wire.h>
 #include "config.h"
 
-// Core libraries
-#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+#include <SparkFun_u-blox_GNSS_v3.h>
 #include <IridiumSBD.h>
 #include <Adafruit_NeoPixel.h>
 #include <ArduinoJson.h>
@@ -41,7 +40,9 @@ Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // System configuration
 SystemConfig sysConfig;
-APOLLOrtc myRTC;
+// Use the platform-provided Apollo3 RTC instance via a reference named `myRTC`
+extern Apollo3RTC rtc; // declared in RTC.h
+Apollo3RTC &myRTC = rtc;
 
 // Timing variables
 unsigned long lastIridiumSend = 0;
@@ -52,15 +53,7 @@ unsigned long lastNeoPixelUpdate = 0;
 unsigned long lastStateStatus = 0;
 unsigned long bootTime = 0;
 
-// NeoPixel state tracking
-enum LEDState {
-    LED_STATE_BOOT,
-    LED_STATE_GPS_SEARCH,
-    LED_STATE_GPS_FIX,
-    LED_STATE_IRIDIUM_TX,
-    LED_STATE_ERROR,
-    LED_STATE_EMERGENCY
-};
+// NeoPixel state tracking is defined in `neopixel_controller.h`
 LEDState currentLEDState = LED_STATE_BOOT;
 
 // Function prototypes

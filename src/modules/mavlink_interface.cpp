@@ -2,10 +2,16 @@
 #include "config.h"
 #include <Arduino.h>
 
+// Platform glue for MAVLink (maps MAVLink UART helpers to our Serial)
+#include "mavlink_platform.h"
+
 // Include MAVLink v2 headers
 // Note: You may need to adjust the dialect based on your needs
 #define MAVLINK_USE_CONVENIENCE_FUNCTIONS
 #include <common/mavlink.h>
+
+// After MAVLink headers are included, set the runtime mavlink_system IDs
+// so MAVLink helper functions use the correct system/component ids.
 
 static bool initialized = false;
 static uint8_t systemId = MAVLINK_SYSTEM_ID;
@@ -16,6 +22,9 @@ void MAVLinkInterface_init() {
     // MAVLink communicates over USB Serial
     // Serial is already initialized in main setup
     Serial.println(F("MAVLink: Interface initialized"));
+    // Populate mavlink_system with configured IDs so MAVLink helpers use them
+    mavlink_system.sysid = MAVLINK_SYSTEM_ID;
+    mavlink_system.compid = MAVLINK_COMPONENT_ID;
     initialized = true;
 }
 
@@ -119,9 +128,9 @@ void MAVLinkInterface_sendStatus(float voltage, float current) {
     int8_t batteryRemaining = (int8_t)batteryPercent;
 
     // Battery status
-    int16_t voltages[10];  // Cell voltages (not available)
+    uint16_t voltages[10];  // Cell voltages (not available)
     for (int i = 0; i < 10; i++) {
-        voltages[i] = -1;  // Not available
+        voltages[i] = 0xFFFF;  // Not available indicator for MAVLink
     }
 
     mavlink_msg_battery_status_pack(
