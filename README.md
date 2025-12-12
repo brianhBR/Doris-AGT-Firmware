@@ -47,7 +47,8 @@ The AGT serves as the **communication and control hub**, handling:
 
 ## Quick Links
 
-- **[State Machine Architecture](docs/STATE_MACHINE.md)** - **START HERE** - Control system overview
+- **[Pinout Guide](docs/PINOUT_GUIDE.md)** - **START HERE** - Visual connection guide with board images
+- **[State Machine Architecture](docs/STATE_MACHINE.md)** - Control system overview
 - **[Mission Profile](docs/MISSION_PROFILE.md)** - Detailed deployment phases
 - **[BlueOS Integration](docs/BLUEOS_INTEGRATION.md)** - ArduPilot command interface
 - **[Wiring Diagram](docs/WIRING_DIAGRAM.md)** - Hardware connections
@@ -176,6 +177,7 @@ The NeoPixel LEDs indicate system state:
 
 ## Documentation
 
+- **[PINOUT_GUIDE.md](docs/PINOUT_GUIDE.md)** - Visual pinout guide with board images
 - [README_FIRMWARE.md](README_FIRMWARE.md) - Complete documentation
 - [QUICK_START.md](docs/QUICK_START.md) - Quick start guide
 - [WIRING_DIAGRAM.md](docs/WIRING_DIAGRAM.md) - Wiring instructions

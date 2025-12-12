@@ -10,12 +10,12 @@ Visual reference for connecting peripherals to the Doris AGT firmware.
 
 | Connection | Location | Pins | Notes |
 |------------|----------|------|-------|
-| **Meshtastic RAK4603** | J10 (Qwiic) | D39/D40 | UART0 on I2C pins |
-| **PSM Voltage** | GPIO Header | GPIO11 (AD11) | Analog input |
-| **PSM Current** | GPIO Header | GPIO12 (AD12) | Analog input |
-| **Relay 1 (Power)** | SPI Header | GPIO4 (CS1) | Navigator/Pi/Camera/Lights |
-| **Relay 2 (Drop Weight)** | SPI Header | GPIO35 (CS2) | Ballast release |
-| **NeoPixel Strip** | GPIO Header | GPIO32 (AD32) | 30 LED WS2812B strip |
+| **Meshtastic RAK4603** | J10 (Qwiic I2C Port 4) | D39/D40 | UART1 TX/RX on I2C pins |
+| **PSM Voltage** | Breakout Pins | GPIO11 (AD11) | Analog input |
+| **PSM Current** | Breakout Pins | GPIO12 (AD12) | Analog input |
+| **Relay 1 (Power)** | Breakout Pins | GPIO4 (D4) | Navigator/Pi/Camera/Lights |
+| **Relay 2 (Drop Weight)** | Breakout Pins | GPIO35 (AD35) | Ballast release |
+| **NeoPixel Strip** | Breakout Pins | GPIO32 (AD32) | 30 LED WS2812B strip |
 
 ## Detailed Connection Diagrams
 
@@ -23,35 +23,39 @@ Visual reference for connecting peripherals to the Doris AGT firmware.
 
 ### 1. Meshtastic RAK4603 Connection (J10 Qwiic Connector)
 
-**Location:** J10 - Top center of board (Qwiic connector)
+**Location:** J10 - Qwiic connector labeled "I2C Port 4" on the TOP_VIEW diagram
 
 ```
-J10 Qwiic Connector Pinout (looking at board):
+J10 Qwiic Connector Pinout (standard Qwiic 4-pin):
 ┌─────────────────┐
 │  1   2   3   4  │
-│ TX  RX  VCC GND │
+│SCL SDA VCC GND  │
+│(D39)(D40)       │
 └─────────────────┘
 ```
 
 **Wiring:**
 ```
-AGT J10          →  RAK4603
-────────────────────────────
-Pin 1 (D39/SCL4) →  RX
-Pin 2 (D40/SDA4) →  TX
-Pin 3 (3.3V)     →  VCC
-Pin 4 (GND)      →  GND
+AGT J10             →  RAK4603
+──────────────────────────────────
+Pin 1 D39 (SCL4)    →  RX (UART RX)
+Pin 2 D40 (SDA4)    →  TX (UART TX)
+Pin 3 (3.3V)        →  VCC
+Pin 4 (GND)         →  GND
 ```
 
 **Pin Functions:**
-- **D39** - UART0 TX (also SCL4 for I2C Port 4)
-- **D40** - UART0 RX (also SDA4 for I2C Port 4)
+- **GPIO39 (D39)** - Default: I2C Port 4 SCL | **Using as: UART1 TX**
+- **GPIO40 (D40)** - Default: I2C Port 4 SDA | **Using as: UART1 RX**
 - **3.3V** - Power supply (max 600mA from regulator)
 - **GND** - Common ground
 
+**Important:** We're repurposing the I2C Port 4 pins for UART1 serial communication. The Apollo3 chip allows these pins to function as either I2C or UART.
+
 **Configuration:**
 ```cpp
-UART MeshtasticSerial(0, 39, 40);  // UART0 on pins D39/D40
+// Create UART instance 0 using pins 39 (TX) and 40 (RX)
+UART MeshtasticSerial(0, 39, 40);  // UART0 instance, TX=39, RX=40
 MeshtasticSerial.begin(115200);
 ```
 
@@ -67,7 +71,7 @@ meshtastic --commit
 
 ### 2. Blue Robotics PSM (Power Sense Module)
 
-**Location:** GPIO header (right side of board)
+**Location:** Breakout pins on TOP_VIEW (multiple pins broken out on board edges)
 
 #### Voltage Sensing (GPIO11)
 
@@ -110,14 +114,14 @@ uint16_t currentADC = analogRead(PSM_CURRENT_PIN);
 
 ### 3. Relay Connections
 
-#### Relay 1 - Power Management (GPIO4)
+#### Relay 1 - Power Management (GPIO4/D4)
 
-**Location:** SPI header - CS1 pin
+**Location:** Breakout pin labeled "D4" on TOP_VIEW
 
 ```
-AGT SPI Header     Relay Module
+AGT Breakout       Relay Module
 ────────────────────────────────
-GPIO4 (CS1)    →  IN/Signal
+GPIO4 (D4)     →  IN/Signal
 3.3V or 5V     →  VCC
 GND            →  GND
 ```
@@ -130,22 +134,29 @@ GND            →  GND
 - RECOVERY: OFF
 - EMERGENCY: OFF
 
-#### Relay 2 - Drop Weight Release (GPIO35)
+#### Relay 2 - Drop Weight Release (GPIO35/AD35)
 
-**Location:** SPI header - CS2 pin
+**Location:** Breakout pin labeled "AD35" on TOP_VIEW
 
 ```
-AGT SPI Header     Relay Module
-────────────────────────────────
-GPIO35 (CS2)   →  IN/Signal
-3.3V or 5V     →  VCC
-GND            →  GND
+AGT Breakout       Relay Module       Electrolytic Release
+──────────────────────────────────────────────────────────
+GPIO35 (AD35)  →  IN/Signal
+Battery V+     →  VCC (relay coil)  →  Positive terminal
+GND            →  GND                →  Negative terminal
 ```
 
-**Controls:** Electrolytic/galvanic ballast release
-**Active:** HIGH (3.3V/5V triggers relay)
-**Duration:** Configured (typically 1200+ seconds for electrolytic release)
+**Controls:** Electrolytic/galvanic ballast release mechanism
+**Active:** HIGH (3.3V signal triggers relay)
+**Power Source:** Battery voltage (12-14.8V from 4S LiPo)
+**Duration:** Configured (typically 1200+ seconds / 20+ minutes for electrolytic dissolution)
 **Trigger:** Programmed time (GMT or delay) or emergency
+
+**Important:**
+- Relay coil powered by battery voltage (NOT 3.3V/5V)
+- GPIO35 provides 3.3V signal to trigger relay
+- Relay switches battery voltage to electrolytic release mechanism
+- Requires high-current relay suitable for extended activation
 
 **Configuration:**
 ```cpp
@@ -158,12 +169,12 @@ pinMode(RELAY_TIMED_EVENT, OUTPUT);
 
 ---
 
-### 4. NeoPixel LED Strip (GPIO32)
+### 4. NeoPixel LED Strip (GPIO32/AD32)
 
-**Location:** GPIO header - GPIO32/AD32
+**Location:** Breakout pin labeled "AD32" on TOP_VIEW
 
 ```
-AGT GPIO Header    WS2812B Strip
+AGT Breakout       WS2812B Strip
 ────────────────────────────────
 GPIO32 (AD32)  →  DIN (Data In)
 -              -  5V (external power)
@@ -194,39 +205,45 @@ Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 ## Complete Wiring Diagram
 
+**Reference the TOP_VIEW image above for exact pin locations**
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │         Artemis Global Tracker (Top View)                   │
 │                                                              │
 │  ┌─────────┐                               ┌──────────┐     │
-│  │   USB   │                               │ Antenna  │     │
-│  └────┬────┘                               └────┬─────┘     │
-│       │                                         │           │
-│  Navigator/Pi                              (Maxtena)        │
-│   (Serial)                                                  │
-│                                                              │
-│  ┌──────────────┐                    ┌──────────────┐       │
-│  │ J10 (Qwiic)  │                    │  SPI Header  │       │
-│  │              │                    │              │       │
-│  │ 1. D39 (TX)──┼───► RAK4603 RX    │ CS1 (GPIO4)──┼───► Relay 1 │
-│  │ 2. D40 (RX)──┼───► RAK4603 TX    │ CS2 (GPIO35)─┼───► Relay 2 │
-│  │ 3. 3.3V  ────┼───► VCC            │ MISO         │       │
-│  │ 4. GND   ────┼───► GND            │ MOSI         │       │
-│  └──────────────┘                    │ SCK          │       │
-│                                      └──────────────┘       │
-│  ┌──────────────────────────────────────────────┐           │
-│  │          GPIO Header (Right Side)            │           │
-│  │                                               │           │
-│  │  GPIO11 (AD11) ──► PSM Voltage Out           │           │
-│  │  GPIO12 (AD12) ──► PSM Current Out           │           │
-│  │  GPIO32 (AD32) ──► NeoPixel Data In          │           │
-│  │  GND           ──► Common Ground              │           │
-│  └──────────────────────────────────────────────┘           │
-│                                                              │
-│  Onboard Components:                                        │
-│  • GPS (ZOE-M8Q) - Internal, I2C                           │
-│  • Iridium (9603N) - Internal, Serial1                     │
-│  • MS8607 (Pressure/Humidity/Temp) - Internal, I2C        │
+│  │  USB-C  │                               │ Antenna  │     │
+│  └────┬────┘                               │   SMA    │     │
+│       │                                    └────┬─────┘     │
+│  Navigator/Pi                                  │           │
+│   (Serial/MAVLink)                        (Maxtena         │
+│                                            M1600HCT)        │
+│                                                             │
+│  ┌──────────────────────┐                                  │
+│  │ J10 (I2C Port 4)     │  Qwiic Connector                │
+│  │ Repurposed as UART1  │                                  │
+│  │                      │                                  │
+│  │ 1. D39 (SCL4/TX1)────┼───► RAK4603 RX                  │
+│  │ 2. D40 (SDA4/RX1)────┼───► RAK4603 TX                  │
+│  │ 3. 3.3V          ────┼───► VCC                          │
+│  │ 4. GND           ────┼───► GND                          │
+│  └──────────────────────┘                                  │
+│                                                             │
+│  Breakout Pins (see TOP_VIEW for locations):               │
+│  ┌───────────────────────────────────────┐                 │
+│  │  D4 (GPIO4)    ───► Relay 1 (Power)  │                 │
+│  │  AD35 (GPIO35) ───► Relay 2 (Drop)   │                 │
+│  │  AD11 (GPIO11) ◄─── PSM Voltage       │                 │
+│  │  AD12 (GPIO12) ◄─── PSM Current       │                 │
+│  │  AD32 (GPIO32) ───► NeoPixel Data     │                 │
+│  │  GND           ───  Common Ground     │                 │
+│  │  3.3V          ───  Power             │                 │
+│  └───────────────────────────────────────┘                 │
+│                                                             │
+│  Onboard Components (No External Wiring):                  │
+│  • GPS (ZOE-M8Q) - I2C Port 1                             │
+│  • Iridium (9603N) - Serial1 (D24/D25)                    │
+│  • MS8607 (PHT sensor) - I2C Port 1                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -234,41 +251,38 @@ Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 ## Physical Connector Locations
 
-### Top View Reference
+**All locations reference the TOP_VIEW image at the top of this document**
 
-Using the image above as reference:
+### Main Connectors on TOP_VIEW
 
-1. **USB-C** - Left edge, middle
-2. **Antenna SMA** - Right edge, upper
-3. **J10 (Qwiic)** - Top center (4-pin connector)
-4. **SPI Header** - Top right (6 pins)
-5. **GPIO Header** - Right side (multiple pins)
-6. **Battery JST** - Bottom left
+1. **USB-C Connector** - Left side of board
+2. **Antenna SMA Connector** - Right side of board
+3. **J10 (I2C Port 4 / Qwiic)** - Labeled on TOP_VIEW (4-pin Qwiic connector)
+4. **Battery JST Connector** - Labeled on TOP_VIEW
 
-### GPIO Header Pinout (Right Side)
+### Breakout Pins on TOP_VIEW
 
-```
-Looking at board from top, right edge:
+The TOP_VIEW image shows all breakout pins with labels. Key pins for this project:
 
-┌─────────┐
-│  GPIO2  │
-│  GPIO4  │  ← Relay 1 (also on SPI CS1)
-│  GPIO5  │
-│  GPIO6  │  (MISO - can use for custom)
-│  GPIO7  │  (MOSI - can use for custom)
-│  GPIO8  │  (SCL - I2C Port 1)
-│  GPIO9  │  (SDA - I2C Port 1)
-│  GPIO10 │  (Geofence)
-│  GPIO11 │  ← PSM Voltage
-│  GPIO12 │  ← PSM Current
-│  ...     │
-│  GPIO32 │  ← NeoPixel Data
-│  ...     │
-│  GPIO35 │  ← Relay 2 (also on SPI CS2)
-│  GND    │
-│  3.3V   │
-└─────────┘
-```
+**For Meshtastic:**
+- J10 connector (I2C Port 4): D39, D40, 3.3V, GND
+
+**For Relays:**
+- D4 (GPIO4) - Relay 1
+- AD35 (GPIO35) - Relay 2
+
+**For PSM:**
+- AD11 (GPIO11) - Voltage sensing
+- AD12 (GPIO12) - Current sensing
+
+**For NeoPixels:**
+- AD32 (GPIO32) - Data line
+
+**Power and Ground:**
+- Multiple GND pins available
+- Multiple 3.3V pins available
+
+**Note:** Refer to the TOP_VIEW diagram to locate the exact physical position of each labeled pin on the board.
 
 ---
 
@@ -281,8 +295,8 @@ Looking at board from top, right edge:
 | **Navigator/Pi** | USB-C | Via Relay 1 | MAVLink communication |
 | **RAK4603** | J10 Qwiic | 3.3V from J10 | Meshtastic mesh |
 | **PSM** | GPIO11, GPIO12 | Independent | Battery monitoring |
-| **Relay 1** | GPIO4 (CS1) | External 5V/12V | High-current relay |
-| **Relay 2** | GPIO35 (CS2) | External 5V/12V | Drop weight |
+| **Relay 1** | GPIO4 (D4) | External 5V/12V | High-current relay |
+| **Relay 2** | GPIO35 (AD35) | Battery voltage (12-14.8V) | Drop weight, extended activation |
 | **NeoPixels** | GPIO32 | External 5V | 30 LED strip |
 | **Antenna** | SMA | - | Maxtena M1600HCT |
 | **Battery** | JST | 4S LiPo or similar | Main power |
@@ -321,7 +335,11 @@ Looking at board from top, right edge:
 
 ⚠️ **Relay Power:**
 - Use proper relay modules rated for your load
-- Relay 1 must handle Navigator/Pi + Camera + Lights
+- Relay 1 must handle Navigator/Pi + Camera + Lights (typically 5V/12V)
+- **Relay 2 (Drop Weight) uses battery voltage** (12-14.8V from 4S LiPo)
+  - GPIO35 provides 3.3V trigger signal only
+  - Relay coil and load powered from main battery
+  - Must handle extended activation (20+ minutes)
 - Isolate high voltage/current loads from AGT
 
 ⚠️ **NeoPixel Power:**
