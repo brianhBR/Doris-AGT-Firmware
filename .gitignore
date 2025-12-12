@@ -55,3 +55,10 @@ build/
 
 # Logs
 *.log
+
+# Temporary files
+nul
+lib/meshtastic/temp_protos/
+
+# Documentation/reference files
+agt_schematic.pdf
