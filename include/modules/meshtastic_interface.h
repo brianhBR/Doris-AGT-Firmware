@@ -4,16 +4,22 @@
 #include "gps_manager.h"
 
 /*
- * Meshtastic RAK4603 Interface (TEXT MODE)
+ * Meshtastic RAK4603 Interface (PROTO MODE - Client API)
  *
- * RAK4603 must be pre-configured in TEXTMSG mode via Meshtastic CLI.
- * AGT sends simple text messages, RAK4603 handles mesh protocol.
+ * IMPORTANT: Configure RAK4603 in PROTO mode:
+ *   meshtastic --set serial.mode PROTO
+ *   meshtastic --commit
  *
- * Message formats:
- *   - Position: POS:<lat>,<lon>,<alt>m,<sats>sat
- *   - State: STATE:<state>,<time>s
- *   - Telemetry: TELEM:V=<volts>V,I=<amps>A
- *   - Alert: ALERT:<message>
+ * Uses the Meshtastic serial protocol with Protocol Buffers.
+ *
+ * Protocol:
+ *   - 4-byte header: [0x94, 0xc3, length_MSB, length_LSB]
+ *   - Followed by protobuf-encoded ToRadio/FromRadio message
+ *
+ * Position messages use POSITION_APP portnum and proper GPS coordinates.
+ * Text messages use TEXT_MESSAGE_APP portnum.
+ *
+ * Reference: https://meshtastic.org/docs/development/device/client-api/
  */
 
 // Initialize Meshtastic interface

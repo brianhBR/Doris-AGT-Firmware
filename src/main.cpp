@@ -35,7 +35,7 @@
 
 // Global objects
 SFE_UBLOX_GNSS myGPS;
-IridiumSBD modem(IRIDIUM_SERIAL, IRIDIUM_SLEEP);
+IridiumSBD modem(IRIDIUM_SERIAL, IRIDIUM_SLEEP, IRIDIUM_RI);  // Serial version on default pins
 Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // System configuration
@@ -157,6 +157,11 @@ void loop() {
 
     // Process commands from serial/MAVLink (ArduPilot commands)
     processSerialCommands();
+
+    // Process incoming MAVLink messages from ArduPilot
+    if (sysConfig.enableMAVLink) {
+        MAVLinkInterface_update();
+    }
 
     // Check emergency sensors (AGT autonomous emergency detection)
     if (StateMachine_getState() == STATE_MISSION) {

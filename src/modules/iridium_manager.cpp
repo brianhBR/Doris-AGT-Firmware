@@ -38,9 +38,8 @@ bool IridiumManager_init(IridiumSBD* modem) {
 
     Serial.println(F("Iridium: Supercap charged"));
 
-    // Initialize serial port
+    // Initialize Serial1 on default pins (D24=TX, D25=RX) for Iridium
     IRIDIUM_SERIAL.begin(IRIDIUM_BAUD);
-    delay(1000);
 
     // Configure modem
     // The IridiumSBD library used here doesn't provide attachConsole/attachDiagnostics

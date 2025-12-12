@@ -28,24 +28,26 @@
 #define PSM_VOLTAGE_PIN      11  // GPIO11 (AD11) - PSM voltage analog output
 #define PSM_CURRENT_PIN      12  // GPIO12 (AD12) - PSM current analog output
 
-// Meshtastic Serial2 pins (using SPI header breakout pins)
-#define MESHTASTIC_TX_PIN    6   // GPIO6 (MISO header, TX2 to RAK4603 RX)
-#define MESHTASTIC_RX_PIN    7   // GPIO7 (MOSI header, RX2 from RAK4603 TX)
+// Meshtastic Serial1 pins (using J10 Qwiic/I2C connector)
+// NOTE: J10 has D39/D40 which support UART1 TX/RX functionality
+// We remap Serial1 to these pins for Meshtastic (Iridium uses default D24/D25)
+#define MESHTASTIC_TX_PIN    39  // D39 (SCL4/UART1TX) on J10 to RAK4603 RX
+#define MESHTASTIC_RX_PIN    40  // D40 (SDA4/UART1RX) on J10 from RAK4603 TX
 
 // ============================================================================
 // SERIAL PORT DEFINITIONS
 // ============================================================================
 // Serial (USB) - Debug, Config, MAVLink to Navigator
-// Serial1 - Iridium 9603N (pins 24/25: TX1/RX1)
-// Serial2 - Meshtastic RAK4603 (needs to be configured)
+// Serial1 (UART1) - Iridium 9603N on default pins D24/D25
+// MeshtasticSerial (UART0) - Meshtastic RAK4603 on D39/D40 (J10 connector)
 
-#define MESHTASTIC_SERIAL    Serial1
-#define IRIDIUM_SERIAL       Serial1
+#define IRIDIUM_SERIAL       Serial1  // UART1 on default pins D24/D25
+// MeshtasticSerial is defined in meshtastic_interface.cpp as a Uart object on UART0
 #define DEBUG_SERIAL         Serial
 #define MAVLINK_SERIAL       Serial  // USB to Navigator
 
-#define MESHTASTIC_BAUD      115200
 #define IRIDIUM_BAUD         19200
+#define MESHTASTIC_BAUD      115200
 #define DEBUG_BAUD           115200
 #define MAVLINK_BAUD         57600
 

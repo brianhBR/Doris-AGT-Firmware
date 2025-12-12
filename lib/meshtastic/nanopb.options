@@ -1,0 +1,8 @@
+
+# Nanopb options for Meshtastic
+# Limits string and bytes field sizes for embedded systems
+
+*String max_size:64
+*bytes max_size:256
+Position.latitude_i type:FT_INT32
+Position.longitude_i type:FT_INT32
