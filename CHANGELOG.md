@@ -230,12 +230,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Archived Change Documents
 
-The following documents have been consolidated into this CHANGELOG:
-- `CHANGES_SUMMARY.md` - Initial PSM, Serial, and Meshtastic changes
-- `MESHTASTIC_UPDATE.md` - TEXT mode implementation
-- `MESHTASTIC_PROTOBUF_UPDATE.md` - PROTOBUF mode implementation
-- `SERIAL_PORT_CONFIGURATION.md` - Separate UART instances
-- `STATE_MACHINE_REFACTOR.md` - State machine architecture
+The following documents have been consolidated into this CHANGELOG and moved to the `archive/` folder:
+- [`archive/CHANGES_SUMMARY.md`](archive/CHANGES_SUMMARY.md) - Initial PSM, Serial, and Meshtastic changes
+- [`archive/MESHTASTIC_UPDATE.md`](archive/MESHTASTIC_UPDATE.md) - TEXT mode implementation
+- [`archive/MESHTASTIC_PROTOBUF_UPDATE.md`](archive/MESHTASTIC_PROTOBUF_UPDATE.md) - PROTOBUF mode implementation
+- [`archive/SERIAL_PORT_CONFIGURATION.md`](archive/SERIAL_PORT_CONFIGURATION.md) - Separate UART instances
+- [`archive/STATE_MACHINE_REFACTOR.md`](archive/STATE_MACHINE_REFACTOR.md) - State machine architecture
 
 These files remain in the repository for historical reference but are no longer actively updated.
 
