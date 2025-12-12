@@ -365,14 +365,18 @@ static void handleRecoveryState() {
 static void handleEmergencyState() {
     // Emergency: Drop weight released, nonessentials off
     // System is in safe state
-    // Can transition to RECOVERY when conditions stabilize
+    // Can transition to RECOVERY when drop weight release completes
 
-    // Emergency state typically transitions to RECOVERY automatically
-    // after emergency is handled
+    // Wait for drop weight relay to complete its electrolytic dissolution cycle
+    // before transitioning to recovery mode
 
     static bool autoTransitionDone = false;
-    if (!autoTransitionDone && status.timeInState > 30000) {  // 30 seconds after emergency
-        Serial.println(F("Emergency: Conditions stable, transitioning to Recovery"));
+
+    // Only transition after drop weight relay has completed
+    // This ensures the full 20+ minute electrolytic dissolution cycle finishes
+    if (!autoTransitionDone && !RelayController_isTimedEventActive()) {
+        // Relay has finished - drop weight should be fully released
+        Serial.println(F("Emergency: Drop weight release complete, transitioning to Recovery"));
         StateMachine_requestTransition(TRANSITION_EXIT_EMERGENCY);
         autoTransitionDone = true;
     }
