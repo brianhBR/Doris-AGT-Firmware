@@ -12,8 +12,8 @@ void RelayController_setPowerManagement(bool state);
 // Get power management relay state
 bool RelayController_getPowerManagement();
 
-// Trigger timed event relay for specified duration (milliseconds)
-void RelayController_triggerTimedEvent(uint16_t durationMs);
+// Trigger timed event relay for specified duration (seconds)
+void RelayController_triggerTimedEvent(uint32_t durationSeconds);
 
 // Check if timed event is currently active
 bool RelayController_isTimedEventActive();

@@ -23,7 +23,7 @@ void ConfigManager_setIridiumInterval(uint32_t intervalMs);
 void ConfigManager_setMeshtasticInterval(uint32_t intervalMs);
 void ConfigManager_setMAVLinkInterval(uint32_t intervalMs);
 void ConfigManager_enableFeature(const char* feature, bool enable);
-void ConfigManager_setTimedEvent(bool useGMT, uint32_t triggerTime, uint16_t durationMs);
+void ConfigManager_setTimedEvent(bool useGMT, uint32_t triggerTime, uint32_t durationSeconds);
 void ConfigManager_setPowerSaveVoltage(float voltage);
 
 #endif // CONFIG_MANAGER_H

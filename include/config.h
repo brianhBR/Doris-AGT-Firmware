@@ -117,7 +117,9 @@ struct TimedEventConfig {
     bool enabled;
     bool useAbsoluteTime;    // true = GMT time, false = delay from boot
     uint32_t triggerTime;    // Unix timestamp (GMT) or seconds from boot
-    uint16_t durationMs;     // How long to activate relay (milliseconds)
+    uint32_t durationSeconds; // How long to activate relay (seconds)
+                              // For drop weight: needs >20 minutes (1200+ seconds)
+                              // Uses electrolytic/galvanic action to dissolve link
 };
 
 // ============================================================================

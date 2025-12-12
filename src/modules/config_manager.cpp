@@ -69,7 +69,7 @@ void ConfigManager_setDefaults(SystemConfig* config) {
     config->timedEvent.enabled = false;
     config->timedEvent.useAbsoluteTime = false;
     config->timedEvent.triggerTime = 0;
-    config->timedEvent.durationMs = 1000;
+    config->timedEvent.durationSeconds = 1500;  // Default 25 minutes for electrolytic release
 
     // Power management
     config->powerSaveVoltage = DEFAULT_POWER_SAVE_VOLTAGE;
@@ -112,8 +112,8 @@ void ConfigManager_printConfig(SystemConfig* config) {
             Serial.print(F("s from boot"));
         }
         Serial.print(F(", Duration: "));
-        Serial.print(config->timedEvent.durationMs);
-        Serial.println(F("ms"));
+        Serial.print(config->timedEvent.durationSeconds);
+        Serial.println(F("s"));
     } else {
         Serial.println(F("DISABLED"));
     }
@@ -254,11 +254,11 @@ void ConfigManager_enableFeature(const char* feature, bool enable) {
     Serial.println(enable ? F("enabled") : F("disabled"));
 }
 
-void ConfigManager_setTimedEvent(bool useGMT, uint32_t triggerTime, uint16_t durationMs) {
+void ConfigManager_setTimedEvent(bool useGMT, uint32_t triggerTime, uint32_t durationSeconds) {
     sysConfig.timedEvent.enabled = true;
     sysConfig.timedEvent.useAbsoluteTime = useGMT;
     sysConfig.timedEvent.triggerTime = triggerTime;
-    sysConfig.timedEvent.durationMs = durationMs;
+    sysConfig.timedEvent.durationSeconds = durationSeconds;
 
     Serial.print(F("Config: Timed event set - "));
     if (useGMT) {
@@ -270,8 +270,8 @@ void ConfigManager_setTimedEvent(bool useGMT, uint32_t triggerTime, uint16_t dur
         Serial.print(F("s from boot"));
     }
     Serial.print(F(", Duration: "));
-    Serial.print(durationMs);
-    Serial.println(F("ms"));
+    Serial.print(durationSeconds);
+    Serial.println(F("s"));
 }
 
 void ConfigManager_setPowerSaveVoltage(float voltage) {

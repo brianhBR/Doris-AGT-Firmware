@@ -56,7 +56,7 @@ void StateMachine_init() {
     dropWeightConfig.enabled = false;
     dropWeightConfig.useAbsoluteTime = false;
     dropWeightConfig.triggerTime = 0;
-    dropWeightConfig.durationMs = 5000;  // Default 5 second release
+    dropWeightConfig.durationSeconds = 1500;  // Default 25 minutes (1500s) for electrolytic release
 
     // Ensure relays in safe state
     RelayController_setPowerManagement(true);  // Nonessentials ON initially
@@ -172,11 +172,11 @@ bool StateMachine_isEmergency() {
     return (status.currentState == STATE_EMERGENCY);
 }
 
-void StateMachine_armDropWeight(bool useGMT, uint32_t triggerTime, uint16_t durationMs) {
+void StateMachine_armDropWeight(bool useGMT, uint32_t triggerTime, uint32_t durationSeconds) {
     dropWeightConfig.enabled = true;
     dropWeightConfig.useAbsoluteTime = useGMT;
     dropWeightConfig.triggerTime = triggerTime;
-    dropWeightConfig.durationMs = durationMs;
+    dropWeightConfig.durationSeconds = durationSeconds;
     status.dropWeightArmed = true;
 
     Serial.println(F("State Machine: Drop weight ARMED"));
@@ -185,8 +185,8 @@ void StateMachine_armDropWeight(bool useGMT, uint32_t triggerTime, uint16_t dura
     Serial.print(F("  Trigger: "));
     Serial.println(triggerTime);
     Serial.print(F("  Duration: "));
-    Serial.print(durationMs);
-    Serial.println(F("ms"));
+    Serial.print(durationSeconds);
+    Serial.println(F("s"));
 }
 
 void StateMachine_releaseDropWeight() {
@@ -196,7 +196,7 @@ void StateMachine_releaseDropWeight() {
     }
 
     Serial.println(F("State Machine: RELEASING DROP WEIGHT NOW"));
-    RelayController_triggerTimedEvent(dropWeightConfig.durationMs);
+    RelayController_triggerTimedEvent(dropWeightConfig.durationSeconds);
     status.dropWeightReleased = true;
     status.dropWeightArmed = false;
 }

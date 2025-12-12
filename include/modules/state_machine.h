@@ -73,7 +73,7 @@ bool StateMachine_triggerEmergency(EmergencySource source);
 bool StateMachine_isEmergency();
 
 // Arm drop weight for timed release
-void StateMachine_armDropWeight(bool useGMT, uint32_t triggerTime, uint16_t durationMs);
+void StateMachine_armDropWeight(bool useGMT, uint32_t triggerTime, uint32_t durationSeconds);
 
 // Manually trigger drop weight (immediate release)
 void StateMachine_releaseDropWeight();

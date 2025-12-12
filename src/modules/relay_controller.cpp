@@ -5,7 +5,7 @@
 static bool powerMgmtState = false;
 static bool timedEventActive = false;
 static unsigned long timedEventStartTime = 0;
-static uint16_t timedEventDuration = 0;
+static uint32_t timedEventDurationSeconds = 0;
 
 void RelayController_init() {
     // Initialize relay pins as outputs
@@ -39,19 +39,19 @@ bool RelayController_getPowerManagement() {
     return powerMgmtState;
 }
 
-void RelayController_triggerTimedEvent(uint16_t durationMs) {
+void RelayController_triggerTimedEvent(uint32_t durationSeconds) {
     if (timedEventActive) {
         Serial.println(F("Relay: Timed event already active!"));
         return;
     }
 
     Serial.print(F("Relay: Triggering timed event for "));
-    Serial.print(durationMs);
-    Serial.println(F("ms"));
+    Serial.print(durationSeconds);
+    Serial.println(F("s"));
 
     timedEventActive = true;
     timedEventStartTime = millis();
-    timedEventDuration = durationMs;
+    timedEventDurationSeconds = durationSeconds;
 
     // Activate relay
     if (RELAY_ACTIVE_HIGH) {
@@ -69,9 +69,10 @@ void RelayController_update() {
     // Check if timed event should be deactivated
     if (timedEventActive) {
         unsigned long currentMillis = millis();
-        unsigned long elapsed = currentMillis - timedEventStartTime;
+        unsigned long elapsedMs = currentMillis - timedEventStartTime;
+        unsigned long elapsedSeconds = elapsedMs / 1000;
 
-        if (elapsed >= timedEventDuration) {
+        if (elapsedSeconds >= timedEventDurationSeconds) {
             // Deactivate timed event relay
             if (RELAY_ACTIVE_HIGH) {
                 digitalWrite(RELAY_TIMED_EVENT, LOW);
