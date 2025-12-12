@@ -1,5 +1,8 @@
 # Meshtastic Protobuf Protocol Update
 
+> **⚠️ ARCHIVED**: This document has been consolidated into [CHANGELOG.md](CHANGELOG.md).
+> Please refer to the CHANGELOG for current project history and changes.
+
 ## Summary
 
 Updated Meshtastic interface from **TEXT mode** to **PROTOBUF mode (Client API)** to properly send GPS position coordinates using the official Meshtastic protocol.

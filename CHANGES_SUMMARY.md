@@ -1,5 +1,8 @@
 # Changes Summary - Oceanographic Drop Camera Configuration
 
+> **⚠️ ARCHIVED**: This document has been consolidated into [CHANGELOG.md](CHANGELOG.md).
+> Please refer to the CHANGELOG for current project history and changes.
+
 ## Overview
 Updated firmware and documentation to reflect the oceanographic drop camera deployment scenario and corrected hardware interface specifications.
 

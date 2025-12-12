@@ -1,5 +1,9 @@
 # State Machine Refactor Summary
 
+> **⚠️ ARCHIVED**: This document has been consolidated into [CHANGELOG.md](CHANGELOG.md).
+> Please refer to the CHANGELOG for current project history and changes.
+> For current state machine documentation, see [docs/STATE_MACHINE.md](docs/STATE_MACHINE.md).
+
 ## Overview
 
 Successfully refactored the AGT firmware from a linear control flow to a **robust state machine architecture** where **ArduPilot/Navigator is the primary decision maker**.

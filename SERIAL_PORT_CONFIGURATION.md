@@ -1,5 +1,9 @@
 # Serial Port Configuration - Artemis Global Tracker
 
+> **⚠️ ARCHIVED**: This document has been consolidated into [CHANGELOG.md](CHANGELOG.md).
+> Please refer to the CHANGELOG for current project history and changes.
+> This document remains for technical reference.
+
 ## Overview
 
 The Artemis Global Tracker uses **separate UART instances** for Iridium and Meshtastic:

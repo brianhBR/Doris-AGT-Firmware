@@ -1,5 +1,9 @@
 # Meshtastic Interface Update
 
+> **⚠️ ARCHIVED**: This document has been consolidated into [CHANGELOG.md](CHANGELOG.md).
+> Please refer to the CHANGELOG for current project history and changes.
+> **Note**: This TEXT mode implementation was superseded by PROTOBUF mode (see CHANGELOG v0.1.0).
+
 ## Summary
 
 Updated Meshtastic RAK4603 communication from **incorrect AT command protocol** to **correct TEXT mode (TEXTMSG)**.

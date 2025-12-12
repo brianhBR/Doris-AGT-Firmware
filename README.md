@@ -179,6 +179,7 @@ The NeoPixel LEDs indicate system state:
 - [README_FIRMWARE.md](README_FIRMWARE.md) - Complete documentation
 - [QUICK_START.md](docs/QUICK_START.md) - Quick start guide
 - [WIRING_DIAGRAM.md](docs/WIRING_DIAGRAM.md) - Wiring instructions
+- [CHANGELOG.md](CHANGELOG.md) - Project history and version changes
 
 ## License
 
