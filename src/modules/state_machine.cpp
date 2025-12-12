@@ -365,17 +365,24 @@ static void handleRecoveryState() {
 static void handleEmergencyState() {
     // Emergency: Drop weight released, nonessentials off
     // System is in safe state
-    // Can transition to RECOVERY when drop weight release completes
+    // Can transition to RECOVERY when vehicle surfaces
 
-    // Wait for drop weight relay to complete its electrolytic dissolution cycle
-    // before transitioning to recovery mode
+    // Transition to recovery when EITHER condition is met:
+    // 1. GPS fix established (confirms vehicle is on surface) - transition immediately
+    // 2. Drop weight relay completes (ensures full electrolytic dissolution) - transition after timer
 
     static bool autoTransitionDone = false;
 
-    // Only transition after drop weight relay has completed
-    // This ensures the full 20+ minute electrolytic dissolution cycle finishes
-    if (!autoTransitionDone && !RelayController_isTimedEventActive()) {
-        // Relay has finished - drop weight should be fully released
+    extern bool GPSManager_hasFix();
+
+    // Check for GPS fix (vehicle on surface)
+    if (!autoTransitionDone && GPSManager_hasFix()) {
+        Serial.println(F("Emergency: Surface confirmed (GPS fix), transitioning to Recovery"));
+        StateMachine_requestTransition(TRANSITION_EXIT_EMERGENCY);
+        autoTransitionDone = true;
+    }
+    // Otherwise wait for drop weight relay to complete
+    else if (!autoTransitionDone && !RelayController_isTimedEventActive()) {
         Serial.println(F("Emergency: Drop weight release complete, transitioning to Recovery"));
         StateMachine_requestTransition(TRANSITION_EXIT_EMERGENCY);
         autoTransitionDone = true;
