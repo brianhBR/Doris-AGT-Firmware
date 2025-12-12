@@ -9,8 +9,11 @@ static unsigned long lastFixAttempt = 0;
 bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
     gpsPtr = gps;
 
-    // Enable GNSS power
-    pinMode(GNSS_EN, OUTPUT);
+    // Enable GNSS power - configure as open-drain output (per SparkFun AGT examples)
+    am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
+    pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
+    pin_config(PinName(GNSS_EN), pinCfg);
+    delay(1);
     digitalWrite(GNSS_EN, LOW);  // Active low to enable
     delay(1000);
 
@@ -35,6 +38,10 @@ bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
     gpsPtr->addCfgValset(UBLOX_CFG_MSGOUT_NMEA_ID_GSV_I2C, 0);
     gpsPtr->addCfgValset(UBLOX_CFG_MSGOUT_NMEA_ID_VTG_I2C, 0);
     gpsPtr->sendCfgValset();
+
+    // Enable GNSS backup battery charging (per SparkFun AGT examples)
+    pinMode(GNSS_BCKP_BAT_CHG_EN, OUTPUT);
+    digitalWrite(GNSS_BCKP_BAT_CHG_EN, LOW);  // OUTPUT+LOW = charging enabled
 
     Serial.println(F("GPS: Initialized successfully"));
 
@@ -131,11 +138,22 @@ void GPSManager_sleep() {
     if (gpsPtr != nullptr) {
         gpsPtr->powerOff(0);  // Sleep indefinitely
     }
-    digitalWrite(GNSS_EN, HIGH);  // Disable power (active low)
+
+    // Configure pin as open-drain and disable power (per SparkFun AGT examples)
+    am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
+    pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
+    pin_config(PinName(GNSS_EN), pinCfg);
+    delay(1);
+    digitalWrite(GNSS_EN, HIGH);  // Disable power (HIGH = disable)
 }
 
 void GPSManager_wake() {
-    digitalWrite(GNSS_EN, LOW);  // Enable power (active low)
+    // Configure pin as open-drain and enable power (per SparkFun AGT examples)
+    am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
+    pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
+    pin_config(PinName(GNSS_EN), pinCfg);
+    delay(1);
+    digitalWrite(GNSS_EN, LOW);  // Enable power (LOW = enable)
     delay(500);
     if (gpsPtr != nullptr) {
         gpsPtr->begin(Wire);
