@@ -362,8 +362,52 @@ void processSerialCommands() {
         Serial.print(F("Command received: "));
         Serial.println(command);
 
+        // Help command
+        if (command == "help") {
+            Serial.println(F("========================================"));
+            Serial.println(F("       Doris AGT Command List"));
+            Serial.println(F("========================================"));
+            Serial.println();
+            Serial.println(F("STATE MACHINE:"));
+            Serial.println(F("  start_mission     - Start mission mode"));
+            Serial.println(F("  enter_recovery    - Enter recovery mode"));
+            Serial.println(F("  emergency         - Trigger emergency"));
+            Serial.println(F("  exit_emergency    - Exit emergency mode"));
+            Serial.println(F("  reset             - Reset to predeployment"));
+            Serial.println(F("  status            - Show current state"));
+            Serial.println();
+            Serial.println(F("GPS & SENSORS:"));
+            Serial.println(F("  gps               - Show GPS status"));
+            Serial.println(F("  i2c_scan          - Scan I2C bus"));
+            Serial.println();
+            Serial.println(F("MESHTASTIC DEBUG:"));
+            Serial.println(F("  mesh_test         - Send test message"));
+            Serial.println(F("  mesh_send <text>  - Send custom message"));
+            Serial.println(F("  mesh_status       - Check UART status"));
+            Serial.println();
+            Serial.println(F("DROP WEIGHT:"));
+            Serial.println(F("  release_now       - Release drop weight NOW"));
+            Serial.println(F("  arm_drop <params> - Schedule timed release"));
+            Serial.println(F("    Format: arm_drop <gmt|delay> <time> <duration>"));
+            Serial.println(F("    Example: arm_drop delay 3600 1500"));
+            Serial.println();
+            Serial.println(F("CONFIGURATION:"));
+            Serial.println(F("  config            - Show configuration"));
+            Serial.println(F("  config_reset      - Reset to defaults"));
+            Serial.println(F("  save              - Save config to EEPROM"));
+            Serial.println(F("  set_iridium_interval <seconds>"));
+            Serial.println(F("  set_meshtastic_interval <seconds>"));
+            Serial.println(F("  set_mavlink_interval <milliseconds>"));
+            Serial.println(F("  enable_<feature>  - Enable feature"));
+            Serial.println(F("  disable_<feature> - Disable feature"));
+            Serial.println(F("    Features: iridium, meshtastic,"));
+            Serial.println(F("              mavlink, psm, neopixels"));
+            Serial.println();
+            Serial.println(F("Type 'help' to see this list again"));
+            Serial.println(F("========================================"));
+        }
         // State machine commands
-        if (command == "start_mission") {
+        else if (command == "start_mission") {
             StateMachine_requestTransition(TRANSITION_START_MISSION);
         }
         else if (command == "enter_recovery") {
