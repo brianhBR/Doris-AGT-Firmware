@@ -2,6 +2,16 @@
 #include "config.h"
 #include <Wire.h>
 
+// AGT GPS uses dedicated I2C bus on pins 8 (SCL) and 9 (SDA)
+const byte PIN_AGTWIRE_SCL = 8;
+const byte PIN_AGTWIRE_SDA = 9;
+
+// Helper function to get/init agtWire (lazy initialization to avoid early constructor)
+static TwoWire& getAGTWire() {
+    static TwoWire wire(PIN_AGTWIRE_SDA, PIN_AGTWIRE_SCL);
+    return wire;
+}
+
 static SFE_UBLOX_GNSS* gpsPtr = nullptr;
 static GPSData currentGPSData;
 static unsigned long lastFixAttempt = 0;
@@ -17,9 +27,31 @@ bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
     digitalWrite(GNSS_EN, LOW);  // Active low to enable
     delay(1000);
 
-    // Connect to GPS on I2C
-    if (!gpsPtr->begin(Wire)) {
-        Serial.println(F("GPS: u-blox GNSS not detected at default I2C address"));
+    // Get reference to agtWire (lazy init - constructor runs now, not at global scope)
+    TwoWire& agtWire = getAGTWire();
+
+    // Initialize custom I2C bus for GPS (pins 8 and 9)
+    agtWire.begin();
+    delay(10);
+    agtWire.setClock(100000); // Use 100kHz for reliability (per SparkFun examples)
+
+    // CRITICAL: Disable pull-ups AFTER agtWire.begin() (per SparkFun AGT examples)
+    // The ZOE-M8Q has its own pull-ups
+    // Order matters: must call pin_config AFTER agtWire.begin()
+    am_hal_gpio_pincfg_t sclCfg = g_AM_BSP_GPIO_IOM1_SCL;
+    sclCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_NONE;
+    pin_config(PinName(PIN_AGTWIRE_SCL), sclCfg);
+
+    am_hal_gpio_pincfg_t sdaCfg = g_AM_BSP_GPIO_IOM1_SDA;
+    sdaCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_NONE;
+    pin_config(PinName(PIN_AGTWIRE_SDA), sdaCfg);
+    delay(10);
+
+    // Connect to GPS on custom I2C bus
+    delay(100);
+
+    if (!gpsPtr->begin(agtWire)) {
+        Serial.println(F("GPS: ZOE-M8Q not detected on I2C"));
         return false;
     }
 
@@ -31,19 +63,11 @@ bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
     // Enable automatic NAV PVT messages
     gpsPtr->setAutoPVT(true);
 
-    // Disable unnecessary NMEA sentences to reduce I2C traffic
-    gpsPtr->newCfgValset();
-    gpsPtr->addCfgValset(UBLOX_CFG_MSGOUT_NMEA_ID_GLL_I2C, 0);
-    gpsPtr->addCfgValset(UBLOX_CFG_MSGOUT_NMEA_ID_GSA_I2C, 0);
-    gpsPtr->addCfgValset(UBLOX_CFG_MSGOUT_NMEA_ID_GSV_I2C, 0);
-    gpsPtr->addCfgValset(UBLOX_CFG_MSGOUT_NMEA_ID_VTG_I2C, 0);
-    gpsPtr->sendCfgValset();
+    // NMEA output already disabled by setI2COutput(COM_TYPE_UBX) above
 
     // Enable GNSS backup battery charging (per SparkFun AGT examples)
     pinMode(GNSS_BCKP_BAT_CHG_EN, OUTPUT);
     digitalWrite(GNSS_BCKP_BAT_CHG_EN, LOW);  // OUTPUT+LOW = charging enabled
-
-    Serial.println(F("GPS: Initialized successfully"));
 
     // Initialize GPS data structure
     currentGPSData.valid = false;
@@ -156,6 +180,7 @@ void GPSManager_wake() {
     digitalWrite(GNSS_EN, LOW);  // Enable power (LOW = enable)
     delay(500);
     if (gpsPtr != nullptr) {
-        gpsPtr->begin(Wire);
+        TwoWire& agtWire = getAGTWire();
+        gpsPtr->begin(agtWire);  // Use custom I2C bus
     }
 }

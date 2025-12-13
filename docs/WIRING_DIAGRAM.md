@@ -15,24 +15,27 @@
                                │
         ┌──────────────────────┼──────────────────────┐
         │                      │                      │
-    [I2C Bus]             [Serial]              [GPIO]
+    [I2C Bus]             [Serial]              [GPIO/Analog]
         │                      │                      │
         ├─────────┬────────────┼────────────┬─────────┤
         │         │            │            │         │
-    ┌───▼───┐ ┌──▼──┐    ┌────▼────┐  ┌───▼───┐ ┌──▼──┐
-    │  GPS  │ │ PSM │    │ Iridium │  │ Relay │ │ LED │
-    │ ZOE-M8│ │ BR  │    │ 9603N   │  │  x2   │ │Strip│
-    └───────┘ └─────┘    └────┬────┘  └───────┘ └─────┘
-                              │
-                        [Serial1]
-                              │
-        ┌─────────────────────┴─────────────────────┐
-        │                                           │
-    ┌───▼────────┐                          ┌───────▼──────┐
-    │ Meshtastic │                          │   ArduPilot  │
-    │  RAK4603   │                          │   Navigator  │
-    │ [Serial2]  │                          │     [USB]    │
-    └────────────┘                          └──────────────┘
+    ┌───▼───┐ ┌──▼──────┐ ┌───▼────┐  ┌───▼───┐ ┌──▼──┐
+    │  GPS  │ │Meshtastic│ │Iridium │  │ Relay │ │ LED │
+    │ ZOE-M8│ │ RAK4603  │ │ 9603N  │  │  x2   │ │Strip│
+    └───────┘ │ [UART0]  │ │[Serial1]│ └───────┘ └─────┘
+              │ D39/D40  │ │D24/D25 │
+              └──────────┘ └────┬───┘
+                                │
+                           [USB Serial]
+                                │
+                                │
+                          ┌─────▼──────┐
+                          │ ArduPilot  │
+                          │ Navigator  │
+                          │   [USB]    │
+                          └────────────┘
+
+    PSM (Analog): GPIO11/12 - Battery voltage/current monitoring
 ```
 
 ## Detailed Pin Connections
@@ -80,23 +83,24 @@
 
 ### 4. Meshtastic RAK4603
 
-**Connects to SPI header breakout pins on AGT**
+**Connects to J10 Qwiic connector (I2C Port 4)**
 
-| RAK4603 Pin | AGT Pin | Header Label | Signal | Wire Color Suggestion |
-|-------------|---------|--------------|--------|----------------------|
-| RX | GPIO6 | MISO | TX2 from AGT | Yellow |
-| TX | GPIO7 | MOSI | RX2 to AGT | Orange |
-| VCC | 3.3V | 3.3V | Power | Red |
-| GND | GND | GND | Ground | Black |
+| RAK4603 Pin | AGT Pin | J10 Pin | Signal | Wire Color Suggestion |
+|-------------|---------|---------|--------|----------------------|
+| RX | GPIO39 (D39) | Pin 1 (SCL4) | UART0 TX from AGT | Yellow |
+| TX | GPIO40 (D40) | Pin 2 (SDA4) | UART0 RX to AGT | Orange |
+| VCC | 3.3V | Pin 3 | Power | Red |
+| GND | GND | Pin 4 | Ground | Black |
 
-**Connection Point:** SPI header on AGT (easily accessible)
+**Connection Point:** J10 Qwiic connector on AGT (4-pin JST connector)
 
 **Baud Rate:** 115200
 
 **Notes:**
-- GPIO6 and GPIO7 are broken out to the SPI header for easy access
-- Cross TX/RX: RAK4603 TX → AGT RX (GPIO7), RAK4603 RX → AGT TX (GPIO6)
-- Serial2 is configured in firmware to use these pins
+- D39/D40 are repurposed I2C pins configured as UART0
+- Cross TX/RX: RAK4603 TX → AGT RX (D40), RAK4603 RX → AGT TX (D39)
+- MeshtasticSerial is configured in firmware as UART instance 0 on these pins
+- RAK4603 must be configured in PROTO mode: `meshtastic --set serial.mode PROTO`
 
 ### 5. ArduPilot Navigator
 
@@ -140,21 +144,29 @@
 - Automatically controlled by battery voltage
 - Conserves power during extended surface recovery wait
 
-### 8. Relay Module 2 (Timed Event)
+### 8. Relay Module 2 (Timed Event - Drop Weight)
 
 | Relay Module | AGT Pin | Signal | Notes |
 |--------------|---------|--------|-------|
-| VCC | 3.3V | Power | Or 5V if relay requires |
-| GND | GND | Ground | |
-| IN | GPIO35 | Control | Active HIGH by default |
+| Signal IN | GPIO35 (AD35) | Control | 3.3V trigger signal |
+| Relay Coil VCC | Battery + | Power | 12-14.8V from 4S LiPo |
+| Relay Coil GND | Battery - | Ground | High voltage ground |
+| Load | Electrolytic Release | Switched | Battery voltage to release mechanism |
 
-**Load:** Drop weight ballast release mechanism
+**Load:** Electrolytic/galvanic drop weight ballast release mechanism
 
 **Control Logic:**
 - Triggered via configuration (GMT time or delay from deployment)
-- Activates for configured duration (typically 5000ms / 5 seconds)
+- Activates for configured duration (typically 1200+ seconds / 20+ minutes)
+- Extended activation required for electrolytic dissolution
 - One-shot activation for ballast release
 - Critical for mission success (surface recovery)
+
+**IMPORTANT:**
+- GPIO35 provides LOW POWER 3.3V trigger signal only
+- Relay coil must be powered by BATTERY VOLTAGE (12-14.8V)
+- Relay switches high current battery voltage to electrolytic release
+- Use relay rated for extended activation and high current
 
 ## Power System
 
@@ -192,20 +204,23 @@ Battery (4S LiPo)
 ## I2C Bus Configuration
 
 ```
-AGT I2C Bus (400kHz)
+AGT I2C Bus (400kHz) - GPIO8/9
 ├── GPS (ZOE-M8Q) - 0x42
 └── PHT Sensor (MS8607) - 0x40, 0x76 (if installed)
 
-Note: PSM uses analog pins (GPIO11/12), NOT I2C!
+IMPORTANT NOTES:
+- PSM uses analog pins (GPIO11/12), NOT I2C!
+- J10 Qwiic connector (GPIO39/40) is repurposed for UART0 (Meshtastic)
+- Only I2C Port 1 (GPIO8/9) is used for actual I2C devices
 ```
 
 ## Serial Port Summary
 
 | Port | Baud | Purpose | Connected Device | Pins |
 |------|------|---------|------------------|------|
-| Serial (USB) | 115200 | Debug/Config/MAVLink | Navigator | USB |
-| Serial1 | 19200 | Iridium | 9603N Modem | GPIO24/25 (built-in) |
-| Serial2 | 115200 | Mesh Network | RAK4603 | GPIO6/7 (SPI header) |
+| Serial (USB) | 115200/57600 | Debug/Config/MAVLink | Navigator | USB |
+| Serial1 (UART1) | 19200 | Iridium | 9603N Modem | GPIO24/25 (built-in) |
+| MeshtasticSerial (UART0) | 115200 | Mesh Network | RAK4603 | GPIO39/40 (J10 Qwiic) |
 
 ## GPIO Usage Summary
 
@@ -215,21 +230,23 @@ Note: PSM uses analog pins (GPIO11/12), NOT I2C!
 | 8 | GPS SCL | I2C | Built-in |
 | 9 | GPS SDA | I2C | Built-in |
 | 10 | Geofence Alert | Input | From GPS |
+| 11 | PSM Voltage | Analog In | Battery voltage sensing |
+| 12 | PSM Current | Analog In | Battery current sensing |
 | 13 | Bus Voltage | Analog In | Voltage monitor |
 | 17 | Iridium Sleep | Output | Sleep control |
 | 18 | Iridium Net Avail | Input | Network status |
 | 19 | White LED | Output | Onboard LED |
 | 22 | Iridium Power | Output | Power enable |
-| 24 | Iridium TX | Serial | To modem |
-| 25 | Iridium RX | Serial | From modem |
+| 24 | Iridium TX | Serial1 | To modem |
+| 25 | Iridium RX | Serial1 | From modem |
 | 26 | GPS Enable | Output | Active LOW |
 | 27 | Supercap Enable | Output | Charger control |
 | 28 | Supercap PGOOD | Input | Charge status |
 | 32 | NeoPixel Data | Output | LED strip |
 | 34 | Bus Volt Enable | Output | Voltage monitor |
-| 35 | Relay 2 Control | Output | Timed event |
-| 39 | Qwiic SCL | I2C | Qwiic bus |
-| 40 | Qwiic SDA | I2C | Qwiic bus |
+| 35 | Relay 2 Control | Output | Drop weight release |
+| 39 | Meshtastic TX | UART0 | D39 on J10 (repurposed I2C SCL4) |
+| 40 | Meshtastic RX | UART0 | D40 on J10 (repurposed I2C SDA4) |
 | 41 | Iridium Ring | Input | Ring indicator |
 
 ## Assembly Tips
@@ -240,9 +257,10 @@ Note: PSM uses analog pins (GPIO11/12), NOT I2C!
 3. Add Iridium antenna and test transmission
 4. Add peripherals one at a time
 
-### 2. I2C Bus
-- Use Qwiic cables for PSM connection
-- Keep I2C wires short (<1m)
+### 2. I2C Bus and Analog Connections
+- PSM uses ANALOG outputs (GPIO11/12), not I2C - use simple wires
+- J10 Qwiic connector is used for Meshtastic UART, not I2C
+- Keep I2C wires short (<1m) for GPS and PHT sensor
 - Add pull-ups if bus is long or has many devices
 
 ### 3. Serial Connections
@@ -298,12 +316,12 @@ Note: PSM uses analog pins (GPIO11/12), NOT I2C!
 
 | Symptom | Check |
 |---------|-------|
-| GPS not working | Antenna connected, GPS_EN LOW, I2C bus |
+| GPS not working | Antenna connected, GPS_EN LOW, I2C bus on GPIO8/9 |
 | Iridium fails | Supercap charged, antennas clear, power adequate |
-| No serial from RAK4603 | TX/RX crossed, common ground, baud rate |
-| PSM not detected | I2C address, Qwiic connection, power |
+| No serial from RAK4603 | TX/RX crossed (D39→RX, D40→TX), common ground, baud 115200, PROTO mode |
+| PSM reads zero | Analog connections on GPIO11/12, calibration values, PSM powered |
 | NeoPixels dark | Data pin GPIO32, 5V power, ground connection |
-| Relays don't switch | Control pin, relay coil voltage, ground |
+| Relays don't switch | Control pin, relay coil voltage, ground, active HIGH/LOW |
 
 ## Reference Documents
 

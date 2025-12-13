@@ -10,7 +10,8 @@
 
 // Create a dedicated UART instance for Meshtastic on UART0
 // This is separate from Serial1 (UART1) used by Iridium
-UART MeshtasticSerial(0, MESHTASTIC_TX_PIN, MESHTASTIC_RX_PIN);  // UART instance 0
+// Use pointer to avoid early construction crash
+UART* MeshtasticSerial = nullptr;
 
 /*
  * Meshtastic RAK4603 Serial Interface
@@ -47,20 +48,20 @@ static uint8_t rxBuffer[MESH_MAX_PACKET_SIZE];
 
 // Helper function to send a protobuf packet with 4-byte header
 static bool sendProtobufPacket(const uint8_t* buffer, size_t length) {
-    if (length > MESH_MAX_PACKET_SIZE) {
-        Serial.println(F("Mesh TX: Packet too large"));
+    if (length > MESH_MAX_PACKET_SIZE || MeshtasticSerial == nullptr) {
+        Serial.println(F("Mesh TX: Packet too large or UART not initialized"));
         return false;
     }
 
     // Send 4-byte header
-    MeshtasticSerial.write(MESH_START1);
-    MeshtasticSerial.write(MESH_START2);
-    MeshtasticSerial.write((length >> 8) & 0xFF);  // MSB
-    MeshtasticSerial.write(length & 0xFF);          // LSB
+    MeshtasticSerial->write(MESH_START1);
+    MeshtasticSerial->write(MESH_START2);
+    MeshtasticSerial->write((length >> 8) & 0xFF);  // MSB
+    MeshtasticSerial->write(length & 0xFF);          // LSB
 
     // Send protobuf data
-    MeshtasticSerial.write(buffer, length);
-    MeshtasticSerial.flush();
+    MeshtasticSerial->write(buffer, length);
+    MeshtasticSerial->flush();
 
     return true;
 }
@@ -75,9 +76,11 @@ void MeshtasticInterface_init() {
     //   - Meshtastic RAK4603: MeshtasticSerial (UART0) on pins D39/D40
     // Both UARTs operate independently without conflicts
 
-    // MeshtasticSerial already configured pins in its constructor
-    // Just begin the UART with the specified baud rate
-    MeshtasticSerial.begin(MESHTASTIC_BAUD);
+    // Create UART object now (safe to do after hardware init)
+    MeshtasticSerial = new UART(0, MESHTASTIC_TX_PIN, MESHTASTIC_RX_PIN);
+
+    // Begin the UART with the specified baud rate
+    MeshtasticSerial->begin(MESHTASTIC_BAUD);
 
     delay(500);
 
@@ -249,8 +252,10 @@ bool MeshtasticInterface_checkMessages() {
     static uint16_t packetLength = 0;
     static uint16_t bytesRead = 0;
 
-    while (MeshtasticSerial.available()) {
-        uint8_t b = MeshtasticSerial.read();
+    if (MeshtasticSerial == nullptr) return false;
+
+    while (MeshtasticSerial->available()) {
+        uint8_t b = MeshtasticSerial->read();
 
         switch (state) {
             case 0:  // Looking for START1

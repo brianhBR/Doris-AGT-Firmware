@@ -1,7 +1,7 @@
 #ifndef GPS_MANAGER_H
 #define GPS_MANAGER_H
 
-#include <SparkFun_u-blox_GNSS_v3.h>
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 
 // GPS data structure
 struct GPSData {

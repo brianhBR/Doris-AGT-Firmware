@@ -16,7 +16,7 @@
 #include <Wire.h>
 #include "config.h"
 
-#include <SparkFun_u-blox_GNSS_v3.h>
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #include <IridiumSBD.h>
 #include <Adafruit_NeoPixel.h>
 #include <ArduinoJson.h>
@@ -33,10 +33,10 @@
 #include "modules/config_manager.h"
 #include "modules/state_machine.h"
 
-// Global objects
-SFE_UBLOX_GNSS myGPS;
-IridiumSBD modem(IRIDIUM_SERIAL, IRIDIUM_SLEEP, IRIDIUM_RI);  // Serial version on default pins
-Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+// Global objects - ALL POINTERS to avoid early construction crashes
+SFE_UBLOX_GNSS* myGPSPtr = nullptr;
+IridiumSBD* modemPtr = nullptr;
+Adafruit_NeoPixel* pixelsPtr = nullptr;
 
 // System configuration
 SystemConfig sysConfig;
@@ -66,7 +66,12 @@ void checkEmergencySensors();
 void setup() {
     // Initialize serial ports
     Serial.begin(DEBUG_BAUD);
-    delay(1000);
+
+    // CRITICAL: Wait for serial monitor to connect (Artemis requirement)
+    while (!Serial) {
+        ; // Wait for USB serial connection
+    }
+    delay(100);  // Small delay after serial ready
 
     Serial.println(F("==========================================="));
     Serial.println(F("  Doris AGT Firmware - Drop Camera"));
@@ -74,69 +79,101 @@ void setup() {
     Serial.println(F("==========================================="));
 
     // Setup pins
+    Serial.println(F("[1] Setting up pins..."));
     setupPins();
+    Serial.println(F("[1] Pins OK"));
 
     // Initialize RTC
+    Serial.println(F("[2] Setting up RTC..."));
     myRTC.setTime(0, 0, 0, 0, 1, 1, 2025);  // Will be updated from GPS
     bootTime = millis();
+    Serial.println(F("[2] RTC OK"));
 
     // Load configuration from EEPROM
+    Serial.println(F("[3] Loading configuration..."));
     loadConfiguration();
+    Serial.println(F("[3] Config OK"));
 
-    // Initialize I2C
-    Wire.begin();
-    Wire.setClock(400000);  // 400kHz I2C
+    // Initialize I2C (commented out - we use custom agtWire instead)
+    Serial.println(F("[4] Initializing I2C..."));
+    // Wire.begin();  // Don't initialize default I2C - may conflict with agtWire
+    // Wire.setClock(400000);  // 400kHz I2C
+    Serial.println(F("[4] I2C (default bus disabled)"));
 
     // Initialize State Machine FIRST
+    Serial.println(F("[5] Initializing State Machine..."));
     StateMachine_init();
+    Serial.println(F("[5] State Machine OK"));
 
     // Initialize Relay Controller
-    Serial.println(F("Initializing Relays..."));
+    Serial.println(F("[6] Initializing Relays..."));
     RelayController_init();
+    Serial.println(F("[6] Relays OK"));
+
+    // Create GPS object
+    Serial.println(F("[7] Creating GPS object..."));
+    myGPSPtr = new SFE_UBLOX_GNSS();
+    Serial.println(F("[7] GPS object created"));
 
     // Initialize GPS Manager
-    Serial.println(F("Initializing GPS..."));
-    if (!GPSManager_init(&myGPS)) {
-        Serial.println(F("ERROR: GPS initialization failed!"));
+    Serial.println(F("[8] Initializing GPS..."));
+    if (!GPSManager_init(myGPSPtr)) {
+        Serial.println(F("WARNING: GPS initialization failed!"));
         // Continue anyway - GPS may come online later
     }
+    Serial.println(F("[8] GPS OK"));
+
+    // Create Iridium object NOW (after Serial1 is ready)
+    Serial.println(F("[9] Creating Iridium object..."));
+    modemPtr = new IridiumSBD(IRIDIUM_SERIAL, IRIDIUM_SLEEP, IRIDIUM_RI);
+    Serial.println(F("[9] Iridium object created"));
 
     // Initialize Iridium Manager
     if (sysConfig.enableIridium) {
-        Serial.println(F("Initializing Iridium..."));
-        if (!IridiumManager_init(&modem)) {
+        Serial.println(F("[10] Initializing Iridium..."));
+        if (!IridiumManager_init(modemPtr)) {
             Serial.println(F("WARNING: Iridium initialization failed!"));
         }
+        Serial.println(F("[10] Iridium OK"));
     }
 
     // Initialize Meshtastic Interface
     if (sysConfig.enableMeshtastic) {
-        Serial.println(F("Initializing Meshtastic..."));
+        Serial.println(F("[11] Initializing Meshtastic..."));
         MeshtasticInterface_init();
+        Serial.println(F("[11] Meshtastic OK"));
     }
 
     // Initialize MAVLink Interface
     if (sysConfig.enableMAVLink) {
-        Serial.println(F("Initializing MAVLink..."));
+        Serial.println(F("[12] Initializing MAVLink..."));
         MAVLinkInterface_init();
+        Serial.println(F("[12] MAVLink OK"));
     }
+
+    // Create NeoPixel object
+    Serial.println(F("[13] Creating NeoPixel object..."));
+    pixelsPtr = new Adafruit_NeoPixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+    Serial.println(F("[13] NeoPixel object created"));
 
     // Initialize NeoPixel Controller
     if (sysConfig.enableNeoPixels) {
-        Serial.println(F("Initializing NeoPixels..."));
-        NeoPixelController_init(&pixels);
+        Serial.println(F("[14] Initializing NeoPixels..."));
+        NeoPixelController_init(pixelsPtr);
         NeoPixelController_setColor(COLOR_BOOT);
+        Serial.println(F("[14] NeoPixels OK"));
     }
 
     // Initialize PSM Interface (optional - battery monitoring)
     if (sysConfig.enablePSM) {
-        Serial.println(F("Initializing PSM (optional battery monitoring)..."));
+        Serial.println(F("[15] Initializing PSM..."));
         if (!PSMInterface_init()) {
             Serial.println(F("WARNING: PSM initialization failed (continuing without battery monitoring)"));
             sysConfig.enablePSM = false;  // Disable if not available
         }
+        Serial.println(F("[15] PSM OK"));
     } else {
-        Serial.println(F("PSM battery monitoring DISABLED (ArduPilot handles battery)"));
+        Serial.println(F("[15] PSM battery monitoring DISABLED (ArduPilot handles battery)"));
     }
 
     Serial.println(F("==========================================="));
@@ -172,14 +209,14 @@ void loop() {
     updateLEDState();
 
     // Update NeoPixel display
-    if (sysConfig.enableNeoPixels &&
+    if (sysConfig.enableNeoPixels && pixelsPtr != nullptr &&
         (currentMillis - lastNeoPixelUpdate >= NEOPIXEL_UPDATE_MS)) {
         NeoPixelController_update(currentLEDState);
         lastNeoPixelUpdate = currentMillis;
     }
 
     // Send position via Iridium (if allowed in current state)
-    if (sysConfig.enableIridium &&
+    if (sysConfig.enableIridium && modemPtr != nullptr &&
         StateMachine_canTransmitIridium() &&
         (currentMillis - lastIridiumSend >= sysConfig.iridiumInterval)) {
         if (GPSManager_hasFix()) {
@@ -344,6 +381,42 @@ void processSerialCommands() {
         else if (command == "status") {
             StateMachine_printState();
         }
+        else if (command == "gps") {
+            // Display GPS status
+            Serial.println(F("=== GPS Status ==="));
+            if (GPSManager_hasFix()) {
+                char gpsStr[200];
+                GPSManager_getDataString(gpsStr, sizeof(gpsStr));
+                Serial.println(gpsStr);
+            } else {
+                GPSData gpsData = GPSManager_getData();
+                Serial.print(F("Satellites: "));
+                Serial.println(gpsData.satellites);
+                Serial.print(F("Fix Type: "));
+                Serial.println(gpsData.fixType);
+                Serial.println(F("Status: Searching for fix..."));
+                Serial.println(F("(Needs 4+ satellites for 3D fix)"));
+            }
+            Serial.println(F("=================="));
+        }
+        else if (command == "i2c_scan") {
+            // Scan both I2C buses for devices
+            Serial.println(F("=== I2C Bus Scan ==="));
+
+            // Scan default Wire bus (MS8607 pressure sensor should be here)
+            Serial.println(F("Default I2C bus (Wire): DISABLED"));
+            Serial.println(F("  (Not initialized to avoid conflict with agtWire)"));
+            byte count = 0;
+            // Skip Wire scan since we don't initialize it
+
+            // Scan AGT Wire bus (GPS should be here at 0x42)
+            Serial.println(F("AGT I2C bus (pins 8/9 - agtWire):"));
+            Serial.println(F("  (Scan disabled - GPS module handles I2C internally)"));
+            count = 0;
+
+            Serial.println(F("Expected: GPS at 0x42 on agtWire"));
+            Serial.println(F("==================="));
+        }
         else if (command == "release_now") {
             // Manual drop weight release
             StateMachine_releaseDropWeight();
@@ -360,6 +433,13 @@ void processSerialCommands() {
 
             bool useGMT = (mode == "gmt");
             StateMachine_armDropWeight(useGMT, time, duration);
+        }
+        else if (command == "config_reset") {
+            // Reset configuration to defaults
+            Serial.println(F("Resetting configuration to defaults..."));
+            ConfigManager_setDefaults(&sysConfig);
+            ConfigManager_save(&sysConfig);
+            Serial.println(F("Configuration reset! Reboot to apply."));
         }
         // Existing configuration commands
         else {

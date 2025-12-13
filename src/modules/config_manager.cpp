@@ -162,6 +162,10 @@ void ConfigManager_processCommands() {
             uint32_t interval = command.substring(24).toInt();
             ConfigManager_setMeshtasticInterval(interval * 1000);
         }
+        else if (command.startsWith("set_mavlink_interval ")) {
+            uint32_t interval = command.substring(21).toInt();
+            ConfigManager_setMAVLinkInterval(interval);
+        }
         else if (command.startsWith("enable_")) {
             // Parse feature name
             String feature = command.substring(7);
@@ -194,6 +198,7 @@ void ConfigManager_processCommands() {
             Serial.println(F("reset - Reset to default configuration"));
             Serial.println(F("set_iridium_interval <seconds>"));
             Serial.println(F("set_meshtastic_interval <seconds>"));
+            Serial.println(F("set_mavlink_interval <milliseconds>"));
             Serial.println(F("enable_<feature> / disable_<feature>"));
             Serial.println(F("  Features: iridium, meshtastic, mavlink, psm, neopixels"));
             Serial.println(F("set_timed_event <gmt|delay> <time> <duration_ms>"));
