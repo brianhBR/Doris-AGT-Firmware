@@ -46,6 +46,9 @@ bool ConfigManager_save(SystemConfig* config) {
     // Write config to EEPROM
     EEPROM.put(EEPROM_CONFIG_ADDRESS, *config);
 
+    // CRITICAL: Commit changes to flash (required on Apollo3)
+    EEPROM.commit();
+
     Serial.println(F("Config: Saved successfully"));
     return true;
 }
