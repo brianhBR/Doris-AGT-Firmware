@@ -26,6 +26,12 @@ bool ConfigManager_load(SystemConfig* config) {
     // Read config from EEPROM
     EEPROM.get(EEPROM_CONFIG_ADDRESS, *config);
 
+    // Verify magic number
+    if (config->magic != CONFIG_MAGIC_NUMBER) {
+        Serial.println(F("Config: Invalid magic number!"));
+        return false;
+    }
+
     // Verify checksum
     uint32_t calculatedChecksum = calculateChecksum(config);
     if (config->checksum != calculatedChecksum) {
@@ -43,11 +49,8 @@ bool ConfigManager_save(SystemConfig* config) {
     // Calculate and set checksum
     config->checksum = calculateChecksum(config);
 
-    // Write config to EEPROM
+    // Write config to EEPROM (auto-commits on Apollo3)
     EEPROM.put(EEPROM_CONFIG_ADDRESS, *config);
-
-    // CRITICAL: Commit changes to flash (required on Apollo3)
-    EEPROM.commit();
 
     Serial.println(F("Config: Saved successfully"));
     return true;
@@ -55,6 +58,9 @@ bool ConfigManager_save(SystemConfig* config) {
 
 void ConfigManager_setDefaults(SystemConfig* config) {
     Serial.println(F("Config: Setting defaults"));
+
+    // Set magic number
+    config->magic = CONFIG_MAGIC_NUMBER;
 
     // Set default intervals
     config->iridiumInterval = DEFAULT_IRIDIUM_INTERVAL;

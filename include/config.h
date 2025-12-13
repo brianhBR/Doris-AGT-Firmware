@@ -126,6 +126,9 @@ struct TimedEventConfig {
 // SYSTEM CONFIGURATION STRUCTURE
 // ============================================================================
 struct SystemConfig {
+    // Magic number to validate EEPROM data
+    uint32_t magic;
+
     // Intervals
     uint32_t iridiumInterval;
     uint32_t meshtasticInterval;
