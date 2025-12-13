@@ -512,10 +512,10 @@ void processSerialCommands() {
             Serial.println(F("verify RAK4603 is configured for PROTO mode."));
             Serial.println(F("=============================="));
         }
-        // Existing configuration commands
+        // Configuration commands
         else {
-            // Pass to config manager for other commands
-            ConfigManager_processCommands();
+            // Pass to config manager for processing
+            ConfigManager_processCommand(command);
         }
     }
 }

@@ -15,8 +15,11 @@ void ConfigManager_setDefaults(SystemConfig* config);
 // Print configuration to serial
 void ConfigManager_printConfig(SystemConfig* config);
 
-// Process serial commands for configuration
+// Process serial commands for configuration (deprecated - kept for compatibility)
 void ConfigManager_processCommands();
+
+// Process a single configuration command (called from main.cpp)
+void ConfigManager_processCommand(String command);
 
 // Configuration commands (can be called via serial)
 void ConfigManager_setIridiumInterval(uint32_t intervalMs);

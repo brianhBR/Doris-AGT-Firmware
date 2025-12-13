@@ -126,90 +126,65 @@ void ConfigManager_printConfig(SystemConfig* config) {
 }
 
 void ConfigManager_processCommands() {
-    // Check for serial commands
-    if (Serial.available()) {
-        String command = Serial.readStringUntil('\n');
-        command.trim();
+    // This function is now just a placeholder
+    // All command processing happens in main.cpp processSerialCommands()
+    // to avoid duplicate serial reading
+}
 
-        if (command.length() == 0) {
-            return;
-        }
+void ConfigManager_processCommand(String command) {
+    // Process individual config command (called from main.cpp)
+    // Parse command
+    if (command.startsWith("config")) {
+        // Show configuration
+        ConfigManager_printConfig(&sysConfig);
+    }
+    else if (command.startsWith("save")) {
+        // Save configuration
+        ConfigManager_save(&sysConfig);
+        Serial.println(F("Config: Saved"));
+    }
+    else if (command.startsWith("reset")) {
+        // Reset to defaults
+        ConfigManager_setDefaults(&sysConfig);
+        ConfigManager_save(&sysConfig);
+        Serial.println(F("Config: Reset to defaults"));
+    }
+    else if (command.startsWith("set_iridium_interval ")) {
+        uint32_t interval = command.substring(21).toInt();
+        ConfigManager_setIridiumInterval(interval * 1000);
+    }
+    else if (command.startsWith("set_meshtastic_interval ")) {
+        uint32_t interval = command.substring(24).toInt();
+        ConfigManager_setMeshtasticInterval(interval * 1000);
+    }
+    else if (command.startsWith("set_mavlink_interval ")) {
+        uint32_t interval = command.substring(21).toInt();
+        ConfigManager_setMAVLinkInterval(interval);
+    }
+    else if (command.startsWith("enable_")) {
+        // Parse feature name
+        String feature = command.substring(7);
+        ConfigManager_enableFeature(feature.c_str(), true);
+    }
+    else if (command.startsWith("disable_")) {
+        String feature = command.substring(8);
+        ConfigManager_enableFeature(feature.c_str(), false);
+    }
+    else if (command.startsWith("set_timed_event ")) {
+        // Format: set_timed_event <gmt|delay> <time> <duration_ms>
+        int firstSpace = command.indexOf(' ', 16);
+        int secondSpace = command.indexOf(' ', firstSpace + 1);
 
-        Serial.print(F("Config: Command received: "));
-        Serial.println(command);
+        String mode = command.substring(16, firstSpace);
+        uint32_t time = command.substring(firstSpace + 1, secondSpace).toInt();
+        uint16_t duration = command.substring(secondSpace + 1).toInt();
 
-        // Parse command
-        if (command.startsWith("config")) {
-            // Show configuration
-            ConfigManager_printConfig(&sysConfig);
-        }
-        else if (command.startsWith("save")) {
-            // Save configuration
-            ConfigManager_save(&sysConfig);
-            Serial.println(F("Config: Saved"));
-        }
-        else if (command.startsWith("reset")) {
-            // Reset to defaults
-            ConfigManager_setDefaults(&sysConfig);
-            ConfigManager_save(&sysConfig);
-            Serial.println(F("Config: Reset to defaults"));
-        }
-        else if (command.startsWith("set_iridium_interval ")) {
-            uint32_t interval = command.substring(21).toInt();
-            ConfigManager_setIridiumInterval(interval * 1000);
-        }
-        else if (command.startsWith("set_meshtastic_interval ")) {
-            uint32_t interval = command.substring(24).toInt();
-            ConfigManager_setMeshtasticInterval(interval * 1000);
-        }
-        else if (command.startsWith("set_mavlink_interval ")) {
-            uint32_t interval = command.substring(21).toInt();
-            ConfigManager_setMAVLinkInterval(interval);
-        }
-        else if (command.startsWith("enable_")) {
-            // Parse feature name
-            String feature = command.substring(7);
-            ConfigManager_enableFeature(feature.c_str(), true);
-        }
-        else if (command.startsWith("disable_")) {
-            String feature = command.substring(8);
-            ConfigManager_enableFeature(feature.c_str(), false);
-        }
-        else if (command.startsWith("set_timed_event ")) {
-            // Format: set_timed_event <gmt|delay> <time> <duration_ms>
-            int firstSpace = command.indexOf(' ', 16);
-            int secondSpace = command.indexOf(' ', firstSpace + 1);
-
-            String mode = command.substring(16, firstSpace);
-            uint32_t time = command.substring(firstSpace + 1, secondSpace).toInt();
-            uint16_t duration = command.substring(secondSpace + 1).toInt();
-
-            bool useGMT = (mode == "gmt");
-            ConfigManager_setTimedEvent(useGMT, time, duration);
-        }
-        else if (command.startsWith("set_power_save_voltage ")) {
-            float voltage = command.substring(23).toFloat();
-            ConfigManager_setPowerSaveVoltage(voltage);
-        }
-        else if (command == "help") {
-            Serial.println(F("=== Configuration Commands ==="));
-            Serial.println(F("config - Show current configuration"));
-            Serial.println(F("save - Save configuration to EEPROM"));
-            Serial.println(F("reset - Reset to default configuration"));
-            Serial.println(F("set_iridium_interval <seconds>"));
-            Serial.println(F("set_meshtastic_interval <seconds>"));
-            Serial.println(F("set_mavlink_interval <milliseconds>"));
-            Serial.println(F("enable_<feature> / disable_<feature>"));
-            Serial.println(F("  Features: iridium, meshtastic, mavlink, psm, neopixels"));
-            Serial.println(F("set_timed_event <gmt|delay> <time> <duration_ms>"));
-            Serial.println(F("  Example: set_timed_event gmt 1735689600 5000"));
-            Serial.println(F("  Example: set_timed_event delay 3600 5000"));
-            Serial.println(F("set_power_save_voltage <voltage>"));
-            Serial.println(F("=============================="));
-        }
-        else {
-            Serial.println(F("Config: Unknown command. Type 'help' for commands."));
-        }
+        bool useGMT = (mode == "gmt");
+        ConfigManager_setTimedEvent(useGMT, time, duration);
+    }
+    else if (command.startsWith("set_power_save_voltage ")) {
+        float voltage = command.substring(23).toFloat();
+        ConfigManager_setPowerSaveVoltage(voltage);
     }
 }
 
