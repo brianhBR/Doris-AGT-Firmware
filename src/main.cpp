@@ -441,6 +441,33 @@ void processSerialCommands() {
             ConfigManager_save(&sysConfig);
             Serial.println(F("Configuration reset! Reboot to apply."));
         }
+        else if (command == "mesh_test") {
+            // Test Meshtastic communication
+            Serial.println(F("Testing Meshtastic interface..."));
+            if (MeshtasticInterface_sendText("Test message from AGT")) {
+                Serial.println(F("Mesh test: Message sent successfully"));
+            } else {
+                Serial.println(F("Mesh test: Failed to send message"));
+            }
+        }
+        else if (command.startsWith("mesh_send ")) {
+            // Send custom text via Meshtastic
+            String msg = command.substring(10);
+            if (MeshtasticInterface_sendText(msg.c_str())) {
+                Serial.println(F("Mesh: Message sent"));
+            } else {
+                Serial.println(F("Mesh: Failed to send"));
+            }
+        }
+        else if (command == "mesh_status") {
+            // Check Meshtastic UART status
+            Serial.println(F("=== Meshtastic UART Status ==="));
+            Serial.println(F("Checking for data from RAK4603..."));
+            MeshtasticInterface_update();
+            Serial.println(F("Check complete. If no RX messages above,"));
+            Serial.println(F("verify RAK4603 is configured for PROTO mode."));
+            Serial.println(F("=============================="));
+        }
         // Existing configuration commands
         else {
             // Pass to config manager for other commands

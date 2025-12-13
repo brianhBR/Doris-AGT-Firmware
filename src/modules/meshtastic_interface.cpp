@@ -53,6 +53,9 @@ static bool sendProtobufPacket(const uint8_t* buffer, size_t length) {
         return false;
     }
 
+    Serial.print(F("Mesh TX: Sending packet, length="));
+    Serial.println(length);
+
     // Send 4-byte header
     MeshtasticSerial->write(MESH_START1);
     MeshtasticSerial->write(MESH_START2);
@@ -62,6 +65,20 @@ static bool sendProtobufPacket(const uint8_t* buffer, size_t length) {
     // Send protobuf data
     MeshtasticSerial->write(buffer, length);
     MeshtasticSerial->flush();
+
+    // Show hex dump of first 32 bytes for debugging
+    Serial.print(F("Mesh TX: Header [94 c3 "));
+    Serial.print((length >> 8) & 0xFF, HEX);
+    Serial.print(F(" "));
+    Serial.print(length & 0xFF, HEX);
+    Serial.print(F("] Data ["));
+    for (size_t i = 0; i < length && i < 32; i++) {
+        if (i > 0) Serial.print(F(" "));
+        if (buffer[i] < 0x10) Serial.print(F("0"));
+        Serial.print(buffer[i], HEX);
+    }
+    if (length > 32) Serial.print(F(" ..."));
+    Serial.println(F("]"));
 
     return true;
 }
@@ -88,21 +105,39 @@ void MeshtasticInterface_init() {
     Serial.println(F("Meshtastic: Interface initialized"));
     Serial.println(F("  Serial: MeshtasticSerial (UART0)"));
     Serial.println(F("  Mode: PROTO (Client API)"));
-    Serial.println(F("  Pins: D39/D40 (J10 Qwiic connector)"));
-    Serial.println(F("  Baud: 115200"));
+    Serial.print(F("  TX Pin: D"));
+    Serial.print(MESHTASTIC_TX_PIN);
+    Serial.print(F(" (to RAK4603 RX)"));
+    Serial.println();
+    Serial.print(F("  RX Pin: D"));
+    Serial.print(MESHTASTIC_RX_PIN);
+    Serial.print(F(" (from RAK4603 TX)"));
+    Serial.println();
+    Serial.print(F("  Baud: "));
+    Serial.println(MESHTASTIC_BAUD);
     Serial.println(F("  Protocol: 4-byte header + protobuf"));
     Serial.println(F(""));
     Serial.println(F("IMPORTANT: RAK4603 must be configured:"));
     Serial.println(F("  meshtastic --set serial.mode PROTO"));
+    Serial.println(F("  meshtastic --set serial.enabled true"));
+    Serial.println(F("  meshtastic --set serial.baud BAUD_115200"));
     Serial.println(F("================================"));
 
     initialized = true;
 }
 
 bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
-    if (!initialized || !gpsData->valid) {
+    if (!initialized) {
+        Serial.println(F("Mesh TX: Not initialized"));
         return false;
     }
+
+    if (!gpsData->valid) {
+        Serial.println(F("Mesh TX: GPS data not valid"));
+        return false;
+    }
+
+    Serial.println(F("Mesh TX: Encoding position message..."));
 
     // Create Position protobuf message
     meshtastic_Position position = meshtastic_Position_init_zero;
@@ -114,14 +149,27 @@ bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
     position.sats_in_view = gpsData->satellites;
     position.time = millis() / 1000;  // Unix timestamp (approximate)
 
+    Serial.print(F("Mesh TX: lat_i="));
+    Serial.print(position.latitude_i);
+    Serial.print(F(" lon_i="));
+    Serial.print(position.longitude_i);
+    Serial.print(F(" alt="));
+    Serial.print(position.altitude);
+    Serial.print(F(" sats="));
+    Serial.println(position.sats_in_view);
+
     // Encode Position to buffer first
     uint8_t posBuf[256];
     pb_ostream_t posStream = pb_ostream_from_buffer(posBuf, sizeof(posBuf));
     if (!pb_encode(&posStream, meshtastic_Position_fields, &position)) {
-        Serial.println(F("Mesh TX: Failed to encode position"));
+        Serial.print(F("Mesh TX: Failed to encode position. Error: "));
+        Serial.println(PB_GET_ERROR(&posStream));
         return false;
     }
     size_t posLength = posStream.bytes_written;
+    Serial.print(F("Mesh TX: Position encoded, "));
+    Serial.print(posLength);
+    Serial.println(F(" bytes"));
 
     // Create MeshPacket - use encrypted payload for now (contains raw bytes)
     meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
@@ -135,12 +183,19 @@ bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
     toRadio.which_payload_variant = meshtastic_ToRadio_packet_tag;
     toRadio.payload_variant.packet = packet;
 
+    Serial.println(F("Mesh TX: Encoding ToRadio wrapper..."));
+
     // Encode ToRadio
     pb_ostream_t stream = pb_ostream_from_buffer(txBuffer, sizeof(txBuffer));
     if (!pb_encode(&stream, meshtastic_ToRadio_fields, &toRadio)) {
-        Serial.println(F("Mesh TX: Failed to encode ToRadio"));
+        Serial.print(F("Mesh TX: Failed to encode ToRadio. Error: "));
+        Serial.println(PB_GET_ERROR(&stream));
         return false;
     }
+
+    Serial.print(F("Mesh TX: ToRadio encoded, "));
+    Serial.print(stream.bytes_written);
+    Serial.println(F(" bytes"));
 
     // Send with 4-byte header
     bool success = sendProtobufPacket(txBuffer, stream.bytes_written);
@@ -251,11 +306,22 @@ bool MeshtasticInterface_checkMessages() {
     static uint8_t state = 0;  // 0=looking for START1, 1=START2, 2=MSB, 3=LSB, 4=data
     static uint16_t packetLength = 0;
     static uint16_t bytesRead = 0;
+    static uint32_t lastRxActivity = 0;
 
     if (MeshtasticSerial == nullptr) return false;
 
     while (MeshtasticSerial->available()) {
         uint8_t b = MeshtasticSerial->read();
+
+        // Debug: Show raw bytes received (throttle output to prevent spam)
+        if (millis() - lastRxActivity > 1000 || state == 0) {
+            Serial.print(F("Mesh RX: byte=0x"));
+            if (b < 0x10) Serial.print(F("0"));
+            Serial.print(b, HEX);
+            Serial.print(F(" state="));
+            Serial.println(state);
+            lastRxActivity = millis();
+        }
 
         switch (state) {
             case 0:  // Looking for START1
