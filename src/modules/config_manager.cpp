@@ -67,12 +67,12 @@ void ConfigManager_setDefaults(SystemConfig* config) {
     config->meshtasticInterval = DEFAULT_MESHTASTIC_INTERVAL;
     config->mavlinkInterval = DEFAULT_MAVLINK_INTERVAL;
 
-    // Enable all features by default
+    // Enable all features by default (PSM/NeoPixels disabled - ArduPilot handles battery/indicators)
     config->enableIridium = true;
     config->enableMeshtastic = true;
     config->enableMAVLink = true;
-    config->enablePSM = true;
-    config->enableNeoPixels = true;
+    config->enablePSM = false;  // Disabled - causes MbedOS mutex issues
+    config->enableNeoPixels = false;  // Disabled - may cause RTOS issues
 
     // Timed event disabled by default
     config->timedEvent.enabled = false;

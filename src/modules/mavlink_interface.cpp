@@ -1,4 +1,5 @@
 #include "modules/mavlink_interface.h"
+#include "modules/mission_data.h"
 #include "config.h"
 #include <Arduino.h>
 
@@ -6,16 +7,16 @@
 #include "mavlink_platform.h"
 
 // Include MAVLink v2 headers
-// Note: You may need to adjust the dialect based on your needs
 #include <common/mavlink.h>
-
-// After MAVLink headers are included, set the runtime mavlink_system IDs
-// so MAVLink helper functions use the correct system/component ids.
 
 static bool initialized = false;
 static uint8_t systemId = MAVLINK_SYSTEM_ID;
 static uint8_t componentId = MAVLINK_COMPONENT_ID;
 static unsigned long lastHeartbeat = 0;
+
+// Depth from pressure: sea water approx (press_abs_mbar - 1013.25) * 0.0992 = depth_m
+#define SURFACE_PRESSURE_MBAR  1013.25f
+#define MBAR_TO_DEPTH_M        0.0992f
 
 void MAVLinkInterface_init() {
     // MAVLink communicates over USB Serial
@@ -105,6 +106,22 @@ void MAVLinkInterface_sendHeartbeat() {
     lastHeartbeat = currentMillis;
 }
 
+void MAVLinkInterface_sendSystemTime(uint64_t time_unix_usec) {
+    if (!initialized) return;
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    uint32_t time_boot_ms = (uint32_t)millis();
+    mavlink_msg_system_time_pack(
+        systemId,
+        componentId,
+        &msg,
+        time_unix_usec,
+        time_boot_ms
+    );
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    MAVLINK_SERIAL.write(buf, len);
+}
+
 void MAVLinkInterface_sendStatus(float voltage, float current) {
     if (!initialized) {
         return;
@@ -161,7 +178,6 @@ void MAVLinkInterface_update() {
         return;
     }
 
-    // Process incoming MAVLink messages from autopilot
     mavlink_message_t msg;
     mavlink_status_t status;
 
@@ -169,21 +185,55 @@ void MAVLinkInterface_update() {
         uint8_t c = MAVLINK_SERIAL.read();
 
         if (mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &status)) {
-            // Handle received message
             switch (msg.msgid) {
                 case MAVLINK_MSG_ID_HEARTBEAT: {
-                    // Autopilot heartbeat received
-                    Serial.println(F("MAVLink: Autopilot heartbeat received"));
+                    MissionData_update_heartbeat();
+                    break;
+                }
+
+                case MAVLINK_MSG_ID_SYS_STATUS: {
+                    mavlink_sys_status_t sys;
+                    mavlink_msg_sys_status_decode(&msg, &sys);
+                    if (sys.voltage_battery != 65535) {  // 0xFFFF = invalid
+                        MissionData_update_voltage(sys.voltage_battery / 1000.0f);
+                    }
+                    // Leak: use sensors_health bit if ArduSub sets it (TBD)
+                    break;
+                }
+
+                case MAVLINK_MSG_ID_SCALED_PRESSURE: {
+                    mavlink_scaled_pressure_t sp;
+                    mavlink_msg_scaled_pressure_decode(&msg, &sp);
+                    float press_mbar = sp.press_abs;  // hPa (mbar) per MAVLink
+                    if (press_mbar > 0) {
+                        float depth = (press_mbar - SURFACE_PRESSURE_MBAR) * MBAR_TO_DEPTH_M;
+                        if (depth > 0) MissionData_update_depth(depth);
+                    }
+                    break;
+                }
+
+                case MAVLINK_MSG_ID_VFR_HUD: {
+                    mavlink_vfr_hud_t vfr;
+                    mavlink_msg_vfr_hud_decode(&msg, &vfr);
+                    // alt is altitude in m (negative below surface for subs); depth = -alt when underwater
+                    if (vfr.alt < 0) {
+                        MissionData_update_depth(-vfr.alt);
+                    }
+                    break;
+                }
+
+                case MAVLINK_MSG_ID_BATTERY_STATUS: {
+                    mavlink_battery_status_t bat;
+                    mavlink_msg_battery_status_decode(&msg, &bat);
+                    if (bat.voltages[0] != 65535) {
+                        MissionData_update_voltage(bat.voltages[0] / 1000.0f);
+                    }
                     break;
                 }
 
                 case MAVLINK_MSG_ID_COMMAND_LONG: {
                     mavlink_command_long_t cmd;
                     mavlink_msg_command_long_decode(&msg, &cmd);
-
-                    // Handle commands from autopilot if needed
-                    Serial.print(F("MAVLink: Command received: "));
-                    Serial.println(cmd.command);
                     break;
                 }
 

@@ -6,7 +6,10 @@
 // System states for LED indication
 enum LEDState {
     LED_STATE_BOOT,
-    LED_STATE_EMERGENCY,
+    LED_STATE_PRE_MISSION,
+    LED_STATE_SELF_TEST,
+    LED_STATE_MISSION,
+    LED_STATE_RECOVERY_STROBE,  // Fast strobe for locating
     LED_STATE_GPS_SEARCH,
     LED_STATE_GPS_FIX,
     LED_STATE_IRIDIUM_TX,
@@ -38,5 +41,8 @@ void NeoPixelController_pulse(uint32_t color, uint16_t speed);
 void NeoPixelController_chase(uint32_t color, uint16_t speed);
 void NeoPixelController_rainbow(uint16_t speed);
 void NeoPixelController_progressBar(uint8_t percent, uint32_t color);
+
+// Strobe for recovery locating (fast white flash)
+void NeoPixelController_strobe(uint32_t color);
 
 #endif // NEOPIXEL_CONTROLLER_H

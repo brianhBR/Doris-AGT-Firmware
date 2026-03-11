@@ -4,12 +4,16 @@
 #include <IridiumSBD.h>
 #include "gps_manager.h"
 #include "psm_interface.h"
+#include "mission_data.h"
 
 // Initialize Iridium modem
 bool IridiumManager_init(IridiumSBD* modem);
 
-// Send position report via Iridium
+// Send position report (legacy)
 bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData);
+
+// Send position + mission stats (voltage, leak, max depth) for recovery
+bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission);
 
 // Send custom message
 bool IridiumManager_sendMessage(const char* message);

@@ -232,6 +232,36 @@ bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData) {
     return true;
 }
 
+bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
+    if (modemPtr == nullptr || !modemReady || !gpsData->valid) {
+        return false;
+    }
+    float vbat = getBusVoltage();
+    if (vbat < VBAT_LOW) return false;
+
+    char message[340];
+    if (mission) {
+        snprintf(message, sizeof(message),
+                 "LAT:%.6f,LON:%.6f,ALT:%.1f,SAT:%d,V:%.2f,LEAK:%d,MAXD:%.1fm",
+                 gpsData->latitude, gpsData->longitude, gpsData->altitude,
+                 gpsData->satellites, mission->battery_voltage > 0 ? mission->battery_voltage : vbat,
+                 mission->leak_detected ? 1 : 0, mission->max_depth_m);
+    } else {
+        snprintf(message, sizeof(message),
+                 "LAT:%.6f,LON:%.6f,ALT:%.1f,SAT:%d,V:%.2f",
+                 gpsData->latitude, gpsData->longitude, gpsData->altitude,
+                 gpsData->satellites, vbat);
+    }
+
+    digitalWrite(IRIDIUM_SLEEP, HIGH);
+    delay(100);
+    int err = modemPtr->sendSBDText(message);
+    if (err == ISBD_SUCCESS) {
+        modemPtr->clearBuffers(ISBD_CLEAR_MO);
+    }
+    return (err == ISBD_SUCCESS);
+}
+
 bool IridiumManager_sendMessage(const char* message) {
     if (modemPtr == nullptr || !modemReady) {
         return false;

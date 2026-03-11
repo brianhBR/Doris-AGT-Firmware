@@ -28,26 +28,25 @@
 #define PSM_VOLTAGE_PIN      11  // GPIO11 (AD11) - PSM voltage analog output
 #define PSM_CURRENT_PIN      12  // GPIO12 (AD12) - PSM current analog output
 
-// Meshtastic Serial1 pins (using J10 Qwiic/I2C connector)
-// NOTE: J10 has D39/D40 which support UART1 TX/RX functionality
-// We remap Serial1 to these pins for Meshtastic (Iridium uses default D24/D25)
-#define MESHTASTIC_TX_PIN    39  // D39 (SCL4/UART1TX) on J10 to RAK4603 RX
-#define MESHTASTIC_RX_PIN    40  // D40 (SDA4/UART1RX) on J10 from RAK4603 TX
+// Meshtastic uses software serial on pins 39/40 via J10 Qwiic connector
+// NOTE: Apollo3 only has 2 UARTs (Serial=USB, Serial1=Iridium)
+// Software serial allows Meshtastic to coexist with Iridium
+#define MESHTASTIC_TX_PIN    39  // D39 on J10 to RAK4603 RX
+#define MESHTASTIC_RX_PIN    40  // D40 on J10 from RAK4603 TX
 
 // ============================================================================
 // SERIAL PORT DEFINITIONS
 // ============================================================================
 // Serial (USB) - Debug, Config, MAVLink to Navigator
 // Serial1 (UART1) - Iridium 9603N on default pins D24/D25
-// MeshtasticSerial (UART0) - Meshtastic RAK4603 on D39/D40 (J10 connector)
+// SoftwareSerial - Meshtastic RAK4603 on pins D39/D40 (J10 connector)
 
 #define IRIDIUM_SERIAL       Serial1  // UART1 on default pins D24/D25
-// MeshtasticSerial is defined in meshtastic_interface.cpp as a Uart object on UART0
 #define DEBUG_SERIAL         Serial
 #define MAVLINK_SERIAL       Serial  // USB to Navigator
 
 #define IRIDIUM_BAUD         19200
-#define MESHTASTIC_BAUD      115200
+#define MESHTASTIC_BAUD      4800    // Low baud for reliable software serial TX
 #define DEBUG_BAUD           115200
 #define MAVLINK_BAUD         57600
 
@@ -78,16 +77,21 @@
 #define COLOR_OFF            0x000000  // Off
 
 // ============================================================================
-// BATTERY MONITORING
+// BATTERY MONITORING & FAILSAFE
 // ============================================================================
 #define BATTERY_LOW_VOLTAGE      11.5  // Volts
-#define BATTERY_CRITICAL_VOLTAGE 11.0  // Volts
+#define BATTERY_CRITICAL_VOLTAGE 11.0  // Volts (failsafe trigger)
 #define BATTERY_FULL_VOLTAGE     14.8  // Volts (for 4S LiPo)
+#define FAILSAFE_HEARTBEAT_TIMEOUT_MS  30000  // No MAVLink heartbeat -> failsafe (30 s)
+#define FAILSAFE_MAX_DEPTH_M           200.0  // Max depth (m) before failsafe
+#define MISSION_DEPTH_THRESHOLD_M      2.0    // Depth > this: leave Self Test -> Mission
+#define RECOVERY_DEPTH_THRESHOLD_M     3.0   // Depth < this OR GPS fix: Mission -> Recovery
 
 // ============================================================================
 // RELAY CONFIGURATION
 // ============================================================================
 #define RELAY_ACTIVE_HIGH    true  // Set false if relay is active low
+#define RELEASE_RELAY_DURATION_SEC  1500  // Failsafe release: relay on time (e.g. electrolytic release)
 
 // ============================================================================
 // IRIDIUM CONFIGURATION

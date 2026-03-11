@@ -48,9 +48,15 @@ void NeoPixelController_update(int systemState) {
     // Different animations based on system state
     switch (currentLEDState) {
         case LED_STATE_BOOT:
-            // Rainbow animation during boot
             if (currentMillis - lastAnimationUpdate > 50) {
                 NeoPixelController_rainbow(50);
+                lastAnimationUpdate = currentMillis;
+            }
+            break;
+
+        case LED_STATE_RECOVERY_STROBE:
+            if (currentMillis - lastAnimationUpdate > 100) {
+                NeoPixelController_strobe(0xFFFFFF);  // White strobe for locating
                 lastAnimationUpdate = currentMillis;
             }
             break;
@@ -75,6 +81,16 @@ void NeoPixelController_update(int systemState) {
             // Chase pattern during Iridium transmission
             if (currentMillis - lastAnimationUpdate > 30) {
                 NeoPixelController_chase(COLOR_IRIDIUM_TX, 30);
+                lastAnimationUpdate = currentMillis;
+            }
+            break;
+
+        case LED_STATE_PRE_MISSION:
+        case LED_STATE_SELF_TEST:
+        case LED_STATE_MISSION:
+            // Default to GPS-based indication below
+            if (currentMillis - lastAnimationUpdate > 50) {
+                NeoPixelController_pulse(COLOR_STANDBY, 50);
                 lastAnimationUpdate = currentMillis;
             }
             break;
@@ -209,6 +225,20 @@ void NeoPixelController_rainbow(uint16_t speed) {
 
     pixelsPtr->show();
     animationStep++;
+}
+
+void NeoPixelController_strobe(uint32_t color) {
+    if (pixelsPtr == nullptr) return;
+    static bool on = false;
+    on = !on;
+    if (on) {
+        for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
+            pixelsPtr->setPixelColor(i, color);
+        }
+    } else {
+        pixelsPtr->clear();
+    }
+    pixelsPtr->show();
 }
 
 void NeoPixelController_progressBar(uint8_t percent, uint32_t color) {
