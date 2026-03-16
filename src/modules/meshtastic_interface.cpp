@@ -1,134 +1,153 @@
 /*
- * Meshtastic RAK4603 - Position via protobuf (PROTO mode)
- * Sends Position on POSITION_APP port so nodes show on Meshtastic maps.
- * RAK4603 must be in PROTO mode: serial.mode PROTO, serial.enabled true.
- * Frame: 0x94 0xc3 len_MSB len_LSB + encoded ToRadio.
+ * Meshtastic RAK4603 - GPS output as NMEA to J10 (external GPS UART)
+ *
+ * The AGT outputs standard NMEA 0183 sentences (GGA, RMC) on the serial
+ * connected to Meshtastic's J10. J10 is UART1 on the RAK board - the same
+ * port used for an external GPS module. Configure Meshtastic to use
+ * external GPS on that port; it will read NMEA and use the position.
+ *
+ * Wiring: AGT TX (e.g. D39) -> Meshtastic J10 RX (UART1 RX)
+ *        AGT RX (e.g. D40) -> Meshtastic J10 TX if you need replies (optional)
+ * Baud: 4800 (standard NMEA)
  */
 
 #include "modules/meshtastic_interface.h"
 #include "config.h"
 #include "utils/SoftwareSerial.h"
 #include <Arduino.h>
-#include <pb_encode.h>
-#include "meshtastic/mesh.pb.h"
-#include "meshtastic/portnums.pb.h"
-
-#define MESHTASTIC_HEADER_0  0x94
-#define MESHTASTIC_HEADER_1  0xc3
-#define MESH_BROADCAST       0xFFFFFFFF
-#define POSITION_PAYLOAD_MAX 128
+#include <stdio.h>
+#include <string.h>
 
 SoftwareSerial* MeshtasticSerial = nullptr;
 static bool initialized = false;
-static uint32_t positionSeq = 0;
+
+static void nmea_checksum(const char* sentence, char* outHex) {
+    uint8_t cs = 0;
+    for (const char* p = sentence; *p; p++)
+        cs ^= (uint8_t)*p;
+    snprintf(outHex, 4, "%02X", (unsigned)cs);
+}
+
+// Format latitude as ddmm.mmmm,N/S (NMEA format, no %f)
+static void format_lat(double lat, char* buf, size_t len) {
+    char ns = (lat >= 0) ? 'N' : 'S';
+    if (lat < 0) lat = -lat;
+    int deg = (int)lat;
+    double minFloat = (lat - deg) * 60.0;
+    int minInt = (int)minFloat;
+    long minFrac = (long)((minFloat - minInt) * 10000 + 0.5);
+    if (minFrac >= 10000) { minFrac -= 10000; minInt++; }
+    snprintf(buf, len, "%02d%02d.%04ld,%c", deg, minInt, minFrac, ns);
+}
+
+// Format longitude as dddmm.mmmm,E/W (NMEA format, no %f)
+static void format_lon(double lon, char* buf, size_t len) {
+    char ew = (lon >= 0) ? 'E' : 'W';
+    if (lon < 0) lon = -lon;
+    int deg = (int)lon;
+    double minFloat = (lon - deg) * 60.0;
+    int minInt = (int)minFloat;
+    long minFrac = (long)((minFloat - minInt) * 10000 + 0.5);
+    if (minFrac >= 10000) { minFrac -= 10000; minInt++; }
+    snprintf(buf, len, "%03d%02d.%04ld,%c", deg, minInt, minFrac, ew);
+}
+
+// Append a float as "int.frac" into buf at position pos (no %f)
+static int appendFixedPoint(char* buf, int pos, int maxLen, double val, int decimals) {
+    long intPart = (long)val;
+    double fracVal = val - intPart;
+    if (fracVal < 0) fracVal = -fracVal;
+    long multiplier = 1;
+    for (int i = 0; i < decimals; i++) multiplier *= 10;
+    long fracPart = (long)(fracVal * multiplier + 0.5);
+    if (fracPart >= multiplier) { fracPart = 0; intPart += (val >= 0) ? 1 : -1; }
+
+    int written;
+    if (decimals == 1)
+        written = snprintf(buf + pos, maxLen - pos, "%ld.%01ld", intPart, fracPart);
+    else if (decimals == 2)
+        written = snprintf(buf + pos, maxLen - pos, "%ld.%02ld", intPart, fracPart);
+    else
+        written = snprintf(buf + pos, maxLen - pos, "%ld.%04ld", intPart, fracPart);
+    return (written > 0) ? pos + written : pos;
+}
+
+// Build and send NMEA sentence with checksum.
+// At 4800 baud, bit timing is relaxed (208μs) so no interrupt disabling needed.
+// DO NOT use noInterrupts()/interrupts() — corrupts MbedOS RTOS state.
+#define NMEA_LINE_MAX 140
+static void send_nmea_line(const char* body) {
+    if (!MeshtasticSerial || !initialized) return;
+    char csHex[4];
+    nmea_checksum(body, csHex);
+    char line[NMEA_LINE_MAX];
+    size_t bodyLen = strlen(body);
+    size_t n = 0;
+    line[n++] = '$';
+    if (n + bodyLen >= NMEA_LINE_MAX - 6) return;
+    memcpy(line + n, body, bodyLen);
+    n += bodyLen;
+    line[n++] = '*';
+    line[n++] = csHex[0];
+    line[n++] = csHex[1];
+    line[n++] = '\r';
+    line[n++] = '\n';
+    MeshtasticSerial->write((const uint8_t*)line, n);
+    delay(10);
+}
 
 bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
-    if (!initialized || MeshtasticSerial == nullptr) {
-        return false;
-    }
-    if (!gpsData->valid) {
-        return false;
-    }
+    if (!initialized || MeshtasticSerial == nullptr) return false;
+    if (!gpsData->valid) return false;
 
-    meshtastic_Position pos = meshtastic_Position_init_zero;
-    pos.has_latitude_i = true;
-    pos.latitude_i = (int32_t)(gpsData->latitude * 1e7);
-    pos.has_longitude_i = true;
-    pos.longitude_i = (int32_t)(gpsData->longitude * 1e7);
-    pos.has_altitude = true;
-    pos.altitude = (int32_t)gpsData->altitude;
-    pos.time = 0;  // Optional: set from RTC if available
-    pos.timestamp = 0;
-    pos.location_source = meshtastic_Position_LocSource_LOC_EXTERNAL;
-    pos.altitude_source = meshtastic_Position_AltSource_ALT_EXTERNAL;
-    pos.sats_in_view = gpsData->satellites;
-    pos.fix_type = gpsData->fixType;
-    pos.seq_number = positionSeq++;
-    pos.next_update = 60;
+    char latStr[16], lonStr[16];
+    format_lat(gpsData->latitude, latStr, sizeof(latStr));
+    format_lon(gpsData->longitude, lonStr, sizeof(lonStr));
 
-    uint8_t posBuf[POSITION_PAYLOAD_MAX];
-    pb_ostream_t posStream = pb_ostream_from_buffer(posBuf, sizeof(posBuf));
-    if (!pb_encode(&posStream, meshtastic_Position_fields, &pos)) {
-        Serial.println(F("Mesh: Position encode fail"));
-        return false;
-    }
-    size_t posLen = posStream.bytes_written;
+    uint8_t h = gpsData->hour, m = gpsData->minute;
+    uint8_t s = (uint8_t)gpsData->second;
+    uint16_t yr = gpsData->year;
+    if (yr >= 100) yr -= 2000;
+    uint8_t mo = gpsData->month, d = gpsData->day;
 
-    meshtastic_Data data = meshtastic_Data_init_zero;
-    data.portnum = meshtastic_PortNum_POSITION_APP;
-    data.payload.size = posLen;
-    if (posLen > sizeof(data.payload.bytes)) {
-        return false;
-    }
-    memcpy(data.payload.bytes, posBuf, posLen);
-    data.dest = MESH_BROADCAST;
+    // $GPGGA — Apollo3 snprintf lacks %f, build with integer math
+    char gga[128];
+    int pos = snprintf(gga, sizeof(gga), "GPGGA,%02u%02u%02u.00,%s,%s,1,%02u,",
+                       (unsigned)h, (unsigned)m, (unsigned)s,
+                       latStr, lonStr, (unsigned)gpsData->satellites);
+    pos = appendFixedPoint(gga, pos, sizeof(gga), gpsData->hdop, 1);
+    pos += snprintf(gga + pos, sizeof(gga) - pos, ",");
+    pos = appendFixedPoint(gga, pos, sizeof(gga), gpsData->altitude, 1);
+    snprintf(gga + pos, sizeof(gga) - pos, ",M,0.0,M,,,");
+    send_nmea_line(gga);
 
-    meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
-    packet.from = 0;
-    packet.to = MESH_BROADCAST;
-    packet.which_payload_variant = 4;  // decoded
-    packet.payload_variant.decoded = data;
-    packet.hop_limit = 3;
-    packet.want_ack = false;
-    packet.priority = meshtastic_MeshPacket_Priority_RELIABLE;
+    // $GPRMC
+    float speedKnots = gpsData->speed * 0.539957f;
+    char rmc[128];
+    pos = snprintf(rmc, sizeof(rmc), "GPRMC,%02u%02u%02u.00,A,%s,%s,",
+                   (unsigned)h, (unsigned)m, (unsigned)s,
+                   latStr, lonStr);
+    pos = appendFixedPoint(rmc, pos, sizeof(rmc), speedKnots, 1);
+    pos += snprintf(rmc + pos, sizeof(rmc) - pos, ",");
+    pos = appendFixedPoint(rmc, pos, sizeof(rmc), gpsData->course, 1);
+    snprintf(rmc + pos, sizeof(rmc) - pos, ",%02u%02u%02u,,,A",
+             (unsigned)d, (unsigned)mo, (unsigned)(yr % 100));
+    send_nmea_line(rmc);
 
-    meshtastic_ToRadio toRadio = meshtastic_ToRadio_init_zero;
-    toRadio.which_payload_variant = 1;  // packet
-    toRadio.payload_variant.packet = packet;
-
-    uint8_t outBuf[320];
-    pb_ostream_t outStream = pb_ostream_from_buffer(outBuf, sizeof(outBuf));
-    if (!pb_encode(&outStream, meshtastic_ToRadio_fields, &toRadio)) {
-        Serial.println(F("Mesh: ToRadio encode fail"));
-        return false;
-    }
-    size_t outLen = outStream.bytes_written;
-
-    MeshtasticSerial->write((uint8_t)MESHTASTIC_HEADER_0);
-    MeshtasticSerial->write((uint8_t)MESHTASTIC_HEADER_1);
-    MeshtasticSerial->write((uint8_t)(outLen >> 8));
-    MeshtasticSerial->write((uint8_t)(outLen & 0xFF));
-    MeshtasticSerial->write(outBuf, outLen);
     MeshtasticSerial->flush();
-
     return true;
 }
 
-bool MeshtasticInterface_sendText(const char* message) {
-    if (!initialized || MeshtasticSerial == nullptr) return false;
-    size_t len = strlen(message);
-    if (len > 230) len = 230;
-
-    meshtastic_Data data = meshtastic_Data_init_zero;
-    data.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
-    data.payload.size = len;
-    memcpy(data.payload.bytes, message, len);
-    data.dest = MESH_BROADCAST;
-
-    meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
-    packet.from = 0;
-    packet.to = MESH_BROADCAST;
-    packet.which_payload_variant = 4;
-    packet.payload_variant.decoded = data;
-    packet.hop_limit = 3;
-    packet.want_ack = false;
-
-    meshtastic_ToRadio toRadio = meshtastic_ToRadio_init_zero;
-    toRadio.which_payload_variant = 1;
-    toRadio.payload_variant.packet = packet;
-
-    uint8_t outBuf[320];
-    pb_ostream_t outStream = pb_ostream_from_buffer(outBuf, sizeof(outBuf));
-    if (!pb_encode(&outStream, meshtastic_ToRadio_fields, &toRadio)) return false;
-    size_t outLen = outStream.bytes_written;
-
-    MeshtasticSerial->write((uint8_t)MESHTASTIC_HEADER_0);
-    MeshtasticSerial->write((uint8_t)MESHTASTIC_HEADER_1);
-    MeshtasticSerial->write((uint8_t)(outLen >> 8));
-    MeshtasticSerial->write((uint8_t)(outLen & 0xFF));
-    MeshtasticSerial->write(outBuf, outLen);
+void MeshtasticInterface_sendNoFixNMEA() {
+    if (!MeshtasticSerial || !initialized) return;
+    send_nmea_line("GPGGA,000000.00,,,,,0,00,99.9,,,,,,,");
     MeshtasticSerial->flush();
-    return true;
+}
+
+bool MeshtasticInterface_sendText(const char* message) {
+    (void)message;
+    if (!initialized || MeshtasticSerial == nullptr) return false;
+    return false;
 }
 
 bool MeshtasticInterface_sendTelemetry(float voltage, float current) {
@@ -138,13 +157,14 @@ bool MeshtasticInterface_sendTelemetry(float voltage, float current) {
 }
 
 bool MeshtasticInterface_sendState(const char* stateName, uint32_t timeInState) {
-    char buf[80];
-    snprintf(buf, sizeof(buf), "STATE:%s %lus", stateName, timeInState);
-    return MeshtasticInterface_sendText(buf);
+    (void)stateName;
+    (void)timeInState;
+    return false;
 }
 
 bool MeshtasticInterface_sendAlert(const char* alertMessage) {
-    return MeshtasticInterface_sendText(alertMessage);
+    (void)alertMessage;
+    return false;
 }
 
 bool MeshtasticInterface_checkMessages() {
@@ -152,7 +172,7 @@ bool MeshtasticInterface_checkMessages() {
 }
 
 void MeshtasticInterface_update() {
-    // Optional: poll RX for FromRadio (e.g. to get node id). TX-only is fine for position.
+    // TX-only: NMEA output to Meshtastic J10
 }
 
 void MeshtasticInterface_init() {
@@ -160,5 +180,5 @@ void MeshtasticInterface_init() {
     MeshtasticSerial->begin(MESHTASTIC_BAUD);
     delay(300);
     initialized = true;
-    Serial.println(F("Meshtastic: PROTO mode, position via protobuf"));
+    Serial.println(F("Meshtastic: NMEA GPS output -> J10 (external GPS UART)"));
 }

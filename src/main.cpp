@@ -18,7 +18,6 @@
 #include "config.h"
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #include <IridiumSBD.h>
-#include <Adafruit_NeoPixel.h>
 #include <ArduinoJson.h>
 #include <RTC.h>
 
@@ -35,7 +34,6 @@
 
 SFE_UBLOX_GNSS* myGPSPtr = nullptr;
 IridiumSBD* modemPtr = nullptr;
-Adafruit_NeoPixel* pixelsPtr = nullptr;
 SystemConfig sysConfig;
 extern Apollo3RTC rtc;
 Apollo3RTC& myRTC = rtc;
@@ -63,8 +61,8 @@ static uint64_t getRTCUnixUsec() {
     uint16_t y = myRTC.year;
     if (y < 100) y += 2000;
     if (y < 1970 || y > 2099) return 0;
-    uint8_t mo = myRTC.month, d = myRTC.day;
-    uint8_t h = myRTC.hour, mi = myRTC.minute, s = myRTC.second;
+    uint8_t mo = myRTC.month, d = myRTC.dayOfMonth;
+    uint8_t h = myRTC.hour, mi = myRTC.minute, s = myRTC.seconds;
     if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
     // Days since 1970-01-01 (UTC)
     uint32_t days = (y - 1970) * 365UL + (y - 1969) / 4 - (y - 1901) / 100 + (y - 1601) / 400;
@@ -92,14 +90,16 @@ void setup() {
     StateMachine_init();
     RelayController_init();
 
+    // GPS first — Iridium deferred until first send to avoid power-cycling GPS
     myGPSPtr = new SFE_UBLOX_GNSS();
     if (!GPSManager_init(myGPSPtr)) {
         Serial.println(F("WARNING: GPS init failed"));
     }
 
     modemPtr = new IridiumSBD(IRIDIUM_SERIAL, IRIDIUM_SLEEP, IRIDIUM_RI);
-    if (sysConfig.enableIridium && !IridiumManager_init(modemPtr)) {
-        Serial.println(F("WARNING: Iridium init failed"));
+    if (sysConfig.enableIridium) {
+        IridiumManager_configure(modemPtr);
+        Serial.println(F("Iridium: configured, init deferred until first send"));
     }
 
     if (sysConfig.enableMeshtastic) {
@@ -110,9 +110,8 @@ void setup() {
         MAVLinkInterface_init();
     }
 
-    pixelsPtr = new Adafruit_NeoPixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
     if (sysConfig.enableNeoPixels) {
-        NeoPixelController_init(pixelsPtr);
+        NeoPixelController_init();
         NeoPixelController_setColor(COLOR_BOOT);
     }
 
@@ -145,7 +144,7 @@ void loop() {
     }
 
     updateLEDState();
-    if (sysConfig.enableNeoPixels && pixelsPtr && (now - lastNeoPixelUpdate >= NEOPIXEL_UPDATE_MS)) {
+    if (sysConfig.enableNeoPixels && (now - lastNeoPixelUpdate >= NEOPIXEL_UPDATE_MS)) {
         NeoPixelController_update(currentLEDState);
         lastNeoPixelUpdate = now;
     }
@@ -168,17 +167,22 @@ void loop() {
         lastMAVLinkUpdate = now;
     }
 
-    // Meshtastic position (protobuf)
+    // Meshtastic: NMEA GPS on pin 39 (D39). Send real position when fix, else "no fix" so UART sees activity.
     if (sysConfig.enableMeshtastic && StateMachine_canTransmitMeshtastic() &&
         (now - lastMeshtasticUpdate >= sysConfig.meshtasticInterval)) {
+        lastMeshtasticUpdate = now;
         if (GPSManager_hasFix()) {
             GPSData gpsData = GPSManager_getData();
             MeshtasticInterface_sendPosition(&gpsData);
-            lastMeshtasticUpdate = now;
+            Serial.println(F("Mesh: sent fix"));
+        } else {
+            MeshtasticInterface_sendNoFixNMEA();
+            Serial.println(F("Mesh: sent nofix"));
         }
     }
 
     // Iridium: position + mission stats in Recovery (and Self Test for check)
+    // Full RF switch cycle: GPS off -> Iridium on -> send -> Iridium off -> GPS on -> GPS reinit
     if (sysConfig.enableIridium && modemPtr && StateMachine_canTransmitIridium() &&
         (now - lastIridiumSend >= sysConfig.iridiumInterval)) {
         if (GPSManager_hasFix()) {
@@ -187,8 +191,12 @@ void loop() {
             MissionData_get(&mission);
             currentLEDState = LED_STATE_IRIDIUM_TX;
             if (IridiumManager_sendMissionReport(&gpsData, &mission)) {
-                lastIridiumSend = now;
+                lastIridiumSend = millis();
             }
+            // GPS was power-cycled by antenna switch, must re-init
+            Serial.println(F("GPS: Re-initializing after Iridium send..."));
+            delay(2000);
+            GPSManager_reinit();
         }
     }
 
@@ -212,12 +220,26 @@ void loop() {
 }
 
 void setupPins() {
+    // CRITICAL: Force both RF paths OFF immediately at boot.
+    // Apollo3 GPIOs default to input (high-Z) — GNSS_EN could float LOW (GPS on)
+    // and IRIDIUM_PWR_EN could float (Iridium on), damaging the AS179 switch.
     pinMode(IRIDIUM_PWR_EN, OUTPUT);
-    pinMode(GNSS_EN, OUTPUT);
+    digitalWrite(IRIDIUM_PWR_EN, LOW);     // Iridium power OFF
+    pinMode(IRIDIUM_SLEEP, OUTPUT);
+    digitalWrite(IRIDIUM_SLEEP, LOW);      // Iridium modem sleep
     pinMode(SUPERCAP_CHG_EN, OUTPUT);
+    digitalWrite(SUPERCAP_CHG_EN, LOW);    // Supercap charger OFF
+
+    // GNSS_EN must be open-drain (per SparkFun AGT schematic)
+    am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
+    pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
+    pin_config(PinName(GNSS_EN), pinCfg);
+    delay(1);
+    digitalWrite(GNSS_EN, HIGH);           // GPS power OFF (active low)
+
+    // Other pins
     pinMode(BUS_VOLTAGE_MON_EN, OUTPUT);
     pinMode(LED_WHITE, OUTPUT);
-    pinMode(IRIDIUM_SLEEP, OUTPUT);
     pinMode(IRIDIUM_NA, INPUT);
     pinMode(IRIDIUM_RI, INPUT);
     pinMode(SUPERCAP_PGOOD, INPUT);
@@ -225,12 +247,8 @@ void setupPins() {
     pinMode(RELAY_POWER_MGMT, OUTPUT);
     pinMode(RELAY_TIMED_EVENT, OUTPUT);
 
-    digitalWrite(IRIDIUM_PWR_EN, LOW);
-    digitalWrite(GNSS_EN, LOW);
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
     digitalWrite(BUS_VOLTAGE_MON_EN, HIGH);
     digitalWrite(LED_WHITE, LOW);
-    digitalWrite(IRIDIUM_SLEEP, LOW);
     digitalWrite(RELAY_POWER_MGMT, LOW);
     digitalWrite(RELAY_TIMED_EVENT, LOW);
 }

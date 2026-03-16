@@ -25,6 +25,9 @@ struct GPSData {
 // Initialize GPS module
 bool GPSManager_init(SFE_UBLOX_GNSS* gps);
 
+// Re-initialize GPS after power cycle (e.g. after Iridium send)
+bool GPSManager_reinit();
+
 // Update GPS data (call in loop)
 void GPSManager_update();
 

@@ -6,7 +6,10 @@
 #include "psm_interface.h"
 #include "mission_data.h"
 
-// Initialize Iridium modem
+// Configure Iridium pins and serial (does NOT power on modem)
+void IridiumManager_configure(IridiumSBD* modem);
+
+// Full init with power-on test (handles antenna switch)
 bool IridiumManager_init(IridiumSBD* modem);
 
 // Send position report (legacy)

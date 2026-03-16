@@ -46,7 +46,7 @@
 #define MAVLINK_SERIAL       Serial  // USB to Navigator
 
 #define IRIDIUM_BAUD         19200
-#define MESHTASTIC_BAUD      4800    // Low baud for reliable software serial TX
+#define MESHTASTIC_BAUD      4800    // NMEA 0183 standard; AGT TX -> Meshtastic J10 (external GPS)
 #define DEBUG_BAUD           115200
 #define MAVLINK_BAUD         57600
 
@@ -55,7 +55,7 @@
 // ============================================================================
 #define GPS_FIX_TIMEOUT_MS         180000  // 3 minutes
 #define IRIDIUM_SEND_INTERVAL_MS   600000  // 10 minutes
-#define MESHTASTIC_UPDATE_MS       30000   // 30 seconds
+#define MESHTASTIC_UPDATE_MS       3000    // 3 seconds
 #define MAVLINK_UPDATE_MS          1000    // 1 Hz
 #define PSM_UPDATE_MS              5000    // 5 seconds
 #define NEOPIXEL_UPDATE_MS         100     // 10 Hz for animations
@@ -157,7 +157,7 @@ struct SystemConfig {
 
 // Default configuration
 #define DEFAULT_IRIDIUM_INTERVAL     600000
-#define DEFAULT_MESHTASTIC_INTERVAL  30000
+#define DEFAULT_MESHTASTIC_INTERVAL  3000
 #define DEFAULT_MAVLINK_INTERVAL     1000
 #define DEFAULT_POWER_SAVE_VOLTAGE   11.5
 

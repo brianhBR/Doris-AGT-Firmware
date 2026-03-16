@@ -4,29 +4,25 @@
 #include "gps_manager.h"
 
 /*
- * Meshtastic RAK4603 Interface (PROTO MODE - Client API)
+ * Meshtastic RAK4603 Interface - NMEA GPS output to J10
  *
- * IMPORTANT: Configure RAK4603 in PROTO mode:
- *   meshtastic --set serial.mode PROTO
- *   meshtastic --commit
+ * The AGT outputs standard NMEA 0183 sentences (GPGGA, GPRMC) on the serial
+ * connected to Meshtastic's J10. J10 is UART1 on the RAK board (same port
+ * as the RAK GPS module). Configure Meshtastic to use external GPS on that
+ * port; it will read NMEA and use the position for the node.
  *
- * Uses the Meshtastic serial protocol with Protocol Buffers.
- *
- * Protocol:
- *   - 4-byte header: [0x94, 0xc3, length_MSB, length_LSB]
- *   - Followed by protobuf-encoded ToRadio/FromRadio message
- *
- * Position messages use POSITION_APP portnum and proper GPS coordinates.
- * Text messages use TEXT_MESSAGE_APP portnum.
- *
- * Reference: https://meshtastic.org/docs/development/device/client-api/
+ * Wiring: AGT TX (config MESHTASTIC_TX_PIN) -> Meshtastic J10 RX
+ * Baud: 4800 (MESHTASTIC_BAUD) - standard NMEA
  */
 
 // Initialize Meshtastic interface
 void MeshtasticInterface_init();
 
-// Send position update to Meshtastic
+// Send position update to Meshtastic (NMEA GGA + RMC)
 bool MeshtasticInterface_sendPosition(GPSData* gpsData);
+
+// Send "no fix" NMEA so pin 39 has activity for debugging (UART monitor)
+void MeshtasticInterface_sendNoFixNMEA();
 
 // Send custom text message
 bool MeshtasticInterface_sendText(const char* message);

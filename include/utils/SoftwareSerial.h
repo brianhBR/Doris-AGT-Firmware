@@ -21,7 +21,8 @@ public:
 private:
     uint8_t _rxPin;
     uint8_t _txPin;
-    uint32_t _bitDelay;  // Microseconds per bit
+    uint32_t _bitDelay;   // Microseconds per bit
+    uint32_t _bitCycles;  // CPU cycles per bit (for DWT timing)
 
     // Ring buffer for RX
     static const uint8_t RX_BUFFER_SIZE = 64;

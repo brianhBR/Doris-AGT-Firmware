@@ -3,83 +3,85 @@
 #include <Arduino.h>
 
 static IridiumSBD* modemPtr = nullptr;
+static bool modemConfigured = false;
 static bool modemReady = false;
 
-// Timing constants from SparkFun examples
-#define SUPERCAP_CHARGE_TIMEOUT_MS  120000  // 2 minutes for 1F @ 150mA
-#define SUPERCAP_TOPUP_MS           10000   // 10 seconds top-up charge
-#define INITIAL_CHARGE_DELAY_MS     2000    // Initial settling time
-#define VBAT_LOW                    2.8     // Minimum battery voltage
+#define SUPERCAP_CHARGE_TIMEOUT_MS  120000
+#define SUPERCAP_TOPUP_MS           10000
+#define INITIAL_CHARGE_DELAY_MS     2000
+#define VBAT_LOW                    2.8
 
-// Callback for Iridium diagnostics
 bool ISBDCallback() {
-    // Feed watchdog or update status LEDs here if needed
+    if ((millis() / 250) % 2 == 1)
+        digitalWrite(LED_WHITE, HIGH);
+    else
+        digitalWrite(LED_WHITE, LOW);
     return true;
 }
 
-// Helper function to read bus voltage
 static float getBusVoltage() {
-    // Enable bus voltage monitor
     pinMode(BUS_VOLTAGE_MON_EN, OUTPUT);
     digitalWrite(BUS_VOLTAGE_MON_EN, HIGH);
-    delay(10);  // Allow time for reading to stabilize
-
-    // Read voltage (divided by 3 on the AGT board)
+    delay(10);
     int rawValue = analogRead(BUS_VOLTAGE_PIN);
-    float voltage = (rawValue / 16384.0) * 2.0 * 3.0;  // Apollo3 ADC is 14-bit, 2V ref, divide-by-3
-
-    // Disable bus voltage monitor to save power
+    float voltage = (rawValue / 16384.0) * 2.0 * 3.0;
     digitalWrite(BUS_VOLTAGE_MON_EN, LOW);
-
     return voltage;
 }
 
-bool IridiumManager_init(IridiumSBD* modem) {
-    modemPtr = modem;
+// ============================================================================
+// AS179 RF ANTENNA SWITCH CONTROL
+// GNSS_EN and IRIDIUM_PWR_EN must NEVER both be active simultaneously.
+//   GPS mode:     GNSS_EN=LOW (on), IRIDIUM_PWR_EN=LOW (off)
+//   Iridium mode: GNSS_EN=HIGH (off), IRIDIUM_PWR_EN=HIGH (on)
+// ============================================================================
+static void configureGnssEnPin() {
+    am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
+    pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
+    pin_config(PinName(GNSS_EN), pinCfg);
+    delay(1);
+}
 
-    // Initialize pins - follow SparkFun example setup order
-    pinMode(IRIDIUM_PWR_EN, OUTPUT);
-    pinMode(IRIDIUM_SLEEP, OUTPUT);
-    pinMode(SUPERCAP_CHG_EN, OUTPUT);
-    pinMode(SUPERCAP_PGOOD, INPUT);
-    pinMode(IRIDIUM_RI, INPUT);
-    pinMode(IRIDIUM_NA, INPUT);
-
-    // Start with everything OFF (safe state)
+static void switchToGPS() {
+    Serial.println(F("[RF] Switch -> GPS (Iridium OFF first, then GPS ON)"));
     digitalWrite(IRIDIUM_PWR_EN, LOW);
     digitalWrite(IRIDIUM_SLEEP, LOW);
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    delay(250);
+    configureGnssEnPin();
+    digitalWrite(GNSS_EN, LOW);
+    delay(750);
+}
 
-    Serial.println(F("================================"));
-    Serial.println(F("Iridium: Initialization starting"));
-    Serial.println(F("================================"));
+static void switchToIridium() {
+    Serial.println(F("[RF] Switch -> Iridium (GPS OFF first, then Iridium ON)"));
+    configureGnssEnPin();
+    digitalWrite(GNSS_EN, HIGH);
+    delay(250);
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(250);
+}
 
-    // Step 1: Enable the supercapacitor charger
-    Serial.println(F("Iridium: Enabling supercapacitor charger..."));
+// ============================================================================
+// SUPERCAP CHARGE (shared by init and send)
+// ============================================================================
+static bool chargeSupercaps() {
+    Serial.println(F("Iridium: Charging supercaps..."));
     digitalWrite(SUPERCAP_CHG_EN, HIGH);
-
-    // Step 2: Initial delay for charger settling
-    Serial.println(F("Iridium: Waiting for supercapacitors to charge..."));
     delay(INITIAL_CHARGE_DELAY_MS);
 
-    // Step 3: Wait for PGOOD to go HIGH (with timeout and battery monitoring)
-    bool pgoodReceived = false;
     unsigned long startTime = millis();
-
+    bool pgoodReceived = false;
     while (!pgoodReceived && (millis() - startTime < SUPERCAP_CHARGE_TIMEOUT_MS)) {
         pgoodReceived = (digitalRead(SUPERCAP_PGOOD) == HIGH);
-
-        // Check battery voltage - abort if too low
         float vbat = getBusVoltage();
         if (vbat < VBAT_LOW) {
-            Serial.print(F("Iridium: Battery voltage too low ("));
+            Serial.print(F("Iridium: Battery too low ("));
             Serial.print(vbat, 2);
             Serial.println(F("V) - aborting"));
             digitalWrite(SUPERCAP_CHG_EN, LOW);
             return false;
         }
-
-        delay(100);  // Don't pound the bus voltage monitor too hard
+        delay(100);
     }
 
     if (!pgoodReceived) {
@@ -88,58 +90,71 @@ bool IridiumManager_init(IridiumSBD* modem) {
         return false;
     }
 
-    Serial.println(F("Iridium: Supercap PGOOD received"));
-
-    // Step 4: CRITICAL - Give supercaps extra time to top-up charge
-    Serial.println(F("Iridium: Top-up charging supercapacitors..."));
+    Serial.println(F("Iridium: PGOOD, top-up..."));
     unsigned long topupStart = millis();
-
     while ((millis() - topupStart) < SUPERCAP_TOPUP_MS) {
-        // Continue monitoring battery voltage during top-up
         float vbat = getBusVoltage();
         if (vbat < VBAT_LOW) {
-            Serial.print(F("Iridium: Battery voltage too low during top-up ("));
-            Serial.print(vbat, 2);
-            Serial.println(F("V) - aborting"));
+            Serial.println(F("Iridium: Battery low during top-up - aborting"));
             digitalWrite(SUPERCAP_CHG_EN, LOW);
             return false;
         }
-
         delay(100);
     }
 
     Serial.println(F("Iridium: Supercap charging complete"));
+    return true;
+}
 
-    // Step 5: Enable power for the 9603N
-    Serial.println(F("Iridium: Enabling 9603N power..."));
-    digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);  // SparkFun uses 1 second delay here
-
-    // Step 6: Initialize Serial1 for Iridium communication
-    // Note: SparkFun examples handle this via IridiumSBD::beginSerialPort
-    // but we're using the standard IridiumSBD library which doesn't expose that
+// ============================================================================
+// CONFIGURE (called at startup, does NOT power on the modem)
+// ============================================================================
+void IridiumManager_configure(IridiumSBD* modem) {
+    modemPtr = modem;
+    pinMode(SUPERCAP_PGOOD, INPUT);
+    pinMode(IRIDIUM_RI, INPUT);
+    pinMode(IRIDIUM_NA, INPUT);
     IRIDIUM_SERIAL.begin(IRIDIUM_BAUD);
+    modemPtr->setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
+    modemPtr->adjustSendReceiveTimeout(180);
+    modemConfigured = true;
+}
 
-    // Step 7: Set power profile - use USB profile to relax timing for supercap recharge
-    Serial.println(F("Iridium: Configuring power profile..."));
+// ============================================================================
+// INIT (full power-on test, handles antenna switch)
+// ============================================================================
+bool IridiumManager_init(IridiumSBD* modem) {
+    modemPtr = modem;
+    modemConfigured = true;
+
+    pinMode(SUPERCAP_PGOOD, INPUT);
+    pinMode(IRIDIUM_RI, INPUT);
+    pinMode(IRIDIUM_NA, INPUT);
+
+    Serial.println(F("================================"));
+    Serial.println(F("Iridium: Initialization starting"));
+    Serial.println(F("================================"));
+
+    switchToIridium();
+
+    if (!chargeSupercaps()) {
+        switchToGPS();
+        return false;
+    }
+
+    IRIDIUM_SERIAL.begin(IRIDIUM_BAUD);
     modemPtr->setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
     modemPtr->adjustSendReceiveTimeout(180);
 
-    // Step 8: Begin modem (this can take a while)
     Serial.println(F("Iridium: Starting modem..."));
     int err = modemPtr->begin();
 
     if (err != ISBD_SUCCESS) {
         Serial.print(F("Iridium: Begin failed: error "));
         Serial.println(err);
-
-        // Clean up on failure
-        digitalWrite(IRIDIUM_SLEEP, LOW);
-        delay(1000);
-        digitalWrite(IRIDIUM_PWR_EN, LOW);
-        delay(1000);
+        modemPtr->sleep();
         digitalWrite(SUPERCAP_CHG_EN, LOW);
-
+        switchToGPS();
         modemReady = false;
         return false;
     }
@@ -148,126 +163,49 @@ bool IridiumManager_init(IridiumSBD* modem) {
     Serial.println(F("Iridium: Initialized successfully"));
     Serial.println(F("================================"));
 
+    modemPtr->sleep();
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    switchToGPS();
+
     modemReady = true;
     return true;
 }
 
-bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData) {
-    if (modemPtr == nullptr || !modemReady) {
-        Serial.println(F("Iridium: Modem not ready"));
-        return false;
-    }
+// ============================================================================
+// Helper: format float as integer.fraction for Apollo3 (no %f in snprintf)
+// ============================================================================
+static int appendFloat(char* buf, int pos, int maxLen, double val, int decimals) {
+    long intPart = (long)val;
+    double fracVal = val - intPart;
+    if (fracVal < 0) fracVal = -fracVal;
 
-    if (!gpsData->valid) {
-        Serial.println(F("Iridium: GPS data not valid"));
-        return false;
-    }
+    long fracPart = 0;
+    long multiplier = 1;
+    for (int i = 0; i < decimals; i++) multiplier *= 10;
+    fracPart = (long)(fracVal * multiplier + 0.5);
+    if (fracPart >= multiplier) { fracPart = 0; intPart += (val >= 0) ? 1 : -1; }
 
-    // Check battery voltage before transmission
-    float vbat = getBusVoltage();
-    if (vbat < VBAT_LOW) {
-        Serial.print(F("Iridium: Battery too low for transmission ("));
-        Serial.print(vbat, 2);
-        Serial.println(F("V)"));
-        return false;
-    }
-
-    // Format message following SparkFun format
-    char message[340];  // Iridium max message size
-    snprintf(message, sizeof(message),
-             "LAT:%.6f,LON:%.6f,ALT:%.1f,SPD:%.1f,SAT:%d,BATT:%.2fV,%.2fA",
-             gpsData->latitude,
-             gpsData->longitude,
-             gpsData->altitude,
-             gpsData->speed,
-             gpsData->satellites,
-             battData->voltage,
-             battData->current);
-
-    Serial.print(F("Iridium: Transmitting: "));
-    Serial.println(message);
-
-    // Wake modem (already done during init, but ensure it's awake)
-    digitalWrite(IRIDIUM_SLEEP, HIGH);
-    delay(100);
-
-    // Get signal quality first
-    int signalQuality;
-    int err = modemPtr->getSignalQuality(signalQuality);
-
-    if (err != ISBD_SUCCESS) {
-        Serial.println(F("Iridium: Signal quality check failed"));
-        return false;
-    }
-
-    Serial.print(F("Iridium: Signal quality: "));
-    Serial.println(signalQuality);
-
-    if (signalQuality < 2) {
-        Serial.println(F("Iridium: Signal too weak"));
-        return false;
-    }
-
-    // Send message
-    err = modemPtr->sendSBDText(message);
-
-    if (err != ISBD_SUCCESS) {
-        Serial.print(F("Iridium: Send failed: error "));
-        Serial.println(err);
-        return false;
-    }
-
-    Serial.println(F("Iridium: >>> Message sent! <<<"));
-
-    // Clear the Mobile Originated message buffer (SparkFun recommendation)
-    Serial.println(F("Iridium: Clearing MO buffer..."));
-    err = modemPtr->clearBuffers(ISBD_CLEAR_MO);
-
-    if (err != ISBD_SUCCESS) {
-        Serial.print(F("Iridium: Clear buffer warning: error "));
-        Serial.println(err);
-        // Don't fail on buffer clear error
-    }
-
-    return true;
+    int written;
+    if (decimals == 6)
+        written = snprintf(buf + pos, maxLen - pos, "%ld.%06ld", intPart, fracPart);
+    else if (decimals == 2)
+        written = snprintf(buf + pos, maxLen - pos, "%ld.%02ld", intPart, fracPart);
+    else
+        written = snprintf(buf + pos, maxLen - pos, "%ld.%01ld", intPart, fracPart);
+    return (written > 0) ? pos + written : pos;
 }
 
-bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
-    if (modemPtr == nullptr || !modemReady || !gpsData->valid) {
-        return false;
-    }
-    float vbat = getBusVoltage();
-    if (vbat < VBAT_LOW) return false;
-
-    char message[340];
-    if (mission) {
-        snprintf(message, sizeof(message),
-                 "LAT:%.6f,LON:%.6f,ALT:%.1f,SAT:%d,V:%.2f,LEAK:%d,MAXD:%.1fm",
-                 gpsData->latitude, gpsData->longitude, gpsData->altitude,
-                 gpsData->satellites, mission->battery_voltage > 0 ? mission->battery_voltage : vbat,
-                 mission->leak_detected ? 1 : 0, mission->max_depth_m);
-    } else {
-        snprintf(message, sizeof(message),
-                 "LAT:%.6f,LON:%.6f,ALT:%.1f,SAT:%d,V:%.2f",
-                 gpsData->latitude, gpsData->longitude, gpsData->altitude,
-                 gpsData->satellites, vbat);
-    }
-
-    digitalWrite(IRIDIUM_SLEEP, HIGH);
-    delay(100);
-    int err = modemPtr->sendSBDText(message);
-    if (err == ISBD_SUCCESS) {
-        modemPtr->clearBuffers(ISBD_CLEAR_MO);
-    }
-    return (err == ISBD_SUCCESS);
-}
-
-bool IridiumManager_sendMessage(const char* message) {
-    if (modemPtr == nullptr || !modemReady) {
+// ============================================================================
+// SEND — full antenna switch cycle:
+//   GPS off -> supercap charge -> modem wake -> send -> modem sleep -> GPS on
+// Returns true on success. Caller must re-init GPS after (power was cycled).
+// ============================================================================
+static bool iridiumSendText(const char* message) {
+    if (modemPtr == nullptr || !modemConfigured) {
+        Serial.println(F("Iridium: Not configured"));
         return false;
     }
 
-    // Check battery voltage
     float vbat = getBusVoltage();
     if (vbat < VBAT_LOW) {
         Serial.print(F("Iridium: Battery too low ("));
@@ -276,126 +214,220 @@ bool IridiumManager_sendMessage(const char* message) {
         return false;
     }
 
-    digitalWrite(IRIDIUM_SLEEP, HIGH);
-    delay(100);
+    switchToIridium();
 
-    int err = modemPtr->sendSBDText(message);
-
-    if (err == ISBD_SUCCESS) {
-        // Clear MO buffer after successful send
-        modemPtr->clearBuffers(ISBD_CLEAR_MO);
+    if (!chargeSupercaps()) {
+        switchToGPS();
+        return false;
     }
 
-    return (err == ISBD_SUCCESS);
+    Serial.println(F("Iridium: Waking modem..."));
+    int err = modemPtr->begin();
+    if (err != ISBD_SUCCESS) {
+        Serial.print(F("Iridium: Wake failed, error="));
+        Serial.println(err);
+        modemPtr->sleep();
+        digitalWrite(SUPERCAP_CHG_EN, LOW);
+        switchToGPS();
+        return false;
+    }
+    modemReady = true;
+
+    int csq = -1;
+    err = modemPtr->getSignalQuality(csq);
+    if (err == ISBD_SUCCESS) {
+        Serial.print(F("Iridium: Signal quality (CSQ): "));
+        Serial.print(csq);
+        Serial.println(F("/5"));
+    }
+
+    Serial.print(F("Iridium: Sending: "));
+    Serial.println(message);
+    err = modemPtr->sendSBDText(message);
+
+    bool success = (err == ISBD_SUCCESS);
+    if (success) {
+        Serial.println(F("Iridium: >>> Message sent! <<<"));
+        modemPtr->clearBuffers(ISBD_CLEAR_MO);
+    } else {
+        Serial.print(F("Iridium: Send failed: error "));
+        Serial.println(err);
+    }
+
+    modemPtr->sleep();
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    switchToGPS();
+
+    return success;
+}
+
+bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData) {
+    if (!gpsData->valid) {
+        Serial.println(F("Iridium: GPS data not valid"));
+        return false;
+    }
+
+    char message[340];
+    int pos = 0;
+    pos += snprintf(message + pos, sizeof(message) - pos, "LAT:");
+    pos = appendFloat(message, pos, sizeof(message), gpsData->latitude, 6);
+    pos += snprintf(message + pos, sizeof(message) - pos, ",LON:");
+    pos = appendFloat(message, pos, sizeof(message), gpsData->longitude, 6);
+    pos += snprintf(message + pos, sizeof(message) - pos, ",ALT:");
+    pos = appendFloat(message, pos, sizeof(message), gpsData->altitude, 1);
+    pos += snprintf(message + pos, sizeof(message) - pos, ",SPD:");
+    pos = appendFloat(message, pos, sizeof(message), gpsData->speed, 1);
+    pos += snprintf(message + pos, sizeof(message) - pos, ",SAT:%d,BATT:", gpsData->satellites);
+    pos = appendFloat(message, pos, sizeof(message), battData->voltage, 2);
+    pos += snprintf(message + pos, sizeof(message) - pos, "V,");
+    pos = appendFloat(message, pos, sizeof(message), battData->current, 2);
+    snprintf(message + pos, sizeof(message) - pos, "A");
+
+    return iridiumSendText(message);
+}
+
+bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
+    if (!gpsData->valid) return false;
+    float vbat = getBusVoltage();
+
+    char message[340];
+    int pos = 0;
+    pos += snprintf(message + pos, sizeof(message) - pos, "LAT:");
+    pos = appendFloat(message, pos, sizeof(message), gpsData->latitude, 6);
+    pos += snprintf(message + pos, sizeof(message) - pos, ",LON:");
+    pos = appendFloat(message, pos, sizeof(message), gpsData->longitude, 6);
+    pos += snprintf(message + pos, sizeof(message) - pos, ",ALT:");
+    pos = appendFloat(message, pos, sizeof(message), gpsData->altitude, 1);
+    pos += snprintf(message + pos, sizeof(message) - pos, ",SAT:%d", gpsData->satellites);
+
+    if (mission) {
+        float v = mission->battery_voltage > 0 ? mission->battery_voltage : vbat;
+        pos += snprintf(message + pos, sizeof(message) - pos, ",V:");
+        pos = appendFloat(message, pos, sizeof(message), v, 2);
+        pos += snprintf(message + pos, sizeof(message) - pos, ",LEAK:%d,MAXD:",
+                        mission->leak_detected ? 1 : 0);
+        pos = appendFloat(message, pos, sizeof(message), mission->max_depth_m, 1);
+        snprintf(message + pos, sizeof(message) - pos, "m");
+    } else {
+        pos += snprintf(message + pos, sizeof(message) - pos, ",V:");
+        pos = appendFloat(message, pos, sizeof(message), vbat, 2);
+    }
+
+    return iridiumSendText(message);
+}
+
+bool IridiumManager_sendMessage(const char* message) {
+    return iridiumSendText(message);
 }
 
 bool IridiumManager_sendBinary(uint8_t* data, size_t length) {
-    if (modemPtr == nullptr || !modemReady) {
-        return false;
-    }
+    if (modemPtr == nullptr || !modemConfigured) return false;
+    if (length > 340) return false;
 
-    if (length > 340) {  // Iridium max message size
-        return false;
-    }
-
-    // Check battery voltage
     float vbat = getBusVoltage();
-    if (vbat < VBAT_LOW) {
+    if (vbat < VBAT_LOW) return false;
+
+    switchToIridium();
+    if (!chargeSupercaps()) {
+        switchToGPS();
         return false;
     }
 
-    digitalWrite(IRIDIUM_SLEEP, HIGH);
-    delay(100);
-
-    int err = modemPtr->sendSBDBinary(data, length);
-
-    if (err == ISBD_SUCCESS) {
-        // Clear MO buffer after successful send
-        modemPtr->clearBuffers(ISBD_CLEAR_MO);
+    int err = modemPtr->begin();
+    if (err != ISBD_SUCCESS) {
+        modemPtr->sleep();
+        digitalWrite(SUPERCAP_CHG_EN, LOW);
+        switchToGPS();
+        return false;
     }
 
-    return (err == ISBD_SUCCESS);
+    err = modemPtr->sendSBDBinary(data, length);
+    bool success = (err == ISBD_SUCCESS);
+    if (success) modemPtr->clearBuffers(ISBD_CLEAR_MO);
+
+    modemPtr->sleep();
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    switchToGPS();
+
+    return success;
 }
 
 bool IridiumManager_checkMessages(char* buffer, size_t* bufferSize) {
-    if (modemPtr == nullptr || !modemReady) {
+    if (modemPtr == nullptr || !modemConfigured) return false;
+
+    switchToIridium();
+    if (!chargeSupercaps()) {
+        switchToGPS();
         return false;
     }
 
-    digitalWrite(IRIDIUM_SLEEP, HIGH);
-    delay(100);
-
-    size_t rxBufferSize = *bufferSize;
-    int err = modemPtr->sendReceiveSBDText(nullptr, (uint8_t*)buffer, rxBufferSize);
-
-    if (err == ISBD_SUCCESS && rxBufferSize > 0) {
-        *bufferSize = rxBufferSize;
-        return true;
+    int err = modemPtr->begin();
+    if (err != ISBD_SUCCESS) {
+        modemPtr->sleep();
+        digitalWrite(SUPERCAP_CHG_EN, LOW);
+        switchToGPS();
+        return false;
     }
 
-    return false;
+    size_t rxBufferSize = *bufferSize;
+    err = modemPtr->sendReceiveSBDText(nullptr, (uint8_t*)buffer, rxBufferSize);
+
+    bool success = (err == ISBD_SUCCESS && rxBufferSize > 0);
+    if (success) *bufferSize = rxBufferSize;
+
+    modemPtr->sleep();
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    switchToGPS();
+
+    return success;
 }
 
 int IridiumManager_getSignalQuality() {
-    if (modemPtr == nullptr || !modemReady) {
+    if (modemPtr == nullptr || !modemConfigured) return -1;
+
+    switchToIridium();
+    if (!chargeSupercaps()) {
+        switchToGPS();
+        return -1;
+    }
+
+    int err = modemPtr->begin();
+    if (err != ISBD_SUCCESS) {
+        modemPtr->sleep();
+        digitalWrite(SUPERCAP_CHG_EN, LOW);
+        switchToGPS();
         return -1;
     }
 
     int signalQuality;
-    digitalWrite(IRIDIUM_SLEEP, HIGH);
-    delay(100);
+    err = modemPtr->getSignalQuality(signalQuality);
 
-    int err = modemPtr->getSignalQuality(signalQuality);
+    modemPtr->sleep();
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    switchToGPS();
 
-    if (err == ISBD_SUCCESS) {
-        return signalQuality;
-    }
-
-    return -1;
+    return (err == ISBD_SUCCESS) ? signalQuality : -1;
 }
 
 void IridiumManager_sleep() {
-    if (modemPtr == nullptr) {
-        return;
-    }
-
+    if (modemPtr == nullptr) return;
     Serial.println(F("Iridium: Powering down..."));
-
-    // Follow SparkFun power-down sequence
-    // Step 1: Put modem to sleep
-    Serial.println(F("Iridium: Putting 9603N to sleep..."));
-    int err = modemPtr->sleep();
-    if (err != ISBD_SUCCESS) {
-        Serial.print(F("Iridium: Sleep warning: error "));
-        Serial.println(err);
-    }
-
-    // Step 2: Disable 9603N via ON/OFF pin
-    Serial.println(F("Iridium: Disabling 9603N power..."));
+    modemPtr->sleep();
     digitalWrite(IRIDIUM_SLEEP, LOW);
-    delay(1000);
-
-    // Step 3: Disable Iridium power
+    delay(100);
     digitalWrite(IRIDIUM_PWR_EN, LOW);
-    delay(1000);
-
-    // Step 4: Disable supercapacitor charger
-    Serial.println(F("Iridium: Disabling supercapacitor charger..."));
+    delay(100);
     digitalWrite(SUPERCAP_CHG_EN, LOW);
-
     Serial.println(F("Iridium: Power down complete"));
 }
 
 void IridiumManager_wake() {
-    // This would require re-running the full init procedure
-    // Just enable the hardware for now
+    switchToIridium();
     digitalWrite(SUPERCAP_CHG_EN, HIGH);
-    delay(100);
-    digitalWrite(IRIDIUM_PWR_EN, HIGH);
     delay(100);
     digitalWrite(IRIDIUM_SLEEP, HIGH);
 }
 
 bool IridiumManager_isReady() {
-    return modemReady;
+    return modemConfigured;
 }

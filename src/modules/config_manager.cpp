@@ -72,7 +72,7 @@ void ConfigManager_setDefaults(SystemConfig* config) {
     config->enableMeshtastic = true;
     config->enableMAVLink = true;
     config->enablePSM = false;  // Disabled - causes MbedOS mutex issues
-    config->enableNeoPixels = false;  // Disabled - may cause RTOS issues
+    config->enableNeoPixels = true;
 
     // Timed event disabled by default
     config->timedEvent.enabled = false;
