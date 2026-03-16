@@ -2,6 +2,33 @@
 
 Visual reference for connecting peripherals to the Doris AGT firmware.
 
+## Assembly Pinout (one-page reference)
+
+Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-reference with the board label (e.g. D4, AD32).
+
+| GPIO | Board label | Function | Direction | Connect to |
+|------|-------------|----------|-----------|------------|
+| **4** | D4 | Relay 1 – Power mgmt | OUT | Relay module IN (Navigator/Pi, camera, lights) |
+| **11** | AD11 | PSM voltage | Analog IN | PSM V_OUT |
+| **12** | AD12 | PSM current | Analog IN | PSM I_OUT |
+| **32** | AD32 | NeoPixel data | OUT | WS2812B strip DIN (30 LEDs, external 5V) |
+| **35** | AD35 | Relay 2 – Drop weight | OUT | Relay module IN (ballast release; relay coil from battery) |
+| **39** | J10 pin 1 (SCL4) | Meshtastic TX (NMEA) | OUT | RAK J10 RX (external GPS UART) |
+| **40** | J10 pin 2 (SDA4) | Meshtastic RX | IN | RAK J10 TX (optional) |
+| — | J10 pin 3 | 3.3V | — | RAK VCC (if powering from AGT) |
+| — | J10 pin 4 | GND | — | RAK GND |
+
+**Onboard (no wiring):** GPS (ZOE-M8Q) on I2C; Iridium 9603N on Serial1 (D24/D25).  
+**USB:** Debug + MAVLink to Navigator (single USB-C).
+
+**Notes:**
+- **J10:** AGT TX (39) → RAK RX. Baud **4800** (NMEA). Configure RAK for external GPS on J10.
+- **Relay 2:** Signal from GPIO35; relay coil and load powered from **battery** (12–14.8 V).
+- **NeoPixels:** Data from GPIO32 only; **power strip from external 5 V** (do not use AGT 3.3 V).
+- **PSM:** GND and analog only; PSM powered from battery sense side.
+
+---
+
 ## Board Overview
 
 ![AGT Top View](../SparkFun_Artemis_Global_Tracker/Hardware/Artemis_Global_Tracker_TOP_VIEW.png)
@@ -10,7 +37,7 @@ Visual reference for connecting peripherals to the Doris AGT firmware.
 
 | Connection | Location | Pins | Notes |
 |------------|----------|------|-------|
-| **Meshtastic RAK4603** | J10 (Qwiic I2C Port 4) | D39/D40 | UART1 TX/RX on I2C pins |
+| **Meshtastic RAK4603** | J10 (Qwiic I2C Port 4) | D39/D40 | NMEA GPS out (TX) to RAK J10 (external GPS), 4800 baud |
 | **PSM Voltage** | Breakout Pins | GPIO11 (AD11) | Analog input |
 | **PSM Current** | Breakout Pins | GPIO12 (AD12) | Analog input |
 | **Relay 1 (Power)** | Breakout Pins | GPIO4 (D4) | Navigator/Pi/Camera/Lights |
@@ -25,6 +52,8 @@ Visual reference for connecting peripherals to the Doris AGT firmware.
 
 **Location:** J10 - Qwiic connector labeled "I2C Port 4" on the TOP_VIEW diagram
 
+The AGT outputs **NMEA 0183** GPS sentences to Meshtastic's **J10** (UART1 / external GPS port on the RAK board). The RAK treats the AGT as an external GPS source.
+
 ```
 J10 Qwiic Connector Pinout (standard Qwiic 4-pin):
 ┌─────────────────┐
@@ -36,36 +65,25 @@ J10 Qwiic Connector Pinout (standard Qwiic 4-pin):
 
 **Wiring:**
 ```
-AGT J10             →  RAK4603
-──────────────────────────────────
-Pin 1 D39 (SCL4)    →  RX (UART RX)
-Pin 2 D40 (SDA4)    →  TX (UART TX)
+AGT J10             →  RAK4603 J10 (external GPS UART)
+──────────────────────────────────────────────────────
+Pin 1 D39 (TX)      →  RAK J10 RX  (NMEA GPS in)
+Pin 2 D40 (RX)      →  RAK J10 TX  (optional)
 Pin 3 (3.3V)        →  VCC
 Pin 4 (GND)         →  GND
 ```
 
 **Pin Functions:**
-- **GPIO39 (D39)** - Default: I2C Port 4 SCL | **Using as: UART1 TX**
-- **GPIO40 (D40)** - Default: I2C Port 4 SDA | **Using as: UART1 RX**
+- **GPIO39 (D39)** - **AGT TX** → NMEA sentences (GGA, RMC) to RAK J10 RX
+- **GPIO40 (D40)** - **AGT RX** → optional (e.g. from RAK J10 TX)
 - **3.3V** - Power supply (max 600mA from regulator)
 - **GND** - Common ground
 
-**Important:** We're repurposing the I2C Port 4 pins for UART1 serial communication. The Apollo3 chip allows these pins to function as either I2C or UART.
-
 **Configuration:**
-```cpp
-// Create UART instance 0 using pins 39 (TX) and 40 (RX)
-UART MeshtasticSerial(0, 39, 40);  // UART0 instance, TX=39, RX=40
-MeshtasticSerial.begin(115200);
-```
+- **Baud:** 4800 (NMEA 0183 standard)
+- **Format:** Standard NMEA; RAK expects external GPS on J10 (same port as RAK GPS module)
 
-**RAK4603 Setup:**
-```bash
-meshtastic --set serial.mode PROTO
-meshtastic --set serial.enabled true
-meshtastic --set serial.baud BAUD_115200
-meshtastic --commit
-```
+**RAK4603 / Meshtastic setup:** Configure the device to use **external GPS** on the J10 UART (UART1). No PROTO mode needed—the RAK just reads NMEA from that port.
 
 ---
 
@@ -223,8 +241,8 @@ Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 │  │ J10 (I2C Port 4)     │  Qwiic Connector                │
 │  │ Repurposed as UART1  │                                  │
 │  │                      │                                  │
-│  │ 1. D39 (SCL4/TX1)────┼───► RAK4603 RX                  │
-│  │ 2. D40 (SDA4/RX1)────┼───► RAK4603 TX                  │
+│  │ 1. D39 (TX) NMEA ────┼───► RAK J10 RX (external GPS)   │
+│  │ 2. D40 (RX) ─────────┼───► RAK J10 TX (optional)      │
 │  │ 3. 3.3V          ────┼───► VCC                          │
 │  │ 4. GND           ────┼───► GND                          │
 │  └──────────────────────┘                                  │
@@ -358,7 +376,7 @@ The TOP_VIEW image shows all breakout pins with labels. Key pins for this projec
 
 Before deployment, verify:
 
-- [ ] RAK4603 communicates (check serial output)
+- [ ] RAK4603 receives NMEA on J10 (external GPS); node shows position
 - [ ] PSM voltage/current readings correct
 - [ ] Relay 1 switches Navigator/Pi power
 - [ ] Relay 2 activates drop weight mechanism

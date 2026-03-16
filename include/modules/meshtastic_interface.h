@@ -24,6 +24,9 @@ bool MeshtasticInterface_sendPosition(GPSData* gpsData);
 // Send "no fix" NMEA so pin 39 has activity for debugging (UART monitor)
 void MeshtasticInterface_sendNoFixNMEA();
 
+// Send hardcoded test NMEA with valid coordinates (for debugging Meshtastic link)
+void MeshtasticInterface_sendTestNMEA();
+
 // Send custom text message
 bool MeshtasticInterface_sendText(const char* message);
 

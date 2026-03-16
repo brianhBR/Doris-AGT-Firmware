@@ -144,6 +144,14 @@ void MeshtasticInterface_sendNoFixNMEA() {
     MeshtasticSerial->flush();
 }
 
+void MeshtasticInterface_sendTestNMEA() {
+    if (!MeshtasticSerial || !initialized) return;
+    send_nmea_line("GPGGA,120000.00,3742.1445,N,12205.0466,W,1,10,0.9,15.2,M,0.0,M,,");
+    send_nmea_line("GPRMC,120000.00,A,3742.1445,N,12205.0466,W,0.0,0.0,150326,,,A");
+    MeshtasticSerial->flush();
+    Serial.println(F("Mesh: sent test NMEA (37.7024, -122.0841)"));
+}
+
 bool MeshtasticInterface_sendText(const char* message) {
     (void)message;
     if (!initialized || MeshtasticSerial == nullptr) return false;

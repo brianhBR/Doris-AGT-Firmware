@@ -18,8 +18,7 @@
 
 static uint8_t ledBuffer[NEOPIXEL_COUNT * BYTES_PER_LED];
 static uint8_t brightness = NEOPIXEL_BRIGHTNESS;
-static uint16_t animationStep = 0;
-static unsigned long lastAnimationUpdate = 0;
+static unsigned long lastRefresh = 0;
 static LEDState currentState = LED_STATE_BOOT;
 
 static void ws_setPixelRaw(uint16_t n, uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
@@ -124,57 +123,49 @@ void NeoPixelController_setBrightness(uint8_t b) {
     brightness = b;
 }
 
-void NeoPixelController_pulse(uint32_t color, uint16_t speed) {
-    float bright = (sin(animationStep * 0.1f) + 1.0f) / 2.0f;
+void NeoPixelController_pulse(uint32_t color, uint16_t periodMs) {
+    float t = (millis() % (unsigned long)periodMs) / (float)periodMs;
+    float bright = (sin(t * 2.0f * 3.14159265f) + 1.0f) / 2.0f;
     uint8_t r, g, b;
     getColorRGB(color, &r, &g, &b);
 
-    uint8_t pr = (uint8_t)(r * bright);
-    uint8_t pg = (uint8_t)(g * bright);
-    uint8_t pb = (uint8_t)(b * bright);
-
     for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
-        ws_setPixelRaw(i, pr, pg, pb, 0);
+        ws_setPixelRaw(i, (uint8_t)(r * bright), (uint8_t)(g * bright), (uint8_t)(b * bright), 0);
     }
     ws_show();
-    animationStep++;
 }
 
-void NeoPixelController_chase(uint32_t color, uint16_t speed) {
+void NeoPixelController_chase(uint32_t color, uint16_t stepMs) {
     memset(ledBuffer, 0, sizeof(ledBuffer));
 
     uint8_t r, g, b;
     getColorRGB(color, &r, &g, &b);
 
+    uint16_t head = (millis() / stepMs) % NEOPIXEL_COUNT;
     for (int i = 0; i < 5; i++) {
-        int pos = (animationStep + i) % NEOPIXEL_COUNT;
+        int pos = (head + NEOPIXEL_COUNT - i) % NEOPIXEL_COUNT;
         float fade = 1.0f - (i * 0.2f);
         ws_setPixelRaw(pos, (uint8_t)(r * fade), (uint8_t)(g * fade), (uint8_t)(b * fade), 0);
     }
-
     ws_show();
-    animationStep++;
-    if (animationStep >= NEOPIXEL_COUNT) animationStep = 0;
 }
 
-void NeoPixelController_rainbow(uint16_t speed) {
+void NeoPixelController_rainbow(uint16_t periodMs) {
+    uint16_t hueOffset = (millis() % (unsigned long)periodMs) * 65536UL / periodMs;
     for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
-        uint16_t hue = ((i * 65536L / NEOPIXEL_COUNT) + (animationStep * 256)) & 0xFFFF;
+        uint16_t hue = (i * 65536UL / NEOPIXEL_COUNT + hueOffset) & 0xFFFF;
         uint8_t r, g, b;
         hsvToRGB(hue, 255, 255, &r, &g, &b);
         ws_setPixelRaw(i, r, g, b, 0);
     }
     ws_show();
-    animationStep++;
 }
 
 void NeoPixelController_strobe(uint32_t color) {
-    static bool on = false;
-    on = !on;
+    bool on = (millis() / 100) % 2 == 0;
     if (on) {
         uint8_t r, g, b;
         getColorRGB(color, &r, &g, &b);
-        // Use white channel for white strobe (brighter + true white on RGBW)
         uint8_t w = (r == 0xFF && g == 0xFF && b == 0xFF) ? 0xFF : 0;
         for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
             ws_setPixelRaw(i, r, g, b, w);
@@ -200,71 +191,49 @@ void NeoPixelController_progressBar(uint8_t percent, uint32_t color) {
 }
 
 void NeoPixelController_update(int systemState) {
-    currentState = (LEDState)systemState;
     unsigned long now = millis();
+    if (now - lastRefresh < 20) return;
+    lastRefresh = now;
+
+    currentState = (LEDState)systemState;
 
     switch (currentState) {
         case LED_STATE_BOOT:
-            if (now - lastAnimationUpdate > 50) {
-                NeoPixelController_rainbow(50);
-                lastAnimationUpdate = now;
-            }
+            NeoPixelController_rainbow(5000);
             break;
 
         case LED_STATE_RECOVERY_STROBE:
-            if (now - lastAnimationUpdate > 100) {
-                NeoPixelController_strobe(0xFFFFFF);
-                lastAnimationUpdate = now;
-            }
+            NeoPixelController_strobe(0xFFFFFF);
             break;
 
         case LED_STATE_GPS_SEARCH:
-            if (now - lastAnimationUpdate > 20) {
-                NeoPixelController_pulse(COLOR_GPS_SEARCH, 20);
-                lastAnimationUpdate = now;
-            }
+            NeoPixelController_pulse(COLOR_GPS_SEARCH, 1500);
             break;
 
         case LED_STATE_GPS_FIX:
-            if (now - lastAnimationUpdate > 50) {
-                NeoPixelController_pulse(COLOR_GPS_FIX, 50);
-                lastAnimationUpdate = now;
-            }
+            NeoPixelController_pulse(COLOR_GPS_FIX, 2500);
             break;
 
         case LED_STATE_IRIDIUM_TX:
-            if (now - lastAnimationUpdate > 30) {
-                NeoPixelController_chase(COLOR_IRIDIUM_TX, 30);
-                lastAnimationUpdate = now;
-            }
+            NeoPixelController_chase(COLOR_IRIDIUM_TX, 40);
             break;
 
         case LED_STATE_PRE_MISSION:
         case LED_STATE_SELF_TEST:
         case LED_STATE_MISSION:
-            if (now - lastAnimationUpdate > 50) {
-                NeoPixelController_pulse(COLOR_STANDBY, 50);
-                lastAnimationUpdate = now;
-            }
+            NeoPixelController_pulse(COLOR_STANDBY, 3000);
             break;
 
         case LED_STATE_ERROR:
-            if (now - lastAnimationUpdate > 250) {
-                if (animationStep % 2 == 0) {
-                    NeoPixelController_setColor(COLOR_ERROR);
-                } else {
-                    NeoPixelController_clear();
-                }
-                animationStep++;
-                lastAnimationUpdate = now;
+            if ((now / 250) % 2 == 0) {
+                NeoPixelController_setColor(COLOR_ERROR);
+            } else {
+                NeoPixelController_clear();
             }
             break;
 
         case LED_STATE_LOW_BATTERY:
-            if (now - lastAnimationUpdate > 30) {
-                NeoPixelController_pulse(COLOR_LOW_BATTERY, 30);
-                lastAnimationUpdate = now;
-            }
+            NeoPixelController_pulse(COLOR_LOW_BATTERY, 1000);
             break;
 
         case LED_STATE_STANDBY:

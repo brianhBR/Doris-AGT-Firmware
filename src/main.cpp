@@ -41,7 +41,8 @@ Apollo3RTC& myRTC = rtc;
 unsigned long lastIridiumSend = 0;
 unsigned long lastMeshtasticUpdate = 0;
 unsigned long lastMAVLinkUpdate = 0;
-unsigned long lastNeoPixelUpdate = 0;
+
+
 unsigned long lastPSMUpdate = 0;
 unsigned long lastStatusPrint = 0;
 LEDState currentLEDState = LED_STATE_BOOT;
@@ -74,7 +75,7 @@ static uint64_t getRTCUnixUsec() {
 }
 
 void setup() {
-    Serial.begin(DEBUG_BAUD);
+    Serial.begin(MAVLINK_BAUD);
     while (!Serial) { ; }
     delay(100);
 
@@ -112,7 +113,6 @@ void setup() {
 
     if (sysConfig.enableNeoPixels) {
         NeoPixelController_init();
-        NeoPixelController_setColor(COLOR_BOOT);
     }
 
     if (sysConfig.enablePSM) {
@@ -144,9 +144,8 @@ void loop() {
     }
 
     updateLEDState();
-    if (sysConfig.enableNeoPixels && (now - lastNeoPixelUpdate >= NEOPIXEL_UPDATE_MS)) {
+    if (sysConfig.enableNeoPixels) {
         NeoPixelController_update(currentLEDState);
-        lastNeoPixelUpdate = now;
     }
 
     // GPS -> MAVLink (feed ArduSub) + RTC time for ArduSub clock (set BRD_RTC_TYPES=2 on autopilot)
@@ -174,10 +173,8 @@ void loop() {
         if (GPSManager_hasFix()) {
             GPSData gpsData = GPSManager_getData();
             MeshtasticInterface_sendPosition(&gpsData);
-            Serial.println(F("Mesh: sent fix"));
         } else {
             MeshtasticInterface_sendNoFixNMEA();
-            Serial.println(F("Mesh: sent nofix"));
         }
     }
 
@@ -337,7 +334,7 @@ void processSerialCommands() {
         Serial.println(F("reset             Back to PRE_MISSION"));
         Serial.println(F("set_leak <0|1>   Set leak flag for testing"));
         Serial.println(F("config / save / set_* / enable_* / disable_*"));
-        Serial.println(F("mesh_test / mesh_send <text>"));
+        Serial.println(F("mesh_test / mesh_test_gps / mesh_send <text>"));
         return;
     }
 
@@ -374,6 +371,10 @@ void processSerialCommands() {
     }
     if (cmd == "mesh_test") {
         MeshtasticInterface_sendText("AGT test");
+        return;
+    }
+    if (cmd == "mesh_test_gps") {
+        MeshtasticInterface_sendTestNMEA();
         return;
     }
     if (cmd.startsWith("mesh_send ")) {

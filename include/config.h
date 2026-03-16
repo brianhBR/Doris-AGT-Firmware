@@ -46,19 +46,20 @@
 #define MAVLINK_SERIAL       Serial  // USB to Navigator
 
 #define IRIDIUM_BAUD         19200
-#define MESHTASTIC_BAUD      4800    // NMEA 0183 standard; AGT TX -> Meshtastic J10 (external GPS)
-#define DEBUG_BAUD           115200
-#define MAVLINK_BAUD         57600
+#define MESHTASTIC_BAUD      9600    // Default GPS baud; AGT TX -> Meshtastic J10 (external GPS)
+#define DEBUG_BAUD           57600
+#define MAVLINK_BAUD         57600   // Shared with DEBUG on USB Serial
 
 // ============================================================================
 // TIMING CONFIGURATION
 // ============================================================================
 #define GPS_FIX_TIMEOUT_MS         180000  // 3 minutes
 #define IRIDIUM_SEND_INTERVAL_MS   600000  // 10 minutes
-#define MESHTASTIC_UPDATE_MS       3000    // 3 seconds
+#define MESHTASTIC_UPDATE_MS       1000    // 1 second (matches typical GPS cadence)
 #define MAVLINK_UPDATE_MS          1000    // 1 Hz
 #define PSM_UPDATE_MS              5000    // 5 seconds
-#define NEOPIXEL_UPDATE_MS         100     // 10 Hz for animations
+
+
 
 // ============================================================================
 // NEOPIXEL CONFIGURATION
@@ -73,7 +74,7 @@
 #define COLOR_IRIDIUM_TX     0xFF00FF  // Magenta
 #define COLOR_ERROR          0xFF0000  // Red
 #define COLOR_LOW_BATTERY    0xFF8000  // Orange
-#define COLOR_STANDBY        0x001010  // Dim cyan
+#define COLOR_STANDBY        0x00FFFF  // Cyan (dimmed by global brightness)
 #define COLOR_OFF            0x000000  // Off
 
 // ============================================================================
