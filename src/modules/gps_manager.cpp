@@ -65,23 +65,31 @@ static bool initI2CAndGPS(bool fullConfig) {
     }
 
     if (fullConfig) {
-        gpsPtr->setI2COutput(COM_TYPE_UBX);
-        gpsPtr->setNavigationFrequency(GPS_UPDATE_RATE_HZ);
-        gpsPtr->setDynamicModel(DYN_MODEL_PORTABLE);
-        gpsPtr->setI2CpollingWait(25);
+        // Check if BBR already has our config by testing whether GLONASS
+        // is enabled. If it is, we've configured before and BBR is intact —
+        // skip reconfiguration to preserve ephemeris for a hot/warm start.
+        // CRITICAL: calling enableGNSS() on u-blox M8 triggers a receiver
+        // reset (even with unchanged values), wiping ephemeris from RAM.
+        bool alreadyConfigured = gpsPtr->isGNSSenabled(SFE_UBLOX_GNSS_ID_GLONASS);
 
-        // Enable GPS + GLONASS for more satellites and faster TTFF.
-        // ZOE-M8Q supports concurrent GPS+GLONASS (not GLONASS+BeiDou).
-        gpsPtr->enableGNSS(true, SFE_UBLOX_GNSS_ID_GPS);
-        gpsPtr->enableGNSS(true, SFE_UBLOX_GNSS_ID_GLONASS);
+        if (!alreadyConfigured) {
+            Serial.println(F("GPS: First boot — configuring GPS+GLONASS..."));
+            gpsPtr->setI2COutput(COM_TYPE_UBX);
+            gpsPtr->setNavigationFrequency(GPS_UPDATE_RATE_HZ);
+            gpsPtr->setDynamicModel(DYN_MODEL_PORTABLE);
+            gpsPtr->setI2CpollingWait(25);
+            gpsPtr->enableGNSS(true, SFE_UBLOX_GNSS_ID_GPS);
+            gpsPtr->enableGNSS(true, SFE_UBLOX_GNSS_ID_GLONASS);
 
-        // Save entire config to battery-backed RAM so warm/hot starts
-        // don't need reconfiguration — just begin() + setAutoPVT().
-        if (gpsPtr->saveConfiguration()) {
-            configSavedToBBR = true;
-            Serial.println(F("GPS: Config saved to BBR (warm starts enabled)"));
+            if (gpsPtr->saveConfiguration()) {
+                configSavedToBBR = true;
+                Serial.println(F("GPS: Config saved to BBR (warm starts enabled)"));
+            } else {
+                Serial.println(F("GPS: WARNING - failed to save config to BBR"));
+            }
         } else {
-            Serial.println(F("GPS: WARNING - failed to save config to BBR"));
+            configSavedToBBR = true;
+            Serial.println(F("GPS: BBR config valid, skipping reconfig (ephemeris preserved)"));
         }
     } else {
         Serial.println(F("GPS: Light reinit (BBR config retained)"));
