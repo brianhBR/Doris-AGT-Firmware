@@ -6,7 +6,6 @@
 const byte PIN_AGTWIRE_SCL = 8;
 const byte PIN_AGTWIRE_SDA = 9;
 
-// Helper function to get/init agtWire (lazy initialization to avoid early constructor)
 static TwoWire& getAGTWire() {
     static TwoWire wire(PIN_AGTWIRE_SDA, PIN_AGTWIRE_SCL);
     return wire;
@@ -15,39 +14,49 @@ static TwoWire& getAGTWire() {
 static SFE_UBLOX_GNSS* gpsPtr = nullptr;
 static GPSData currentGPSData;
 static unsigned long lastFixAttempt = 0;
+static unsigned long powerOnTime = 0;   // Track when GPS was powered on for TTFF
+static bool ttffLogged = false;         // Only log TTFF once per power cycle
+static bool configSavedToBBR = false;   // Track whether we've saved config to BBR
 
-bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
-    gpsPtr = gps;
+// Toggle SCL manually to free a stuck I2C bus (SDA held low by slave).
+static void i2cBusRecovery() {
+    Serial.println(F("GPS: I2C bus recovery..."));
+    pinMode(PIN_AGTWIRE_SDA, INPUT);
+    pinMode(PIN_AGTWIRE_SCL, OUTPUT);
+    for (int i = 0; i < 16; i++) {
+        digitalWrite(PIN_AGTWIRE_SCL, HIGH);
+        delayMicroseconds(5);
+        digitalWrite(PIN_AGTWIRE_SCL, LOW);
+        delayMicroseconds(5);
+    }
+    digitalWrite(PIN_AGTWIRE_SCL, HIGH);
+    delayMicroseconds(5);
+    // Generate STOP condition
+    pinMode(PIN_AGTWIRE_SDA, OUTPUT);
+    digitalWrite(PIN_AGTWIRE_SDA, LOW);
+    delayMicroseconds(5);
+    digitalWrite(PIN_AGTWIRE_SCL, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(PIN_AGTWIRE_SDA, HIGH);
+    delayMicroseconds(5);
+}
 
-    // Enable GNSS power - configure as open-drain output (per SparkFun AGT examples)
-    am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
-    pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
-    pin_config(PinName(GNSS_EN), pinCfg);
-    delay(1);
-    digitalWrite(GNSS_EN, LOW);  // Active low to enable
-    delay(1000);
+// fullConfig: true on first boot (configure everything + save to BBR),
+//             false on reinit after power cycle (BBR retains config, just reconnect)
+static bool initI2CAndGPS(bool fullConfig) {
+    i2cBusRecovery();
 
-    // Get reference to agtWire (lazy init - constructor runs now, not at global scope)
     TwoWire& agtWire = getAGTWire();
-
-    // Initialize custom I2C bus for GPS (pins 8 and 9)
     agtWire.begin();
-    delay(10);
-    agtWire.setClock(100000); // Use 100kHz for reliability (per SparkFun examples)
+    delay(100);
+    agtWire.setClock(100000);
 
-    // CRITICAL: Disable pull-ups AFTER agtWire.begin() (per SparkFun AGT examples)
-    // The ZOE-M8Q has its own pull-ups
-    // Order matters: must call pin_config AFTER agtWire.begin()
     am_hal_gpio_pincfg_t sclCfg = g_AM_BSP_GPIO_IOM1_SCL;
     sclCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_NONE;
     pin_config(PinName(PIN_AGTWIRE_SCL), sclCfg);
-
     am_hal_gpio_pincfg_t sdaCfg = g_AM_BSP_GPIO_IOM1_SDA;
     sdaCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_NONE;
     pin_config(PinName(PIN_AGTWIRE_SDA), sdaCfg);
-    delay(10);
-
-    // Connect to GPS on custom I2C bus
     delay(100);
 
     if (!gpsPtr->begin(agtWire)) {
@@ -55,24 +64,87 @@ bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
         return false;
     }
 
-    // Configure GPS
-    gpsPtr->setI2COutput(COM_TYPE_UBX);  // UBX protocol
-    gpsPtr->setNavigationFrequency(GPS_UPDATE_RATE_HZ);
-    gpsPtr->setDynamicModel(DYN_MODEL_PORTABLE);
+    if (fullConfig) {
+        gpsPtr->setI2COutput(COM_TYPE_UBX);
+        gpsPtr->setNavigationFrequency(GPS_UPDATE_RATE_HZ);
+        gpsPtr->setDynamicModel(DYN_MODEL_PORTABLE);
+        gpsPtr->setI2CpollingWait(25);
 
-    // Enable automatic NAV PVT messages
+        // Enable GPS + GLONASS for more satellites and faster TTFF.
+        // ZOE-M8Q supports concurrent GPS+GLONASS (not GLONASS+BeiDou).
+        gpsPtr->enableGNSS(true, SFE_UBLOX_GNSS_ID_GPS);
+        gpsPtr->enableGNSS(true, SFE_UBLOX_GNSS_ID_GLONASS);
+
+        // Save entire config to battery-backed RAM so warm/hot starts
+        // don't need reconfiguration — just begin() + setAutoPVT().
+        if (gpsPtr->saveConfiguration()) {
+            configSavedToBBR = true;
+            Serial.println(F("GPS: Config saved to BBR (warm starts enabled)"));
+        } else {
+            Serial.println(F("GPS: WARNING - failed to save config to BBR"));
+        }
+    } else {
+        Serial.println(F("GPS: Light reinit (BBR config retained)"));
+    }
+
+    // autoPVT is a library-side flag, must be set every time
     gpsPtr->setAutoPVT(true);
 
-    // NMEA output already disabled by setI2COutput(COM_TYPE_UBX) above
+    powerOnTime = millis();
+    ttffLogged = false;
 
-    // Enable GNSS backup battery charging (per SparkFun AGT examples)
+    return true;
+}
+
+bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
+    gpsPtr = gps;
+
+    // Enable backup battery charging FIRST so BBR is powered before main power-on.
+    // This keeps ephemeris + RTC alive across power cycles for hot/warm starts.
     pinMode(GNSS_BCKP_BAT_CHG_EN, OUTPUT);
-    digitalWrite(GNSS_BCKP_BAT_CHG_EN, LOW);  // OUTPUT+LOW = charging enabled
+    digitalWrite(GNSS_BCKP_BAT_CHG_EN, LOW);
+    Serial.println(F("GPS: Backup battery charging enabled"));
 
-    // Initialize GPS data structure
+    // Enable GNSS power
+    am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
+    pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
+    pin_config(PinName(GNSS_EN), pinCfg);
+    delay(1);
+    digitalWrite(GNSS_EN, LOW);
+    delay(2000);
+
+    if (!initI2CAndGPS(true)) return false;
+
     currentGPSData.valid = false;
     currentGPSData.satellites = 0;
 
+    Serial.println(F("GPS: ZOE-M8Q initialized (GPS+GLONASS, config saved to BBR)"));
+    return true;
+}
+
+bool GPSManager_reinit() {
+    if (gpsPtr == nullptr) return false;
+    Serial.println(F("GPS: Re-initializing after power cycle (warm start)..."));
+
+    am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
+    pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
+    pin_config(PinName(GNSS_EN), pinCfg);
+    delay(1);
+    digitalWrite(GNSS_EN, LOW);
+    delay(1000);  // Shorter delay — GPS doesn't need full cold-start ramp
+
+    // BBR retains config from initial setup; skip full reconfiguration
+    bool useLightInit = configSavedToBBR;
+    if (!initI2CAndGPS(!useLightInit)) {
+        Serial.println(F("GPS: Re-init FAILED, retrying with full config..."));
+        delay(1000);
+        if (!initI2CAndGPS(true)) {
+            Serial.println(F("GPS: Re-init FAILED"));
+            return false;
+        }
+    }
+
+    Serial.println(F("GPS: Re-init OK"));
     return true;
 }
 
@@ -108,27 +180,43 @@ void GPSManager_update() {
             currentGPSData.valid = true;
             lastFixAttempt = currentMillis;
 
-            // Print fix info periodically
+            if (!ttffLogged && powerOnTime > 0) {
+                unsigned long ttff = currentMillis - powerOnTime;
+                Serial.print(F("GPS: TTFF = "));
+                Serial.print(ttff / 1000);
+                Serial.print(F("s ("));
+                if (ttff < 5000)       Serial.print(F("hot start"));
+                else if (ttff < 35000) Serial.print(F("warm start"));
+                else                   Serial.print(F("cold start"));
+                Serial.println(F(")"));
+                ttffLogged = true;
+            }
+
             static unsigned long lastPrint = 0;
-            if (currentMillis - lastPrint > 10000) {  // Every 10 seconds
+            if (currentMillis - lastPrint > 10000) {
                 Serial.print(F("GPS: Fix - Lat: "));
                 Serial.print(currentGPSData.latitude, 6);
                 Serial.print(F(" Lon: "));
                 Serial.print(currentGPSData.longitude, 6);
                 Serial.print(F(" Sats: "));
-                Serial.println(currentGPSData.satellites);
+                Serial.print(currentGPSData.satellites);
+                Serial.print(F(" HDOP: "));
+                Serial.println(currentGPSData.hdop, 1);
                 lastPrint = currentMillis;
             }
         } else {
             currentGPSData.valid = false;
 
-            // Print search status periodically
             static unsigned long lastSearchPrint = 0;
-            if (currentMillis - lastSearchPrint > 30000) {  // Every 30 seconds
+            if (currentMillis - lastSearchPrint > 15000) {
                 Serial.print(F("GPS: Searching... Sats: "));
                 Serial.print(currentGPSData.satellites);
                 Serial.print(F(" Fix: "));
-                Serial.println(currentGPSData.fixType);
+                Serial.print(currentGPSData.fixType);
+                unsigned long elapsed = (powerOnTime > 0) ? (currentMillis - powerOnTime) / 1000 : 0;
+                Serial.print(F(" Elapsed: "));
+                Serial.print(elapsed);
+                Serial.println(F("s"));
                 lastSearchPrint = currentMillis;
             }
         }
@@ -149,38 +237,55 @@ void GPSManager_getDataString(char* buffer, size_t bufferSize) {
         return;
     }
 
+    // Apollo3 snprintf lacks %f support; format manually
+    long latInt = (long)currentGPSData.latitude;
+    long latFrac = abs((long)((currentGPSData.latitude - latInt) * 1000000));
+    long lonInt = (long)currentGPSData.longitude;
+    long lonFrac = abs((long)((currentGPSData.longitude - lonInt) * 1000000));
+    long altInt = (long)currentGPSData.altitude;
+    long spdInt = (long)(currentGPSData.speed * 10);
+
     snprintf(buffer, bufferSize,
-             "%.6f,%.6f,%.1f,%.1f,%d",
-             currentGPSData.latitude,
-             currentGPSData.longitude,
-             currentGPSData.altitude,
-             currentGPSData.speed,
+             "%ld.%06ld,%ld.%06ld,%ld,%ld.%01ld,%d",
+             latInt, latFrac, lonInt, lonFrac, altInt,
+             spdInt / 10, abs(spdInt % 10),
              currentGPSData.satellites);
 }
 
 void GPSManager_sleep() {
     if (gpsPtr != nullptr) {
-        gpsPtr->powerOff(0);  // Sleep indefinitely
+        // Use powerOff instead of cutting GNSS_EN — the backup battery keeps
+        // RTC + ephemeris alive in BBR for a hot start on wake (~1 s TTFF).
+        gpsPtr->powerOff(0);
     }
 
-    // Configure pin as open-drain and disable power (per SparkFun AGT examples)
     am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
     pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
     pin_config(PinName(GNSS_EN), pinCfg);
     delay(1);
-    digitalWrite(GNSS_EN, HIGH);  // Disable power (HIGH = disable)
+    digitalWrite(GNSS_EN, HIGH);  // Disable main power (backup battery keeps BBR alive)
+    Serial.println(F("GPS: Sleep (BBR retained via backup battery)"));
 }
 
 void GPSManager_wake() {
-    // Configure pin as open-drain and enable power (per SparkFun AGT examples)
     am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
     pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
     pin_config(PinName(GNSS_EN), pinCfg);
     delay(1);
-    digitalWrite(GNSS_EN, LOW);  // Enable power (LOW = enable)
+    digitalWrite(GNSS_EN, LOW);
     delay(500);
+
     if (gpsPtr != nullptr) {
         TwoWire& agtWire = getAGTWire();
-        gpsPtr->begin(agtWire);  // Use custom I2C bus
+        if (!gpsPtr->begin(agtWire)) {
+            Serial.println(F("GPS: Wake failed, retrying..."));
+            delay(500);
+            gpsPtr->begin(agtWire);
+        }
+        gpsPtr->setAutoPVT(true);
+
+        powerOnTime = millis();
+        ttffLogged = false;
+        Serial.println(F("GPS: Wake (expecting hot/warm start from BBR)"));
     }
 }
