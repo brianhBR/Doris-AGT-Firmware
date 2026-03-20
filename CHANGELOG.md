@@ -10,10 +10,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - GPS enable pin configured as open-drain for proper MOSFET gate control
 - GPS backup battery charging enabled for faster fixes
 - Proper SparkFun AGT example procedures for GPS initialization
+- Simplified state machine: PRE_MISSION → SELF_TEST → MISSION → RECOVERY
+  - Depth-based automatic transitions from MAVLink sensor data
+  - SELF_TEST → MISSION when depth > 2m
+  - MISSION → RECOVERY when depth < 3m or GPS fix
+- Failsafe system (replaces EMERGENCY state)
+  - Low voltage, leak, max depth, no heartbeat, manual triggers
+  - Fires release relay and enters RECOVERY on any trigger
+- MissionData module for real-time data from autopilot via MAVLink
+  - Depth from SCALED_PRESSURE and VFR_HUD
+  - Battery voltage from SYS_STATUS and BATTERY_STATUS
+  - Heartbeat watchdog and leak detection
+- MAVLink SYSTEM_TIME forwarding (RTC synced from GPS, for ArduSub BRD_RTC_TYPES=2)
+- Meshtastic NMEA 0183 GPS output via SoftwareSerial on J10 (D39/D40)
+  - Sends GPGGA and GPRMC sentences at configurable interval
+  - RAK4603 uses AGT as external GPS source
+- SoftwareSerial library for Apollo3 (third serial channel)
+- Self-test PlatformIO environment (`pio run -e selftest`)
+- Serial commands: `start_self_test`, `gps_diag`, `set_leak`, `mesh_test`, `mesh_test_gps`, `mesh_send`
+- Recovery strobe LED pattern for visual location aid
 
 ### Changed
+- State machine redesigned from 4 states (PREDEPLOYMENT/MISSION/RECOVERY/EMERGENCY) to 4 new states (PRE_MISSION/SELF_TEST/MISSION/RECOVERY)
 - GPS sleep/wake functions now use proper open-drain pin configuration
 - Updated to match SparkFun hardware design specifications
+- Meshtastic interface changed from protobuf (PROTO mode) to NMEA GPS output
+  - Baud changed from 115200 to 9600
+  - Uses SoftwareSerial instead of hardware UART0
+  - RAK4603 connected via J10 Qwiic connector (not SPI header)
+- USB serial baud changed from 115200 to 57600 (shared debug + MAVLink)
+- MAVLink component ID changed from MAV_COMP_ID_GPS to MAV_COMP_ID_ONBOARD_COMPUTER (191)
+- MAVLink type changed from GPS to MAV_TYPE_ONBOARD_CONTROLLER
+- PSM disabled by default (MbedOS mutex issues with analog reads)
+- Default Meshtastic interval changed from 30s to 3s
+- Relay 2 duration in seconds (not milliseconds), default 1500s for electrolytic release
+- Relay wiring clarified: both use NO (Normally Open), active HIGH
+- Power management is state-based (RECOVERY → Relay 1 OFF), not voltage-based
+- All documentation updated to reflect current firmware architecture
+
+### Removed
+- EMERGENCY state (replaced by failsafe system within MISSION)
+- `start_mission`, `enter_recovery`, `emergency`, `exit_emergency` commands
+- `arm_drop` commands (replaced by `set_timed_event` + failsafe)
+- Protobuf-based Meshtastic communication
+- Battery-voltage-based power management decisions (now state-based)
 
 ## [0.2.0] - 2024-12-11 - Iridium and Emergency State Improvements
 

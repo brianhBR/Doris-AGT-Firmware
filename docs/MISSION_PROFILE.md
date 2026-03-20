@@ -2,60 +2,99 @@
 
 ## Mission Overview
 
-The drop camera system performs autonomous deep-sea deployments for oceanographic research, recording video and environmental data at depth for 24 hours before automatically surfacing for recovery.
+The drop camera system performs autonomous deep-sea deployments for oceanographic research, recording video and environmental data at depth before automatically surfacing for recovery.
+
+## System States
+
+```
+PRE_MISSION → SELF_TEST → MISSION → RECOVERY
+```
+
+- **PRE_MISSION**: Power on, GPS fix, configure
+- **SELF_TEST**: Verify systems, Iridium position check; depth > 2m → MISSION
+- **MISSION**: Underwater recording; failsafe monitoring active
+- **RECOVERY**: Surface, strobe LEDs, Iridium position reports
 
 ## Mission Phases
 
-### Phase 1: Pre-Deployment (Surface)
+### Phase 1: Pre-Mission (Surface)
 **Duration**: Variable (minutes to hours)
 **Location**: On research vessel
+**State**: PRE_MISSION
 
 **System State:**
 - AGT powered ON
 - GPS acquiring fix
-- Configuration verified via BlueOS
+- Configuration verified via serial/BlueOS
 - All systems operational for testing
 - Battery fully charged
 
 **AGT Operations:**
 - GPS fix acquisition and RTC synchronization
-- Iridium signal quality check
-- Meshtastic mesh connectivity test
-- Battery voltage/current monitoring
-- NeoPixel status: **Blue Rainbow** (boot) → **Yellow Pulse** (GPS search) → **Green Pulse** (GPS fix)
+- Iridium signal quality check (after `start_self_test`)
+- Meshtastic NMEA output active
+- Battery voltage/current monitoring (if PSM enabled)
+- NeoPixel status: Pre-mission pattern
 
 **Critical Checks:**
-- [ ] GPS fix acquired (minimum 6 satellites)
+- [ ] GPS fix acquired (minimum 4 satellites)
 - [ ] RTC synchronized to GPS time
-- [ ] Iridium signal quality ≥ 2
+- [ ] Iridium signal quality >= 2 (test in SELF_TEST state)
 - [ ] Battery voltage > 13.5V (for 4S LiPo)
-- [ ] Drop weight release time configured correctly
-- [ ] Power save voltage set appropriately
-- [ ] Test both relays (power management + drop weight)
+- [ ] Configuration saved to EEPROM
+- [ ] Test release relay with `release_now` (then `reset`)
 - [ ] Verify NeoPixel visibility
-- [ ] Confirm Meshtastic connectivity
+- [ ] Confirm Meshtastic NMEA received by RAK (`mesh_test_gps`)
 
 ---
 
-### Phase 2: Deployment (Descent)
+### Phase 2: Self-Test (Surface, Ready to Deploy)
+**Duration**: Minutes (until deployed)
+**Location**: On research vessel, ready for deployment
+**State**: SELF_TEST
+
+**System State:**
+- `start_self_test` command issued
+- Iridium can transmit (pre-deployment position check)
+- Waiting for depth > 2m to transition to MISSION
+- All systems verified
+
+**AGT Operations:**
+- Iridium sends position report (confirms satellite link)
+- GPS tracking continues
+- Meshtastic NMEA output active
+- MAVLink data flowing to/from Navigator
+
+**Transition to MISSION:**
+- Automatic when MAVLink reports depth > 2m (from SCALED_PRESSURE or VFR_HUD)
+- This confirms the system is actually submerged
+
+---
+
+### Phase 3: Deployment (Descent)
 **Duration**: ~10-60 minutes (depth dependent)
 **Location**: Water column
+**State**: MISSION
 
 **System State:**
 - Free-falling through water column
 - All systems recording
-- AGT tracking position (may lose GPS below surface)
+- GPS fix lost below surface (expected)
 - Navigator/Pi recording video and sensor data
+- Failsafe monitoring active
 
 **AGT Operations:**
-- GPS tracking continues until submerged
-- Last known surface position logged
-- Iridium reports position before losing signal (if configured for frequent updates during deployment)
-- Battery monitoring active
-- NeoPixel status: **Green Pulse** (operational)
+- Monitors depth from autopilot via MAVLink
+- Tracks max depth for mission reports
+- Monitors failsafe conditions (voltage, leak, depth limit, heartbeat)
+- Meshtastic NMEA continues (no GPS fix, sends empty NMEA)
+- NeoPixel status: Yellow pulse (no GPS fix)
 
-**Typical Descent Rates:**
-- 0.5 - 2.0 m/s depending on ballast configuration
+**Failsafe Conditions Monitored:**
+- Battery voltage < 11.0V (autopilot-confirmed)
+- Leak detected
+- Depth > 200m (configurable)
+- No autopilot heartbeat for > 30s
 
 **Power Budget:**
 - Navigator/Pi: 5-10W
@@ -65,28 +104,29 @@ The drop camera system performs autonomous deep-sea deployments for oceanographi
 
 ---
 
-### Phase 3: Seafloor Recording (On Bottom)
-**Duration**: ~24 hours
+### Phase 4: Seafloor Recording (On Bottom)
+**Duration**: Hours to days (mission dependent)
 **Location**: Seafloor
+**State**: MISSION
 
 **System State:**
 - Stationary on seafloor
 - Camera and sensors recording continuously
-- AGT maintaining timekeeping for ballast release
 - No GPS signal (underwater)
 - No Iridium communication (underwater)
+- Failsafe monitoring continues
 
 **AGT Operations:**
-- RTC running, counting down to ballast release
-- Battery monitoring (critical for mission success)
-- System health monitoring
-- NeoPixel status: **Green Pulse** (operational)
-- Relay 1 (power management): ON (all systems powered)
-- Relay 2 (drop weight): ARMED, waiting for trigger time
+- Depth monitoring via MAVLink
+- Battery voltage monitoring via MAVLink
+- Leak detection monitoring
+- Heartbeat watchdog active
+- Relay 1 ON (Navigator/Pi powered)
+- Relay 2 OFF (release not triggered yet)
 
 **Critical Function:**
-- Drop weight relay timing maintained via RTC
-- Battery must last for full recording period + ascent + surface wait
+- Failsafe system provides hardware-level safety independent of mission planning
+- If any failsafe triggers, release relay fires and system enters RECOVERY
 
 **Power Budget:**
 - Navigator/Pi: 5-10W
@@ -100,113 +140,59 @@ The drop camera system performs autonomous deep-sea deployments for oceanographi
 
 ---
 
-### Phase 4: Ballast Release (Ascent Start)
-**Duration**: 5 seconds
-**Location**: Seafloor
-
-**System State:**
-- AGT RTC reaches programmed release time
-- Ballast release relay activated
-
-**AGT Operations:**
-1. RTC reaches trigger time (GMT or delay)
-2. Relay 2 (drop weight) activates for programmed duration (typically 5000ms)
-3. Drop weight mechanism releases ballast
-4. System begins positive buoyancy ascent
-5. Relay 2 deactivates after duration expires
-
-**Configuration Examples:**
-
-**GMT Mode** (specific time):
-```
-Deployment: Dec 15, 2025, 08:00:00 GMT
-Recording: 24 hours
-Release: Dec 16, 2025, 08:00:00 GMT
-Unix timestamp: 1734336000
-Command: set_timed_event gmt 1734336000 5000
-```
-
-**Delay Mode** (relative):
-```
-Deployment: Power-on at unknown time
-Recording: 24 hours
-Release: 86400 seconds after boot
-Command: set_timed_event delay 86400 5000
-```
-
-**NeoPixel Status:** May still show **Green Pulse** but irrelevant underwater
-
----
-
-### Phase 5: Ascent (Return to Surface)
+### Phase 5: Surfacing
 **Duration**: ~10-60 minutes (depth dependent)
-**Location**: Water column
+**Location**: Water column, ascending
+**State**: Transitions MISSION → RECOVERY
 
-**System State:**
-- Ascending due to positive buoyancy
-- All systems still powered (Relay 1 ON)
-- AGT waiting to reacquire GPS at surface
-- Camera may continue recording ascent
+**Transition Trigger:**
+- Depth < 3m (from MAVLink) OR GPS fix acquired
+- Either condition confirms the system has surfaced
 
-**AGT Operations:**
-- Waiting for GPS signal (attempts to acquire)
-- Battery monitoring active
-- Relay 1 still ON (systems powered)
-- NeoPixel status: **Green Pulse** → **Yellow Pulse** (searching for GPS)
+**What Happens on Transition to RECOVERY:**
+1. Relay 1 turns OFF (Navigator/Pi, camera, lights powered down)
+2. Strobe LEDs activate for visual location
+3. Iridium begins position reporting at configured interval
+4. Meshtastic NMEA continues
 
-**Typical Ascent Rates:**
-- 0.5 - 1.5 m/s depending on buoyancy
-
-**Power Budget:**
-- Same as Phase 3 (16-62W)
-- Duration: 10-60 minutes
+If surfacing was triggered by failsafe:
+1. Release relay fires for 1500 seconds (25 minutes, electrolytic dissolution)
+2. Same RECOVERY behavior as above
 
 ---
 
-### Phase 6: Surface Recovery Wait (Critical Power Management)
+### Phase 6: Surface Recovery Wait
 **Duration**: Hours to days (unpredictable)
 **Location**: Surface, drifting
+**State**: RECOVERY
 
 **System State:**
 - Floating on surface
 - GPS fix reacquired
 - Iridium reporting position for recovery
-- Meshtastic active if recovery vessel nearby
-- **Power conservation mode may activate**
+- Meshtastic NMEA active (if recovery vessel nearby with Meshtastic)
+- **Navigator/Pi OFF** (Relay 1 OFF, conserving power)
+- **Strobe LEDs** active for visual location
 
 **AGT Operations:**
-
-**Initial Surface Arrival (Battery > Threshold):**
 - GPS fix reacquired (RTC re-synchronized)
-- Iridium reports position every 10 minutes (configurable)
-- Meshtastic broadcasts position every 30 seconds (configurable)
-- MAVLink sends GPS to Navigator (if still powered)
-- NeoPixel status: **Green Pulse** (GPS fix) or **Magenta Chase** (during Iridium TX)
+- Iridium reports position + mission stats at configured interval (default 10 min)
+- Meshtastic NMEA output active
+- NeoPixel strobe pattern for visual recovery aid
+- Minimal power consumption
 
-**Power Save Mode (Battery < Threshold):**
-When battery voltage drops below configured threshold (default 11.5V):
-1. **Relay 1 turns OFF** → Shuts down Navigator/Pi, camera, lights
-2. AGT continues operating on minimal power
-3. Iridium reports position at configured interval
-4. Meshtastic continues mesh broadcasts
-5. NeoPixel status: **Orange Pulse** (low battery warning)
+**Iridium Reports Include:**
+- GPS position (lat, lon, alt)
+- Mission statistics (max depth, battery voltage, failsafe source if triggered)
 
-**Power Budget (Normal Mode):**
-- Navigator/Pi: 5-10W
-- Camera: OFF (not recording)
-- Lights: OFF
-- AGT + Iridium: 2-5W (average, spikes during TX)
-- Meshtastic: 0.5-1W
-- **Total**: 7.5-16W
-
-**Power Budget (Power Save Mode - Relay 1 OFF):**
+**Power Budget (RECOVERY Mode — Relay 1 OFF):**
 - Navigator/Pi: OFF (0W)
 - Camera: OFF (0W)
 - Lights: OFF (0W)
-- AGT + Iridium: 2-5W (average)
+- AGT + Iridium: 2-5W (average, spikes during TX)
 - Meshtastic: 0.5-1W
 - NeoPixels: 0.5-2W
-- **Total**: 3-8W
+- **Total: ~3-8W**
 
 **Extended Surface Wait Calculations:**
 
@@ -214,14 +200,10 @@ Assuming 2000Wh battery, with 1500Wh remaining at surface:
 
 | Mode | Power Draw | Runtime |
 |------|------------|---------|
-| Normal (all systems) | 12W avg | 125 hours (5.2 days) |
-| Power Save (AGT only) | 5W avg | 300 hours (12.5 days) |
+| RECOVERY (AGT only) | 5W avg | 300 hours (12.5 days) |
 
 **Recovery Visual Aids:**
-- NeoPixel LEDs visible from recovery vessel
-- Orange pulse indicates low battery/power save mode
-- Green pulse indicates healthy battery
-- Magenta chase indicates active Iridium transmission
+- NeoPixel strobe pattern visible from recovery vessel
 
 ---
 
@@ -231,174 +213,107 @@ Assuming 2000Wh battery, with 1500Wh remaining at surface:
 
 **System State:**
 - Retrieved by recovery team
-- Visual confirmation via NeoPixels
-- GPS position verified
+- Visual confirmation via NeoPixel strobe
+- GPS position verified via Iridium reports
 
 **AGT Operations:**
-- Continues GPS tracking until powered off
+- Continues GPS tracking and Iridium reports until powered off
 - Final position logged
-- Mission data available on Navigator/Pi (if powered)
-- AGT configuration and logs retrievable
 
 **Post-Recovery:**
 1. Power OFF system
-2. Download data from Navigator/Pi
-3. Download AGT logs via USB serial
+2. Download data from Navigator/Pi (reconnect power if needed)
+3. Download AGT logs via USB serial (57600 baud)
 4. Recharge batteries
-5. Inspect drop weight mechanism
-6. Prepare for next deployment
+5. Inspect release mechanism
+6. `reset` to return to PRE_MISSION for next deployment
 
 ---
 
 ## Configuration Recommendations
 
-### For Short Surface Wait (< 2 days)
-```bash
-# More frequent Iridium reports
-set_iridium_interval 300          # 5 minutes
-
-# Frequent mesh updates
-set_meshtastic_interval 15        # 15 seconds
-
-# Higher power save threshold (more conservative)
-set_power_save_voltage 12.0       # 12.0V
-
-# Enable all features
-enable_iridium
-enable_meshtastic
-enable_mavlink
-enable_psm
-enable_neopixels
-
-save
+### Standard Deployment
 ```
-
-### For Extended Surface Wait (> 2 days)
-```bash
-# Less frequent Iridium reports (conserve credits)
-set_iridium_interval 1800         # 30 minutes
-
-# Standard mesh updates
-set_meshtastic_interval 30        # 30 seconds
-
-# Lower power save threshold (maximize operational time)
-set_power_save_voltage 11.5       # 11.5V
-
-# Enable all features
-enable_iridium
-enable_meshtastic
-enable_mavlink
-enable_psm
-enable_neopixels
-
-save
-```
-
-### For Deep Ocean (> 3000m)
-```bash
-# Longer descent/ascent times
-# Consider delay-based release (more predictable than GPS time)
-set_timed_event delay 90000 5000  # 25 hours (24hr + 1hr margin)
-
-# Standard intervals
 set_iridium_interval 600          # 10 minutes
-set_meshtastic_interval 30        # 30 seconds
+set_meshtastic_interval 3         # 3 seconds
+save
 
+start_self_test                   # Enter self-test, wait for deployment
+```
+
+### Extended Surface Wait (Conserve Iridium Credits)
+```
+set_iridium_interval 1800         # 30 minutes
+set_meshtastic_interval 3         # 3 seconds
 save
 ```
 
-## Emergency Procedures
+### Timed Release (Instead of Failsafe)
+```
+# 24-hour mission, 25-minute electrolytic release
+set_timed_event delay 86400 1500
+save
+```
+
+## Failsafe Procedures
+
+### Failsafe Triggers During MISSION
+
+Any of these conditions automatically fire the release relay and enter RECOVERY:
+
+| Trigger | Threshold | Description |
+|---------|-----------|-------------|
+| Low Voltage | < 11.0V | Autopilot battery critically low |
+| Leak | Detected | Water ingress detected |
+| Max Depth | > 200m | Exceeded safe operating depth |
+| No Heartbeat | > 30s | Lost communication with autopilot |
+| Manual | `release_now` | Operator abort |
 
 ### Lost Communication
-If recovery team loses contact:
-- AGT continues to broadcast position via Iridium at configured interval
-- Meshtastic provides local range backup (5-10km typically)
-- NeoPixels provide visual signal if within sight
+- AGT continues Iridium position reports at configured interval
+- Meshtastic provides local range backup (if recovery vessel has Meshtastic)
+- NeoPixel strobe provides visual signal if within sight
 
-### Battery Critical
-If battery voltage drops to critical level (< 11.0V):
-- Relay 1 already OFF (power save active)
-- AGT continues minimal operations
-- Iridium reports may become unreliable below ~10.5V
-- GPS tracking continues
-
-### Drop Weight Failure
-If drop weight does not release:
-- System remains on seafloor
+### Release Mechanism Failure
+- If electrolytic release does not dissolve, system remains on seafloor
 - Battery will eventually deplete
-- No automatic recovery possible
-- Consider manual release mechanisms as backup
-- Monitor via absence of Iridium reports
+- Monitor via absence of Iridium reports at expected time
 
-### Early Surfacing
-If system surfaces before planned time:
-- Check GPS position reports via Iridium
-- May indicate drop weight malfunction or unexpected buoyancy
-- Recovery team should respond promptly
-
-## Data Analysis
-
-Post-mission data includes:
-- **AGT Logs**: GPS track, battery history, Iridium transmissions
-- **Navigator/Pi**: Video, oceanographic sensors, autopilot logs
-- **Iridium History**: Position reports during surface phases
-- **Mission Timeline**: Deployment, ballast release, surface arrival
-
-## Safety Considerations
-
-1. **Redundancy**: Consider backup release mechanism (galvanic timed release)
-2. **Battery Margin**: Always size battery with 50% margin
-3. **Testing**: Test full mission profile on bench before deployment
-4. **GPS Sync**: Ensure RTC synchronized before deployment
-5. **Weather**: Monitor for surface recovery conditions
-6. **Visibility**: Ensure NeoPixels visible in expected sea state
-7. **Communications**: Test both Iridium and Meshtastic before deployment
-
-## Recommended Deployment Checklist
+## Deployment Checklist
 
 ```
-□ System Checks
-  □ AGT firmware version verified
-  □ GPS fix acquired (≥6 satellites)
-  □ RTC synchronized to GPS
-  □ Iridium signal quality ≥2
-  □ Meshtastic link confirmed
-  □ Battery voltage ≥13.5V (4S LiPo)
-  □ PSM reading correctly
+Pre-Deployment
+  [ ] AGT firmware version verified
+  [ ] GPS fix acquired (>= 4 satellites)
+  [ ] RTC synchronized to GPS
+  [ ] Iridium signal quality >= 2 (test in SELF_TEST)
+  [ ] Meshtastic NMEA confirmed (mesh_test_gps)
+  [ ] Battery voltage >= 13.5V (4S LiPo)
+  [ ] Configuration saved (config, then save)
+  [ ] Release relay tested (release_now, then reset)
+  [ ] NeoPixels visible and functioning
 
-□ Configuration
-  □ Drop weight release time configured
-  □ Iridium interval appropriate for recovery plan
-  □ Power save voltage set correctly
-  □ Configuration saved to EEPROM
-  □ Configuration verified via BlueOS
+Hardware
+  [ ] Release mechanism loaded and tested
+  [ ] Relay 1 (power mgmt) wiring verified
+  [ ] Relay 2 (release) wiring verified — coil from battery
+  [ ] All cables secure and waterproof
+  [ ] Pressure housing sealed
+  [ ] Antenna secured
 
-□ Hardware
-  □ Drop weight mechanism tested
-  □ Relay 1 (power mgmt) tested
-  □ Relay 2 (drop weight) tested
-  □ NeoPixels visible and functioning
-  □ All cables secure and waterproof
-  □ Pressure housing sealed
+Recording Systems
+  [ ] Camera recording confirmed
+  [ ] Navigator/Pi logging data
+  [ ] Storage capacity sufficient
+  [ ] Lights functioning
 
-□ Recording Systems
-  □ Camera recording confirmed
-  □ Navigator/Pi logging data
-  □ Storage capacity sufficient (>24hr)
-  □ Lights functioning
-
-□ Pre-Deployment
-  □ Deployment time logged
-  □ GPS position at deployment logged
-  □ Expected recovery time calculated
-  □ Recovery team briefed
-  □ Emergency contact procedures confirmed
-
-□ Deployment
-  □ System armed and operational
-  □ Over-the-side deployment safe
-  □ Initial Iridium report received
-  □ System descent observed (if shallow)
+Deployment
+  [ ] start_self_test issued
+  [ ] Iridium position report received
+  [ ] System armed and operational
+  [ ] Deployment time and GPS position logged
+  [ ] Expected recovery time calculated
+  [ ] Recovery team briefed
 ```
 
 ## Troubleshooting
@@ -408,13 +323,14 @@ Post-mission data includes:
 | No GPS fix | Antenna blocked | Check antenna, wait longer |
 | Iridium failed | No supercap charge | Check PGOOD signal, wait for charge |
 | No NeoPixels | Power issue | Check 5V supply, GPIO32 connection |
-| Drop weight early | RTC not synced | Verify GPS sync before deployment |
+| Premature RECOVERY | Depth < 3m or GPS fix | Check depth sensor calibration |
 | Relay not switching | Configuration error | Test relays before deployment |
-| PSM no reading | Connection issue | Check GPIO11/12 analog connections |
+| PSM no reading | Not enabled or wiring | `enable_psm`, check GPIO11/12 |
 
 ## References
 
 - [AGT Firmware Documentation](../README_FIRMWARE.md)
+- [State Machine Architecture](STATE_MACHINE.md)
 - [BlueOS Integration Guide](BLUEOS_INTEGRATION.md)
 - [Wiring Diagram](WIRING_DIAGRAM.md)
 - [Quick Start Guide](QUICK_START.md)

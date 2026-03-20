@@ -147,10 +147,10 @@ GND            →  GND
 **Controls:** Navigator/Pi, Camera, Lights
 **Active:** HIGH (3.3V/5V triggers relay)
 **States:**
-- PREDEPLOYMENT: ON
+- PRE_MISSION: ON
+- SELF_TEST: ON
 - MISSION: ON
 - RECOVERY: OFF
-- EMERGENCY: OFF
 
 #### Relay 2 - Drop Weight Release (GPIO35/AD35)
 
@@ -167,8 +167,8 @@ GND            →  GND                →  Negative terminal
 **Controls:** Electrolytic/galvanic ballast release mechanism
 **Active:** HIGH (3.3V signal triggers relay)
 **Power Source:** Battery voltage (12-14.8V from 4S LiPo)
-**Duration:** Configured (typically 1200+ seconds / 20+ minutes for electrolytic dissolution)
-**Trigger:** Programmed time (GMT or delay) or emergency
+**Duration:** Configured (default 1500 seconds / 25 minutes for electrolytic dissolution)
+**Trigger:** Failsafe condition or `release_now` command
 
 **Important:**
 - Relay coil powered by battery voltage (NOT 3.3V/5V)
@@ -239,7 +239,7 @@ Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 │                                                             │
 │  ┌──────────────────────┐                                  │
 │  │ J10 (I2C Port 4)     │  Qwiic Connector                │
-│  │ Repurposed as UART1  │                                  │
+│  │ SoftwareSerial NMEA  │                                  │
 │  │                      │                                  │
 │  │ 1. D39 (TX) NMEA ────┼───► RAK J10 RX (external GPS)   │
 │  │ 2. D40 (RX) ─────────┼───► RAK J10 TX (optional)      │
@@ -366,7 +366,7 @@ The TOP_VIEW image shows all breakout pins with labels. Key pins for this projec
 - Connect common ground
 
 ⚠️ **Electrolytic Release:**
-- Relay 2 timing for electrolytic release: 1200+ seconds
+- Relay 2 default timing for electrolytic release: 1500 seconds (25 minutes)
 - Test timing before deployment
 - Have backup release mechanism
 
