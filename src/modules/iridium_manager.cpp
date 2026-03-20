@@ -1,4 +1,5 @@
 #include "modules/iridium_manager.h"
+#include "modules/doris_protocol.h"
 #include "config.h"
 #include <Arduino.h>
 
@@ -380,6 +381,131 @@ bool IridiumManager_checkMessages(char* buffer, size_t* bufferSize) {
     switchToGPS();
 
     return success;
+}
+
+// ============================================================================
+// DORIS BINARY PROTOCOL: send report + receive MT in one SBD session
+// ============================================================================
+static bool parseMTResponse(const uint8_t* rxBuf, size_t rxLen,
+                             uint8_t* mtMsgId, DorisConfig* mtConfig, DorisCommand* mtCommand) {
+    if (rxLen < DORIS_MSG_HEADER_SIZE) return false;
+    uint8_t id = DorisProtocol_parseMT(rxBuf, rxLen, mtConfig, mtCommand);
+    if (id == 0) return false;
+    if (mtMsgId) *mtMsgId = id;
+    return true;
+}
+
+bool IridiumManager_sendDorisReport(const DorisReport* report,
+                                     uint8_t* mtMsgId,
+                                     DorisConfig* mtConfig,
+                                     DorisCommand* mtCommand) {
+    if (modemPtr == nullptr || !modemConfigured || report == nullptr) {
+        Serial.println(F("Iridium: Not configured"));
+        return false;
+    }
+
+    float vbat = getBusVoltage();
+    if (vbat < VBAT_LOW) {
+        Serial.print(F("Iridium: Battery too low ("));
+        Serial.print(vbat, 2);
+        Serial.println(F("V)"));
+        return false;
+    }
+
+    uint8_t txBuf[DORIS_REPORT_WIRE_SIZE];
+    size_t txLen = DorisProtocol_serializeReport(report, txBuf, sizeof(txBuf));
+    if (txLen == 0) return false;
+
+    switchToIridium();
+    if (!chargeSupercaps()) {
+        switchToGPS();
+        return false;
+    }
+
+    Serial.println(F("Iridium: Waking modem..."));
+    int err = modemPtr->begin();
+    if (err != ISBD_SUCCESS) {
+        Serial.print(F("Iridium: Wake failed, error="));
+        Serial.println(err);
+        modemPtr->sleep();
+        digitalWrite(SUPERCAP_CHG_EN, LOW);
+        switchToGPS();
+        return false;
+    }
+    modemReady = true;
+
+    int csq = -1;
+    err = modemPtr->getSignalQuality(csq);
+    if (err == ISBD_SUCCESS) {
+        Serial.print(F("Iridium: Signal (CSQ): "));
+        Serial.print(csq);
+        Serial.println(F("/5"));
+    }
+
+    Serial.print(F("Iridium: Sending Doris report ("));
+    Serial.print(txLen);
+    Serial.println(F(" bytes)"));
+
+    uint8_t rxBuf[270];
+    size_t rxLen = sizeof(rxBuf);
+    err = modemPtr->sendReceiveSBDBinary(txBuf, txLen, rxBuf, rxLen);
+
+    bool sendOk = (err == ISBD_SUCCESS);
+    if (sendOk) {
+        Serial.println(F("Iridium: >>> Report sent! <<<"));
+        modemPtr->clearBuffers(ISBD_CLEAR_MO);
+
+        if (rxLen > 0) {
+            Serial.print(F("Iridium: MT message received ("));
+            Serial.print(rxLen);
+            Serial.println(F(" bytes)"));
+            parseMTResponse(rxBuf, rxLen, mtMsgId, mtConfig, mtCommand);
+        }
+    } else {
+        Serial.print(F("Iridium: Send failed: error "));
+        Serial.println(err);
+    }
+
+    modemPtr->sleep();
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    switchToGPS();
+
+    return sendOk;
+}
+
+bool IridiumManager_checkMT(uint8_t* mtMsgId,
+                              DorisConfig* mtConfig,
+                              DorisCommand* mtCommand) {
+    if (modemPtr == nullptr || !modemConfigured) return false;
+
+    switchToIridium();
+    if (!chargeSupercaps()) {
+        switchToGPS();
+        return false;
+    }
+
+    int err = modemPtr->begin();
+    if (err != ISBD_SUCCESS) {
+        modemPtr->sleep();
+        digitalWrite(SUPERCAP_CHG_EN, LOW);
+        switchToGPS();
+        return false;
+    }
+
+    uint8_t rxBuf[270];
+    size_t rxLen = sizeof(rxBuf);
+    err = modemPtr->sendReceiveSBDBinary(nullptr, 0, rxBuf, rxLen);
+
+    bool gotMessage = false;
+    if (err == ISBD_SUCCESS && rxLen > 0) {
+        gotMessage = parseMTResponse(rxBuf, rxLen, mtMsgId, mtConfig, mtCommand);
+    }
+
+    modemPtr->sleep();
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    switchToGPS();
+
+    return gotMessage;
 }
 
 int IridiumManager_getSignalQuality() {
