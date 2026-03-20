@@ -1,334 +1,139 @@
-# Meshtastic Serial Protocol
+# Meshtastic Interface — NMEA GPS Output
 
 ## Overview
 
-The current implementation uses **AT commands which is INCORRECT**. Meshtastic devices communicate using **Protocol Buffers (protobuf)** over serial.
+The AGT outputs **standard NMEA 0183 GPS sentences** to the Meshtastic RAK4603 via SoftwareSerial. The RAK treats the AGT as an **external GPS source** on its J10 connector (UART1). No protobuf encoding, no AT commands, no serial module configuration — the RAK just reads NMEA and uses the position for its mesh node.
 
-## Correct Protocol
-
-### Serial Mode: Protobuf
-
-Meshtastic uses the **Client API** which communicates via Protocol Buffers over serial/USB.
-
-**Key Points:**
-- **NOT** AT command based
-- Uses Google Protocol Buffers (binary format)
-- Stream of `ToRadio` (to device) and `FromRadio` (from device) packets
-- Same protocol across BLE, Serial, and TCP transports
-
-### Framing Format
-
-Each packet has a **4-byte header**:
-- START1: `0x94`
-- START2: `0xC3`
-- MSB of packet length
-- LSB of packet length
-
-Followed by the protobuf-encoded packet payload.
-
-### Message Flow
+## How It Works
 
 ```
-AGT → RAK4603:  ToRadio protobuf packets
-RAK4603 → AGT:  FromRadio protobuf packets
+AGT (SoftwareSerial TX, pin D39)  ──NMEA──►  RAK4603 J10 RX (external GPS UART)
+                                              │
+                                              ▼
+                                     RAK reads NMEA GGA/RMC
+                                     Uses position for mesh node
+                                     Other Meshtastic nodes see position on map
 ```
 
-## Implementation Options
+1. The AGT reads GPS from the onboard ZOE-M8Q (I2C)
+2. Formats the position as standard NMEA sentences (GPGGA, GPRMC)
+3. Sends them over SoftwareSerial at 9600 baud to the RAK's J10 connector
+4. The RAK4603 treats J10 as its GPS input and uses the position
 
-Since implementing full protobuf encoding/decoding on the Artemis is complex, you have three options:
+## Wiring
 
-### Option 1: Text-Based Serial Module (RECOMMENDED)
+| AGT Pin | J10 Pin | RAK4603 | Signal |
+|---------|---------|---------|--------|
+| D39 (GPIO39) | Pin 1 (SCL4) | J10 RX | AGT TX → NMEA GPS sentences |
+| D40 (GPIO40) | Pin 2 (SDA4) | J10 TX | AGT RX (optional, not used) |
+| 3.3V | Pin 3 | VCC | Power |
+| GND | Pin 4 | GND | Ground |
 
-Configure the RAK4603's Serial Module in **TEXT mode** or **TEXTMSG mode**:
+The J10 connector on the AGT is a standard Qwiic 4-pin JST connector (I2C Port 4), repurposed as a UART output.
 
-**TEXT Mode:**
-- Simple text in, text out
-- RAK4603 handles Meshtastic protocol internally
-- AGT sends plain text strings
-- Meshtastic wraps them in messages
-
-**Configuration (via Meshtastic CLI on RAK4603):**
-```bash
-meshtastic --set serial.enabled true
-meshtastic --set serial.mode TEXTMSG
-meshtastic --set serial.baud BAUD_115200
-meshtastic --set serial.timeout 0
-```
-
-**AGT Implementation:**
-```cpp
-// Simply write text to serial
-Serial2.println("POS:37.422408,-122.084108,15.2m,12sat");
-```
-
-RAK4603 automatically:
-1. Receives the text
-2. Wraps it in a Meshtastic TEXT_MESSAGE
-3. Broadcasts over LoRa mesh
-4. Other nodes receive and can display
-
-**Advantages:**
-- Simple implementation
-- No protobuf library needed
-- Easy to test and debug
-- Text visible on other Meshtastic devices
-
-**Disadvantages:**
-- Text only (no structured data)
-- Less efficient than binary
-- No guaranteed delivery acknowledgment
-
----
-
-### Option 2: Simple Protobuf (NMEA-Style)
-
-Use Serial Module in **NMEA mode** which accepts GPS NMEA sentences:
-
-**Configuration:**
-```bash
-meshtastic --set serial.mode NMEA
-```
-
-**AGT sends standard NMEA:**
-```
-$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
-```
-
-RAK4603 automatically creates Position messages from NMEA.
-
-**Advantages:**
-- Standard GPS format
-- Position handled natively by Meshtastic
-- Shows on maps in Meshtastic apps
-
-**Disadvantages:**
-- GPS only (no custom telemetry)
-- Must format valid NMEA sentences
-
----
-
-### Option 3: Full Protobuf Implementation (COMPLEX)
-
-Implement full protobuf encoding/decoding on AGT.
-
-**Requirements:**
-- Protocol Buffer library for Arduino
-- Define Meshtastic protobuf messages
-- Implement framing protocol
-- Handle ToRadio/FromRadio packets
-
-**Not recommended** due to:
-- Complexity
-- Memory constraints on Artemis
-- Maintenance burden
-- Library dependencies
-
----
-
-## RECOMMENDED APPROACH
-
-### Use Serial Module in TEXTMSG Mode
-
-This is the simplest and most practical approach for your use case.
-
-### RAK4603 Configuration
-
-Before connecting to AGT, configure RAK4603 via Meshtastic CLI:
-
-```bash
-# Connect RAK4603 to computer via USB
-meshtastic --set serial.enabled true
-meshtastic --set serial.mode TEXTMSG
-meshtastic --set serial.baud BAUD_115200
-meshtastic --set serial.rxd 21   # RAK4603 RX pin (to AGT TX)
-meshtastic --set serial.txd 22   # RAK4603 TX pin (to AGT RX)
-meshtastic --set serial.timeout 0
-meshtastic --set serial.echo false
-
-# Save configuration
-meshtastic --commit
-```
-
-### AGT Serial Communication
-
-**Connection:**
-- AGT GPIO6 (TX2) → RAK4603 RX (pin 21)
-- AGT GPIO7 (RX2) → RAK4603 TX (pin 22)
-- Baud: 115200
-- Format: 8N1 (8 data bits, no parity, 1 stop bit)
-
-**Message Format:**
-
-Send plain text strings terminated with newline (`\n`):
+## Serial Configuration
 
 ```cpp
-// Position message
-Serial2.println("POS:37.422408,-122.084108,15.2m,12sat");
-
-// Telemetry message
-Serial2.println("TELEM:V=12.45,I=1.23,SOC=85");
-
-// State message
-Serial2.println("STATE:MISSION,time=3600");
-
-// Custom message
-Serial2.println("DROP WEIGHT RELEASED");
+// config.h
+#define MESHTASTIC_TX_PIN    39   // D39 on J10
+#define MESHTASTIC_RX_PIN    40   // D40 on J10
+#define MESHTASTIC_BAUD      9600 // GPS baud rate
 ```
 
-**Receiving Messages:**
+The firmware uses `SoftwareSerial` because the Apollo3 only has two hardware UARTs:
+- **Serial** (USB) — debug + MAVLink to Navigator
+- **Serial1** (UART1, D24/D25) — Iridium 9603N
 
-RAK4603 can also forward received mesh messages to AGT:
+SoftwareSerial on pins 39/40 provides the third serial channel for Meshtastic.
 
-```cpp
-void MeshtasticInterface_update() {
-    while (Serial2.available()) {
-        String msg = Serial2.readStringUntil('\n');
-        // Process received mesh message
-        Serial.print("Mesh RX: ");
-        Serial.println(msg);
-    }
-}
+## NMEA Sentences
+
+### GPGGA (Fix Data)
+
+```
+$GPGGA,120000.00,3742.1445,N,12205.0466,W,1,10,0.9,15.2,M,0.0,M,,*XX
 ```
 
-### Message Format Recommendations
+Fields: time, latitude, N/S, longitude, E/W, fix quality, satellites, HDOP, altitude, units, geoid separation, units, DGPS age, DGPS station ID.
 
-**Position Messages:**
-```
-Format: POS:<lat>,<lon>,<alt>m,<sats>sat
-Example: POS:37.422408,-122.084108,15.2m,12sat
-```
+### GPRMC (Recommended Minimum)
 
-**State Messages:**
 ```
-Format: STATE:<state>,<time_in_state>s
-Example: STATE:MISSION,3600s
-Example: STATE:RECOVERY,7200s
-Example: STATE:EMERGENCY,DROP_WEIGHT_RELEASED
+$GPRMC,120000.00,A,3742.1445,N,12205.0466,W,0.0,0.0,150326,,,A*XX
 ```
 
-**Telemetry Messages:**
-```
-Format: TELEM:<key>=<value>[,<key>=<value>...]
-Example: TELEM:depth=2850m,temp=4.2C
-Example: TELEM:batt=12.4V,soc=85%
-```
+Fields: time, status, latitude, N/S, longitude, E/W, speed (knots), course, date, magnetic variation, mode.
 
-**Alert Messages:**
+Both sentences include proper NMEA checksums.
+
+### No-Fix Sentence
+
+When the AGT has no GPS fix, it still sends an empty GPGGA to keep the UART active:
+
 ```
-Format: ALERT:<message>
-Example: ALERT:DROP_WEIGHT_RELEASED
-Example: ALERT:EMERGENCY_DEPTH
-Example: ALERT:SURFACE_GPS_FIX
+$GPGGA,000000.00,,,,,0,00,99.9,,,,,,,*XX
 ```
 
-### Advantages of Text Format
+## RAK4603 Configuration
 
-1. **Human Readable**: Can see messages in Meshtastic apps
-2. **Easy Debug**: Can monitor with serial terminal
-3. **Simple Implementation**: No protobuf library needed
-4. **Flexible**: Can send any text data
-5. **Compatible**: Works with all Meshtastic devices
+Configure the RAK4603 to use **external GPS** on its J10 port. The exact configuration depends on your Meshtastic firmware version, but the key setting is telling the RAK to read GPS data from J10 (UART1) instead of its internal GPS module.
 
-### Limitations
+No `serial.mode` configuration is needed — the RAK's J10 port is natively an external GPS UART input, not a Meshtastic serial module port.
 
-1. **No ACK**: No confirmation message was received
-2. **Text Only**: Not as efficient as binary
-3. **No Encryption**: Meshtastic encrypts mesh traffic, but serial is plain
-4. **One-Way**: Primarily AGT → Mesh (receiving possible but not structured)
+## Update Interval
 
-## Updated Implementation
+The NMEA output interval is controlled by `sysConfig.meshtasticInterval`:
 
-I'll create an updated Meshtastic interface module that uses TEXT mode:
-
-```cpp
-// Simplified text-based interface
-bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
-    if (!initialized || !gpsData->valid) {
-        return false;
-    }
-
-    // Format as simple text message
-    char msg[100];
-    snprintf(msg, sizeof(msg),
-             "POS:%.6f,%.6f,%.1fm,%dsat",
-             gpsData->latitude,
-             gpsData->longitude,
-             gpsData->altitude,
-             gpsData->satellites);
-
-    // Send directly - RAK4603 handles Meshtastic protocol
-    Serial2.println(msg);
-
-    Serial.print(F("Mesh TX: "));
-    Serial.println(msg);
-
-    return true;
-}
-```
-
-No AT commands, no complex protocol - just send text!
+- **Default:** 3000ms (3 seconds) — `DEFAULT_MESHTASTIC_INTERVAL`
+- **Compile-time minimum:** `MESHTASTIC_UPDATE_MS` = 1000ms (1 second)
+- Configurable via: `set_meshtastic_interval <seconds>` + `save`
 
 ## Testing
 
-### 1. Configure RAK4603
+### Serial Commands
 
-```bash
-# Connect RAK4603 to computer
-meshtastic --set serial.mode TEXTMSG
-meshtastic --set serial.enabled true
-meshtastic --set serial.baud BAUD_115200
+```
+mesh_test          # Send "AGT test" text (stub, not sent as NMEA)
+mesh_test_gps      # Send hardcoded test NMEA (37.7024, -122.0841)
+mesh_send <text>   # Send custom text (stub, not sent as NMEA)
 ```
 
-### 2. Test with Serial Terminal
+### Verifying NMEA Output
 
-Before connecting to AGT, test RAK4603:
+1. Connect a USB-serial adapter to AGT pin D39 (TX) at 9600 baud
+2. You should see GPGGA and GPRMC sentences when GPS has a fix
+3. When no fix, you'll see empty GPGGA sentences
 
-```bash
-# Open serial terminal to RAK4603
-screen /dev/ttyUSB0 115200
+### Verifying Meshtastic Reception
 
-# Type test message:
-Hello from serial!
+1. Wire AGT D39 → RAK J10 RX, common ground
+2. Open the Meshtastic app on phone/computer
+3. The RAK node should show a GPS position on the map
+4. Position updates at the configured Meshtastic interval
 
-# Check Meshtastic app - message should appear
-```
+## Implementation Details
 
-### 3. Connect to AGT
+The NMEA formatting avoids `%f` (not available on Apollo3 `snprintf`) and uses integer math to build latitude/longitude in `ddmm.mmmm` NMEA format.
 
-Wire GPIO6/7 to RAK4603, AGT will send position messages.
+At 9600 baud, bit timing is relaxed enough that SoftwareSerial works reliably without disabling interrupts (which would crash MbedOS RTOS on Apollo3).
 
-### 4. Verify on Meshtastic App
+## Limitations
 
-Open Meshtastic iOS/Android app:
-- Should see messages from RAK4603
-- Position messages visible as text
-- Other mesh nodes can see messages
+- **TX-only** — AGT sends NMEA to RAK but does not read responses
+- **GPS position only** — no telemetry, alerts, or custom messages over NMEA
+- **No acknowledgment** — NMEA is fire-and-forget
+- The `sendText`, `sendTelemetry`, `sendState`, and `sendAlert` functions exist in the API but are stubs (return false / no-op)
+
+## Previous Implementations
+
+The Meshtastic interface has gone through several iterations:
+1. **AT commands** (v0.0.5) — never worked with Meshtastic
+2. **Protobuf/PROTO mode** (v0.1.0) — complex, required nanopb library
+3. **NMEA GPS output** (current) — simple, reliable, RAK treats AGT as external GPS
 
 ## References
 
-- [Meshtastic Client API](https://meshtastic.org/docs/development/device/client-api/) - Protocol overview
-- [Serial Module Configuration](https://meshtastic.org/docs/configuration/module/serial/) - Serial modes
-- [Python Meshtastic](https://python.meshtastic.org/serial_interface.html) - Example implementation
-
-## Alternative: Use Existing Meshtastic App
-
-If you want more robust Meshtastic integration:
-
-**Option:** Connect RAK4603 to Navigator/Pi via USB:
-- Navigator runs Meshtastic Python client
-- BlueOS extension sends messages via Meshtastic API
-- More features: ACKs, encryption keys, device management
-- AGT focuses on GPS/Iridium only
-
-This separates concerns and uses mature Meshtastic tools.
-
-## Recommendation Summary
-
-**For your drop camera:**
-
-1. **Configure RAK4603 in TEXTMSG mode**
-2. **AGT sends simple text messages** (no protobuf)
-3. **RAK4603 handles mesh protocol** automatically
-4. **Simple, reliable, easy to debug**
-
-This is the pragmatic approach that gets you mesh connectivity without complex protocol implementation.
+- [Meshtastic External GPS Documentation](https://meshtastic.org/docs/hardware/gps/)
+- [NMEA 0183 Sentence Format](https://gpsd.gitlab.io/gpsd/NMEA.html)
+- [Pinout Guide](PINOUT_GUIDE.md) — J10 connector details
+- [Wiring Diagram](WIRING_DIAGRAM.md) — full connection diagram

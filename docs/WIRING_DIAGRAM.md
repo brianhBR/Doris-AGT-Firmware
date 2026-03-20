@@ -22,12 +22,12 @@
     ┌───▼───┐ ┌──▼──────┐ ┌───▼────┐  ┌───▼───┐ ┌──▼──┐
     │  GPS  │ │Meshtastic│ │Iridium │  │ Relay │ │ LED │
     │ ZOE-M8│ │ RAK4603  │ │ 9603N  │  │  x2   │ │Strip│
-    └───────┘ │ [UART0]  │ │[Serial1]│ └───────┘ └─────┘
+    └───────┘ │[SoftSer] │ │[Serial1]│ └───────┘ └─────┘
               │ D39/D40  │ │D24/D25 │
-              └──────────┘ └────┬───┘
-                                │
+              │ J10 Qwiic│ └────┬───┘
+              └──────────┘      │
                            [USB Serial]
-                                │
+                           [57600 baud]
                                 │
                           ┌─────▼──────┐
                           │ ArduPilot  │
@@ -48,7 +48,7 @@
 | GPIO8 | SCL | I2C Clock to GPS |
 | GPIO9 | SDA | I2C Data to GPS |
 | GPIO10 | PIO14 | Geofence alert input |
-| GPIO26 | GPS_EN | GPS power enable (active LOW) |
+| GPIO26 | GPS_EN | GPS power enable (active LOW, open-drain) |
 
 ### 2. Blue Robotics PSM (Power Sense Module)
 
@@ -83,24 +83,25 @@
 
 ### 4. Meshtastic RAK4603
 
-**Connects to J10 Qwiic connector (I2C Port 4)**
+**Connects to J10 Qwiic connector via SoftwareSerial**
 
-| RAK4603 Pin | AGT Pin | J10 Pin | Signal | Wire Color Suggestion |
-|-------------|---------|---------|--------|----------------------|
-| RX | GPIO39 (D39) | Pin 1 (SCL4) | UART0 TX from AGT | Yellow |
-| TX | GPIO40 (D40) | Pin 2 (SDA4) | UART0 RX to AGT | Orange |
-| VCC | 3.3V | Pin 3 | Power | Red |
-| GND | GND | Pin 4 | Ground | Black |
+| RAK4603 Pin | AGT Pin | J10 Pin | Signal | Notes |
+|-------------|---------|---------|--------|-------|
+| J10 RX | GPIO39 (D39) | Pin 1 (SCL4) | SoftwareSerial TX | NMEA GPS out |
+| J10 TX | GPIO40 (D40) | Pin 2 (SDA4) | SoftwareSerial RX | Optional |
+| VCC | 3.3V | Pin 3 | Power | |
+| GND | GND | Pin 4 | Ground | |
 
 **Connection Point:** J10 Qwiic connector on AGT (4-pin JST connector)
 
-**Baud Rate:** 115200
+**Baud Rate:** 9600
 
 **Notes:**
-- D39/D40 are repurposed I2C pins configured as UART0
-- Cross TX/RX: RAK4603 TX → AGT RX (D40), RAK4603 RX → AGT TX (D39)
-- MeshtasticSerial is configured in firmware as UART instance 0 on these pins
-- RAK4603 must be configured in PROTO mode: `meshtastic --set serial.mode PROTO`
+- D39/D40 are repurposed I2C pins used via SoftwareSerial
+- AGT sends NMEA 0183 GPS sentences (GPGGA, GPRMC) to RAK J10
+- RAK treats AGT as external GPS source on J10 (UART1)
+- Apollo3 only has 2 hardware UARTs (USB + Iridium), SoftwareSerial provides the third
+- Configure RAK for external GPS on J10 connector
 
 ### 5. ArduPilot Navigator
 
@@ -108,9 +109,9 @@
 |-----------|-----|------------|
 | USB | USB | USB cable (Type-C or Micro) |
 
-**Baud Rate: 57600** (MAVLink standard)
+**Baud Rate: 57600** (shared USB serial for MAVLink + debug output)
 
-**Note:** Navigator receives GPS via MAVLink protocol over USB serial.
+**Note:** Navigator receives GPS, battery status, and system time via MAVLink protocol over USB serial. Navigator sends depth, battery, and heartbeat data back to AGT for failsafe decisions.
 
 ### 6. NeoPixel LED Strip (WS2812B / WS2812)
 
@@ -121,9 +122,9 @@
 | GND | GND | Ground | Common ground with AGT |
 
 **Important Power Considerations:**
-- 30 LEDs × 60mA max = 1.8A maximum current
+- 30 LEDs at 20mA each = 600mA at brightness 50 (typical)
 - Do NOT power from AGT's onboard regulator
-- Use external 5V power supply (2A+ recommended)
+- Use external 5V power supply (1A+ recommended)
 - Connect grounds together (AGT GND to LED GND)
 - Add 470Ω resistor on data line if needed
 - Add 1000µF capacitor across LED strip power
@@ -140,11 +141,11 @@
 
 **Control Logic:**
 - HIGH = Relay ON = Systems powered
-- LOW = Relay OFF = Systems shut down (power save mode)
-- Automatically controlled by battery voltage
-- Conserves power during extended surface recovery wait
+- LOW = Relay OFF = Systems shut down
+- ON in PRE_MISSION, SELF_TEST, MISSION states
+- OFF in RECOVERY state (conserves power)
 
-### 8. Relay Module 2 (Timed Event - Drop Weight)
+### 8. Relay Module 2 (Release — Drop Weight)
 
 | Relay Module | AGT Pin | Signal | Notes |
 |--------------|---------|--------|-------|
@@ -156,11 +157,10 @@
 **Load:** Electrolytic/galvanic drop weight ballast release mechanism
 
 **Control Logic:**
-- Triggered via configuration (GMT time or delay from deployment)
-- Activates for configured duration (typically 1200+ seconds / 20+ minutes)
-- Extended activation required for electrolytic dissolution
+- Triggered by failsafe conditions during MISSION state
+- Default activation duration: 1500 seconds (25 minutes) for electrolytic dissolution
+- Also triggered by `release_now` manual command
 - One-shot activation for ballast release
-- Critical for mission success (surface recovery)
 
 **IMPORTANT:**
 - GPIO35 provides LOW POWER 3.3V trigger signal only
@@ -177,14 +177,14 @@ Battery (4S LiPo)
     │                          (11-16.8V)
     │
     └──► 5V Buck Converter ──► NeoPixel Strip
-                               (2A+ capacity)
+                               (1A+ capacity)
 ```
 
 ### Battery Specifications
 - Type: 4S LiPo (Lithium Polymer)
 - Voltage Range: 14.8V nominal (11.0V - 16.8V)
 - Capacity: Based on deployment duration
-- Monitor via PSM
+- Monitor via PSM analog inputs
 
 ### Power Budget (Approximate)
 
@@ -194,7 +194,7 @@ Battery (4S LiPo)
 | AGT (Active) | 50-100mA | GPS + processing |
 | Iridium TX | 1.5A peak | During transmission |
 | GPS | 30-50mA | Continuous |
-| NeoPixels | 0-1800mA | Depends on brightness |
+| NeoPixels | ~300mA | At brightness 50 |
 | RAK4603 | 10-100mA | Depends on mode |
 | Relays | 20-50mA each | When energized |
 | PSM | 5mA | Monitoring |
@@ -210,7 +210,7 @@ AGT I2C Bus (400kHz) - GPIO8/9
 
 IMPORTANT NOTES:
 - PSM uses analog pins (GPIO11/12), NOT I2C!
-- J10 Qwiic connector (GPIO39/40) is repurposed for UART0 (Meshtastic)
+- J10 Qwiic connector (GPIO39/40) is repurposed for SoftwareSerial (Meshtastic NMEA)
 - Only I2C Port 1 (GPIO8/9) is used for actual I2C devices
 ```
 
@@ -218,9 +218,9 @@ IMPORTANT NOTES:
 
 | Port | Baud | Purpose | Connected Device | Pins |
 |------|------|---------|------------------|------|
-| Serial (USB) | 115200/57600 | Debug/Config/MAVLink | Navigator | USB |
+| Serial (USB) | 57600 | Debug + MAVLink | Navigator | USB |
 | Serial1 (UART1) | 19200 | Iridium | 9603N Modem | GPIO24/25 (built-in) |
-| MeshtasticSerial (UART0) | 115200 | Mesh Network | RAK4603 | GPIO39/40 (J10 Qwiic) |
+| SoftwareSerial | 9600 | NMEA GPS output | RAK4603 | GPIO39/40 (J10 Qwiic) |
 
 ## GPIO Usage Summary
 
@@ -239,14 +239,14 @@ IMPORTANT NOTES:
 | 22 | Iridium Power | Output | Power enable |
 | 24 | Iridium TX | Serial1 | To modem |
 | 25 | Iridium RX | Serial1 | From modem |
-| 26 | GPS Enable | Output | Active LOW |
+| 26 | GPS Enable | Output | Active LOW, open-drain |
 | 27 | Supercap Enable | Output | Charger control |
 | 28 | Supercap PGOOD | Input | Charge status |
 | 32 | NeoPixel Data | Output | LED strip |
 | 34 | Bus Volt Enable | Output | Voltage monitor |
-| 35 | Relay 2 Control | Output | Drop weight release |
-| 39 | Meshtastic TX | UART0 | D39 on J10 (repurposed I2C SCL4) |
-| 40 | Meshtastic RX | UART0 | D40 on J10 (repurposed I2C SDA4) |
+| 35 | Relay 2 Control | Output | Release relay |
+| 39 | Meshtastic TX | SoftwareSerial | D39 on J10 (NMEA GPS out) |
+| 40 | Meshtastic RX | SoftwareSerial | D40 on J10 (optional input) |
 | 41 | Iridium Ring | Input | Ring indicator |
 
 ## Assembly Tips
@@ -257,14 +257,13 @@ IMPORTANT NOTES:
 3. Add Iridium antenna and test transmission
 4. Add peripherals one at a time
 
-### 2. I2C Bus and Analog Connections
-- PSM uses ANALOG outputs (GPIO11/12), not I2C - use simple wires
-- J10 Qwiic connector is used for Meshtastic UART, not I2C
+### 2. Analog and I2C Connections
+- PSM uses ANALOG outputs (GPIO11/12), not I2C — simple wires
+- J10 Qwiic connector is used for SoftwareSerial NMEA output, not I2C
 - Keep I2C wires short (<1m) for GPS and PHT sensor
-- Add pull-ups if bus is long or has many devices
 
 ### 3. Serial Connections
-- Always cross TX/RX (TX → RX, RX → TX)
+- AGT D39 (TX) → RAK J10 RX (NMEA GPS in)
 - Verify logic levels (3.3V)
 - Test each serial device independently
 
@@ -285,32 +284,33 @@ IMPORTANT NOTES:
 - Add flyback diodes for inductive loads
 - Verify relay coil voltage matches supply
 - Size relay contacts for load current
+- Release relay must handle 25+ minute sustained activation
 
 ## Testing Checklist
 
 - [ ] Power system provides stable voltage
-- [ ] GPS acquires fix outdoors
+- [ ] GPS acquires fix outdoors (`gps` command)
 - [ ] Iridium supercap charges (PGOOD high)
-- [ ] Iridium sends test message
-- [ ] PSM reads battery voltage/current
-- [ ] NeoPixels display status
-- [ ] Meshtastic communicates
-- [ ] Navigator receives MAVLink GPS
-- [ ] Relay 1 switches with battery voltage
-- [ ] Relay 2 triggers on timed event
+- [ ] Iridium sends test message (in SELF_TEST state)
+- [ ] PSM reads battery voltage/current (GPIO11/12)
+- [ ] NeoPixels display status correctly
+- [ ] Meshtastic receives NMEA (`mesh_test_gps`)
+- [ ] Navigator receives MAVLink GPS (57600 baud)
+- [ ] Relay 1 switches with state changes
+- [ ] Relay 2 triggers on `release_now`
 - [ ] Configuration saves to EEPROM
 - [ ] System survives power cycle
 
 ## Safety Notes
 
-⚠️ **IMPORTANT SAFETY CONSIDERATIONS:**
+**IMPORTANT SAFETY CONSIDERATIONS:**
 
 1. **Iridium Supercapacitor**: Can store significant energy. Handle carefully.
 2. **Battery**: Use proper 4S LiPo charging and safety practices.
 3. **High Current**: Ensure wiring can handle peak currents safely.
 4. **Relay Loads**: Follow electrical codes for switched loads.
 5. **Waterproofing**: Use appropriate enclosure for marine deployment.
-6. **Antennas**: Keep clear of metallic objects and other antennas.
+6. **Antennas**: GPS and Iridium share antenna via RF switch — firmware prevents simultaneous use.
 
 ## Troubleshooting Wire Connections
 
@@ -318,16 +318,15 @@ IMPORTANT NOTES:
 |---------|-------|
 | GPS not working | Antenna connected, GPS_EN LOW, I2C bus on GPIO8/9 |
 | Iridium fails | Supercap charged, antennas clear, power adequate |
-| No serial from RAK4603 | TX/RX crossed (D39→RX, D40→TX), common ground, baud 115200, PROTO mode |
-| PSM reads zero | Analog connections on GPIO11/12, calibration values, PSM powered |
+| No NMEA to RAK4603 | AGT D39 → RAK J10 RX, common ground, `mesh_test_gps`, baud 9600 |
+| PSM reads zero | Analog connections on GPIO11/12, `enable_psm` + `save` |
 | NeoPixels dark | Data pin GPIO32, 5V power, ground connection |
-| Relays don't switch | Control pin, relay coil voltage, ground, active HIGH/LOW |
+| Relays don't switch | Control pin, relay coil voltage, ground, active HIGH |
 
 ## Reference Documents
 
 - [AGT Hardware Overview](../SparkFun_Artemis_Global_Tracker/Documentation/Hardware_Overview/README.md)
 - [AGT Pin Definitions](../SparkFun_Artemis_Global_Tracker/Documentation/Hardware_Overview/ARTEMIS_PINS.md)
-- [AGT Schematic](../SparkFun_Artemis_Global_Tracker/Documentation/SparkFun_Artemis_Global_Tracker_SCHEMATIC_v10.pdf)
 - Blue Robotics PSM Manual
 - RAK4603 Datasheet
 - ArduPilot Navigator Documentation

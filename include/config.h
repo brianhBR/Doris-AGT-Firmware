@@ -91,7 +91,10 @@
 // ============================================================================
 // RELAY CONFIGURATION
 // ============================================================================
-#define RELAY_ACTIVE_HIGH    true  // Set false if relay is active low
+// Both relays use NO (Normally Open) wiring:
+//   HIGH = coil energized = NO closes = device powered / release active
+//   LOW  = coil de-energized = NO opens = device off / release inactive
+#define RELAY_ACTIVE_HIGH    true
 #define RELEASE_RELAY_DURATION_SEC  1500  // Failsafe release: relay on time (e.g. electrolytic release)
 
 // ============================================================================

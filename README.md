@@ -8,42 +8,42 @@ Advanced firmware for the SparkFun Artemis Global Tracker designed for autonomou
 
 This system is designed for **oceanographic drop camera** deployments:
 
-1. **Deployment** - Released from boat, descends vertically through water column
-2. **Seafloor Recording** - Records oceanographic data and video for 24 hours
-3. **Ballast Release** - Automatically releases drop weight at programmed time
-4. **Surface Recovery** - Ascends to surface and transmits position via Iridium/mesh
-5. **Power Conservation** - Shuts down nonessential systems (Navigator/Pi, camera, lights) during extended surface wait
+1. **Pre-Mission** - Surface configuration, system test, GPS fix
+2. **Deployment** - Self-test verified, submerges (depth > 2m triggers mission)
+3. **Seafloor Recording** - Navigator/Pi records video; AGT monitors failsafe conditions
+4. **Surface Recovery** - Depth < 3m or GPS fix triggers recovery mode
+5. **Power Conservation** - Shuts down nonessential systems (Navigator/Pi, camera, lights) in recovery
 
 ## State-Based Architecture
 
-The firmware uses a **state machine** with **ArduPilot/Navigator as the primary decision maker**:
+The firmware uses a **state machine** with **ArduPilot/Navigator providing real-time sensor data** via MAVLink:
 
 ### System States
 
-1. **PREDEPLOYMENT** - Surface configuration and system test
-2. **MISSION** - Active deployment (ArduPilot leads control)
-3. **RECOVERY** - Low power surface mode awaiting pickup
-4. **EMERGENCY** - Failsafe mode (immediate drop weight release + shutdown)
+1. **PRE_MISSION** - Initial setup, waiting for operator
+2. **SELF_TEST** - System verification; Iridium can transmit for position check
+3. **MISSION** - Active underwater deployment; failsafe monitoring active
+4. **RECOVERY** - Low power surface mode with strobe LEDs and Iridium position reports
 
 ### Control Philosophy
 
-- **ArduPilot commands state transitions** via serial/MAVLink
-- **AGT monitors sensors** and can autonomously trigger emergency
-- **Drop weight release** automated by timer or commanded
-- **Power management relay** controlled by state machine
+- **Depth-based state transitions** — SELF_TEST → MISSION on depth > 2m, MISSION → RECOVERY on depth < 3m or GPS fix
+- **Failsafe system** monitors battery voltage, leak detection, max depth, and autopilot heartbeat
+- **Release relay** fired automatically on failsafe (1500s / 25 min for electrolytic release)
+- **Power management relay** shuts down Navigator/Pi/camera/lights in RECOVERY
 
 ## Overview
 
 The AGT serves as the **communication and control hub**, handling:
 
-- 🛰️ **Iridium Satellite Communication** - Global position reporting for recovery
-- 📡 **Meshtastic Mesh Networking** - Local range communication via RAK4603
-- 🎯 **GPS Tracking** - Continuous position monitoring
-- ⚓ **Drop Weight Release** - Timed relay control for ballast (state-based)
-- 🔋 **Battery Monitoring** - Optional (ArduPilot can handle battery decisions)
-- 💡 **NeoPixel Status Display** - 30 LED visual health indicators
-- ⚡ **Power Management Relay** - State-based shutdown of Navigator/Pi, camera, lights
-- ⚙️ **BlueOS Configuration** - Configured via BlueOS extension on Navigator/Pi
+- **Iridium Satellite Communication** - Global position reporting with mission stats
+- **Meshtastic Mesh Networking** - NMEA GPS output to RAK4603 via J10
+- **GPS Tracking** - Continuous position monitoring (u-blox ZOE-M8Q)
+- **MAVLink Interface** - GPS + battery + system time to ArduPilot over USB
+- **Failsafe Release** - Relay control for electrolytic drop weight release
+- **NeoPixel Status Display** - 30 LED visual indicators with recovery strobe
+- **Power Management Relay** - State-based shutdown of nonessentials
+- **BlueOS Configuration** - Configured via BlueOS extension on Navigator/Pi
 
 ## Quick Links
 
@@ -60,18 +60,18 @@ The AGT serves as the **communication and control hub**, handling:
 ### Communication Interfaces
 - GPS position tracking with u-blox ZOE-M8Q
 - Iridium 9603N satellite modem for global coverage
-- Meshtastic RAK4603 for LoRa mesh networking
-- MAVLink over USB for ArduPilot integration
+- Meshtastic RAK4603 for LoRa mesh networking (NMEA GPS feed via SoftwareSerial)
+- MAVLink over USB for ArduPilot integration (GPS, battery, system time)
 
 ### Hardware Control
 - **Relay 1 (Power Management)**: Controls power to Navigator/Pi, camera, and lights
-  - Triggered automatically when battery voltage drops below threshold
-  - Conserves power during extended surface recovery wait
-- **Relay 2 (Drop Weight Release)**: Triggers ballast release mechanism
-  - Programmed via GMT time or delay from deployment
-  - Configured through BlueOS extension
-- **30 NeoPixel LED Indicators**: Visual status for recovery team
-- **Battery Monitoring**: Real-time voltage/current via Blue Robotics PSM analog
+  - ON in PRE_MISSION, SELF_TEST, MISSION
+  - OFF in RECOVERY (conserves power for extended surface wait)
+- **Relay 2 (Release)**: Electrolytic drop weight release mechanism
+  - Triggered by failsafe conditions or manual `release_now` command
+  - Default duration: 1500 seconds (25 minutes) for electrolytic dissolution
+- **30 NeoPixel LED Indicators**: Visual status with recovery strobe mode
+- **Battery Monitoring**: Real-time voltage/current via Blue Robotics PSM analog (GPIO11/12)
 
 ### System Architecture
 
@@ -81,43 +81,43 @@ The AGT serves as the **communication and control hub**, handling:
 │                                              │
 │  ┌──────────────┐         ┌──────────────┐  │
 │  │ Navigator/Pi │◄──USB───┤     AGT      │  │
-│  │  (BlueOS)    │         │ (Comms Hub)  │  │
-│  └──────┬───────┘         └───┬──────┬───┘  │
+│  │  (BlueOS)    │ MAVLink │ (Comms Hub)  │  │
+│  └──────┬───────┘  57600  └───┬──────┬───┘  │
 │         │                     │      │       │
-│    ┌────▼─────┐          ┌───▼──┐ ┌─▼─────┐ │
-│    │  Camera  │          │ Mesh │ │Iridium│ │
-│    │  Lights  │          │RAK603│ │ 9603N │ │
-│    └──────────┘          └──────┘ └───────┘ │
-│         ▲                                    │
-│    Relay 1 (Power Mgmt)                      │
+│    ┌────▼─────┐     ┌───────▼┐  ┌──▼─────┐ │
+│    │  Camera  │     │  Mesh  │  │Iridium │ │
+│    │  Lights  │     │RAK4603 │  │ 9603N  │ │
+│    └──────────┘     │(J10    │  └────────┘ │
+│         ▲           │ NMEA)  │              │
+│    Relay 1          └────────┘              │
+│    (Power Mgmt)                             │
 │                                              │
-│    Relay 2 ──► Drop Weight Release          │
+│    Relay 2 ──► Electrolytic Release         │
 └─────────────────────────────────────────────┘
 ```
 
 ### Configuration via BlueOS
 
 All mission parameters are configured through a **BlueOS extension** on the Navigator/Pi:
-- Drop weight release time (GMT or delay)
 - Iridium reporting intervals
 - Meshtastic update rates
-- Power save voltage threshold
+- Failsafe thresholds (configured in config.h)
 - LED brightness and patterns
 
-**The AGT firmware does NOT require direct serial configuration** - all settings are pushed from BlueOS.
+**The AGT firmware does NOT require direct serial configuration** - all settings can be pushed from BlueOS.
 
 ## Hardware Requirements
 
 ### Core System
 - SparkFun Artemis Global Tracker
 - Blue Robotics Navigator + Raspberry Pi (BlueOS)
-- Blue Robotics PSM (Power Sense Module - analog connection)
-- Meshtastic RAK4603 (connected to AGT SPI header: GPIO6/GPIO7)
+- Blue Robotics PSM (Power Sense Module - analog on GPIO11/GPIO12)
+- Meshtastic RAK4603 (connected to AGT J10 Qwiic: D39/D40, NMEA at 9600 baud)
 - WS2812B LED strip (30 LEDs, external 5V power required)
 
 ### Relays
 - Relay 1: High-current relay for Navigator/Pi, camera, lights power
-- Relay 2: Ballast release mechanism trigger
+- Relay 2: Electrolytic release mechanism (rated for extended activation, battery-powered coil)
 
 ### Battery
 - 4S LiPo or suitable deep-cycle marine battery
@@ -144,41 +144,41 @@ git submodule update --init --recursive
 # Build and upload
 pio run -t upload
 
-# Monitor serial output
-pio device monitor -b 115200
+# Monitor serial output (57600 baud)
+pio device monitor -b 57600
 ```
 
 ## Quick Configuration
 
-Connect via serial (115200 baud) and use these commands:
+Connect via serial (57600 baud) and use these commands:
 
 ```
-config                          # View current settings
-set_iridium_interval 600        # Set Iridium to 10 minutes
-set_meshtastic_interval 30      # Set Meshtastic to 30 seconds
-set_timed_event gmt 1735689600 5000  # Set timed event
-save                            # Save configuration
+help                                # Show all commands
+config                              # View current settings
+set_iridium_interval 600            # Set Iridium to 10 minutes
+set_meshtastic_interval 3           # Set Meshtastic to 3 seconds
+set_timed_event gmt 1735689600 1500 # Set timed event (seconds duration)
+save                                # Save configuration
 ```
-
-Type `help` for all commands.
 
 ## System Status
 
 The NeoPixel LEDs indicate system state:
 
-| Color | Pattern | Meaning |
+| State | Pattern | Meaning |
 |-------|---------|---------|
-| Blue | Rainbow | Booting |
-| Yellow | Pulse | GPS searching |
-| Green | Pulse | GPS locked |
-| Magenta | Chase | Iridium transmitting |
-| Orange | Pulse | Low battery |
-| Red | Blink | Error |
+| PRE_MISSION | Pre-mission pattern | Waiting for operator |
+| SELF_TEST | Self-test pattern | System verification |
+| MISSION (fix) | Green pulse | GPS locked, operational |
+| MISSION (no fix) | Yellow pulse | No GPS (expected underwater) |
+| RECOVERY | Strobe | Flashing for visual recovery aid |
 
 ## Documentation
 
 - **[PINOUT_GUIDE.md](docs/PINOUT_GUIDE.md)** - Visual pinout guide with board images
 - [README_FIRMWARE.md](README_FIRMWARE.md) - Complete documentation
+- [STATE_MACHINE.md](docs/STATE_MACHINE.md) - State machine architecture
+- [MESHTASTIC_PROTOCOL.md](docs/MESHTASTIC_PROTOCOL.md) - Meshtastic NMEA interface
 - [QUICK_START.md](docs/QUICK_START.md) - Quick start guide
 - [WIRING_DIAGRAM.md](docs/WIRING_DIAGRAM.md) - Wiring instructions
 - [CHANGELOG.md](CHANGELOG.md) - Project history and version changes
@@ -194,6 +194,6 @@ Contributions welcome! Please open an issue or submit a pull request.
 ## Acknowledgments
 
 - SparkFun for the Artemis Global Tracker
-- Blue Robotics for the Power Sense Module
+- Blue Robotics for the Power Sense Module and Navigator
 - Meshtastic project
 - ArduPilot project

@@ -19,10 +19,10 @@ Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-ref
 | — | J10 pin 4 | GND | — | RAK GND |
 
 **Onboard (no wiring):** GPS (ZOE-M8Q) on I2C; Iridium 9603N on Serial1 (D24/D25).  
-**USB:** Debug + MAVLink to Navigator (single USB-C).
+**USB:** Debug + MAVLink to Navigator (single USB-C, 57600 baud).
 
 **Notes:**
-- **J10:** AGT TX (39) → RAK RX. Baud **4800** (NMEA). Configure RAK for external GPS on J10.
+- **J10:** AGT TX (39) → RAK RX. Baud **9600** (NMEA via SoftwareSerial). Configure RAK for external GPS on J10.
 - **Relay 2:** Signal from GPIO35; relay coil and load powered from **battery** (12–14.8 V).
 - **NeoPixels:** Data from GPIO32 only; **power strip from external 5 V** (do not use AGT 3.3 V).
 - **PSM:** GND and analog only; PSM powered from battery sense side.
@@ -37,7 +37,7 @@ Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-ref
 
 | Connection | Location | Pins | Notes |
 |------------|----------|------|-------|
-| **Meshtastic RAK4603** | J10 (Qwiic I2C Port 4) | D39/D40 | NMEA GPS out (TX) to RAK J10 (external GPS), 4800 baud |
+| **Meshtastic RAK4603** | J10 (Qwiic I2C Port 4) | D39/D40 | NMEA GPS out (TX) to RAK J10 (external GPS), 9600 baud via SoftwareSerial |
 | **PSM Voltage** | Breakout Pins | GPIO11 (AD11) | Analog input |
 | **PSM Current** | Breakout Pins | GPIO12 (AD12) | Analog input |
 | **Relay 1 (Power)** | Breakout Pins | GPIO4 (D4) | Navigator/Pi/Camera/Lights |
@@ -80,10 +80,10 @@ Pin 4 (GND)         →  GND
 - **GND** - Common ground
 
 **Configuration:**
-- **Baud:** 4800 (NMEA 0183 standard)
-- **Format:** Standard NMEA; RAK expects external GPS on J10 (same port as RAK GPS module)
+- **Baud:** 9600 (SoftwareSerial, configured in config.h as `MESHTASTIC_BAUD`)
+- **Format:** Standard NMEA 0183 (GPGGA, GPRMC); RAK expects external GPS on J10
 
-**RAK4603 / Meshtastic setup:** Configure the device to use **external GPS** on the J10 UART (UART1). No PROTO mode needed—the RAK just reads NMEA from that port.
+**RAK4603 / Meshtastic setup:** Configure the device to use **external GPS** on the J10 UART (UART1). No PROTO mode needed—the RAK just reads NMEA from that port. The AGT uses SoftwareSerial because both hardware UARTs are occupied (USB + Iridium).
 
 ---
 
