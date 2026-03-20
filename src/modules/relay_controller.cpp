@@ -8,18 +8,17 @@ static unsigned long timedEventStartTime = 0;
 static uint32_t timedEventDurationSeconds = 0;
 
 void RelayController_init() {
-    // Initialize relay pins as outputs
     pinMode(RELAY_POWER_MGMT, OUTPUT);
     pinMode(RELAY_TIMED_EVENT, OUTPUT);
 
-    // Set initial states (relays off)
-    digitalWrite(RELAY_POWER_MGMT, RELAY_ACTIVE_HIGH ? LOW : HIGH);
+    // Pi/Navigator relay defaults ON — never cut power unless we have a confirmed reason
+    digitalWrite(RELAY_POWER_MGMT, RELAY_ACTIVE_HIGH ? HIGH : LOW);
     digitalWrite(RELAY_TIMED_EVENT, RELAY_ACTIVE_HIGH ? LOW : HIGH);
 
-    powerMgmtState = false;
+    powerMgmtState = true;
     timedEventActive = false;
 
-    Serial.println(F("Relay: Controller initialized"));
+    Serial.println(F("Relay: Controller initialized (Pi power ON)"));
 }
 
 void RelayController_setPowerManagement(bool state) {

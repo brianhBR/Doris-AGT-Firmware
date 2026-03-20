@@ -194,10 +194,9 @@ void MAVLinkInterface_update() {
                 case MAVLINK_MSG_ID_SYS_STATUS: {
                     mavlink_sys_status_t sys;
                     mavlink_msg_sys_status_decode(&msg, &sys);
-                    if (sys.voltage_battery != 65535) {  // 0xFFFF = invalid
-                        MissionData_update_voltage(sys.voltage_battery / 1000.0f);
+                    if (sys.voltage_battery != 65535) {
+                        MissionData_update_autopilot_voltage(sys.voltage_battery / 1000.0f);
                     }
-                    // Leak: use sensors_health bit if ArduSub sets it (TBD)
                     break;
                 }
 
@@ -226,7 +225,7 @@ void MAVLinkInterface_update() {
                     mavlink_battery_status_t bat;
                     mavlink_msg_battery_status_decode(&msg, &bat);
                     if (bat.voltages[0] != 65535) {
-                        MissionData_update_voltage(bat.voltages[0] / 1000.0f);
+                        MissionData_update_autopilot_voltage(bat.voltages[0] / 1000.0f);
                     }
                     break;
                 }

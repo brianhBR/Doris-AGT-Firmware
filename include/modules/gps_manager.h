@@ -44,4 +44,7 @@ void GPSManager_getDataString(char* buffer, size_t bufferSize);
 void GPSManager_sleep();
 void GPSManager_wake();
 
+// Diagnostics: print BBR/backup battery status to Serial
+void GPSManager_printDiagnostics();
+
 #endif // GPS_MANAGER_H

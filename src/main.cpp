@@ -88,8 +88,8 @@ void setup() {
 
     loadConfiguration();
     MissionData_init();
-    StateMachine_init();
     RelayController_init();
+    StateMachine_init();
 
     // GPS first — Iridium deferred until first send to avoid power-cycling GPS
     myGPSPtr = new SFE_UBLOX_GNSS();
@@ -241,13 +241,14 @@ void setupPins() {
     pinMode(IRIDIUM_RI, INPUT);
     pinMode(SUPERCAP_PGOOD, INPUT);
     pinMode(GEOFENCE_PIN, INPUT);
+    // Relay pins: keep Pi/Navigator powered from the first moment
     pinMode(RELAY_POWER_MGMT, OUTPUT);
     pinMode(RELAY_TIMED_EVENT, OUTPUT);
 
     digitalWrite(BUS_VOLTAGE_MON_EN, HIGH);
     digitalWrite(LED_WHITE, LOW);
-    digitalWrite(RELAY_POWER_MGMT, LOW);
-    digitalWrite(RELAY_TIMED_EVENT, LOW);
+    digitalWrite(RELAY_POWER_MGMT, RELAY_ACTIVE_HIGH ? HIGH : LOW);
+    digitalWrite(RELAY_TIMED_EVENT, RELAY_ACTIVE_HIGH ? LOW : HIGH);
 }
 
 void loadConfiguration() {
@@ -286,11 +287,17 @@ void checkStateTransitions() {
     MissionData md;
     MissionData_get(&md);
 
-    if (StateMachine_getState() == STATE_SELF_TEST && md.depth_m > MISSION_DEPTH_THRESHOLD_M) {
+    // SELF_TEST -> MISSION: only on confirmed depth from autopilot
+    if (StateMachine_getState() == STATE_SELF_TEST &&
+        md.depth_valid && md.depth_m > MISSION_DEPTH_THRESHOLD_M) {
         StateMachine_enterMission();
     }
+
+    // MISSION -> RECOVERY: require confirmed depth data for the depth check.
+    // GPS fix alone can trigger recovery (GPS doesn't work underwater, so fix = surface).
     if (StateMachine_getState() == STATE_MISSION) {
-        if (md.depth_m < RECOVERY_DEPTH_THRESHOLD_M || GPSManager_hasFix()) {
+        bool shallow = md.depth_valid && md.depth_m < RECOVERY_DEPTH_THRESHOLD_M;
+        if (shallow || GPSManager_hasFix()) {
             StateMachine_enterRecovery();
         }
     }
@@ -301,7 +308,10 @@ void checkFailsafe() {
     MissionData_get(&md);
     unsigned long now = millis();
 
-    if (md.battery_voltage > 0 && md.battery_voltage < BATTERY_CRITICAL_VOLTAGE) {
+    // Battery failsafe: only act on voltage confirmed from the autopilot via MAVLink.
+    // PSM fallback data is used for reporting but not for failsafe decisions.
+    if (md.voltage_from_autopilot &&
+        md.battery_voltage > 0 && md.battery_voltage < BATTERY_CRITICAL_VOLTAGE) {
         StateMachine_triggerFailsafe(FAILSAFE_LOW_VOLTAGE);
         return;
     }
@@ -309,7 +319,7 @@ void checkFailsafe() {
         StateMachine_triggerFailsafe(FAILSAFE_LEAK);
         return;
     }
-    if (md.max_depth_m >= FAILSAFE_MAX_DEPTH_M) {
+    if (md.depth_valid && md.max_depth_m >= FAILSAFE_MAX_DEPTH_M) {
         StateMachine_triggerFailsafe(FAILSAFE_MAX_DEPTH);
         return;
     }
@@ -330,6 +340,7 @@ void processSerialCommands() {
         Serial.println(F("--- Commands ---"));
         Serial.println(F("start_self_test   Start self test; depth>2m -> Mission"));
         Serial.println(F("status / gps      State and GPS"));
+        Serial.println(F("gps_diag          GPS BBR/backup battery diagnostics"));
         Serial.println(F("release_now       Trigger release relay (failsafe)"));
         Serial.println(F("reset             Back to PRE_MISSION"));
         Serial.println(F("set_leak <0|1>   Set leak flag for testing"));
@@ -355,6 +366,10 @@ void processSerialCommands() {
             GPSData g = GPSManager_getData();
             Serial.print(F("Sats: ")); Serial.println(g.satellites);
         }
+        return;
+    }
+    if (cmd == "gps_diag") {
+        GPSManager_printDiagnostics();
         return;
     }
     if (cmd == "release_now") {

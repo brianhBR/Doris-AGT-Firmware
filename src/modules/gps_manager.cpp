@@ -297,3 +297,71 @@ void GPSManager_wake() {
         Serial.println(F("GPS: Wake (expecting hot/warm start from BBR)"));
     }
 }
+
+void GPSManager_printDiagnostics() {
+    if (gpsPtr == nullptr) {
+        Serial.println(F("GPS: Not initialized"));
+        return;
+    }
+
+    Serial.println(F("=== GPS Diagnostics ==="));
+
+    // NAV-STATUS: receiver's own TTFF, time validity, BBR state
+    if (gpsPtr->getNAVSTATUS()) {
+        auto &s = gpsPtr->packetUBXNAVSTATUS->data;
+        Serial.print(F("  Receiver TTFF: "));
+        Serial.print(s.ttff);
+        Serial.println(F(" ms"));
+        Serial.print(F("  Uptime (msss): "));
+        Serial.print(s.msss);
+        Serial.println(F(" ms"));
+        Serial.print(F("  Fix type: "));
+        Serial.println(s.gpsFix);
+        Serial.print(F("  Week # valid (wknSet): "));
+        Serial.println(s.flags.bits.wknSet ? F("YES (BBR RTC intact)") : F("NO (BBR lost)"));
+        Serial.print(F("  TOW valid (towSet): "));
+        Serial.println(s.flags.bits.towSet ? F("YES") : F("NO"));
+    } else {
+        Serial.println(F("  NAV-STATUS: query failed"));
+    }
+
+    // MON-HW: antenna status, noise, jamming
+    UBX_MON_HW_data_t hw;
+    if (gpsPtr->getHWstatus(&hw)) {
+        Serial.print(F("  Antenna status: "));
+        switch (hw.aStatus) {
+            case 0: Serial.println(F("INIT")); break;
+            case 1: Serial.println(F("UNKNOWN")); break;
+            case 2: Serial.println(F("OK")); break;
+            case 3: Serial.println(F("SHORT")); break;
+            case 4: Serial.println(F("OPEN")); break;
+            default: Serial.println(hw.aStatus); break;
+        }
+        Serial.print(F("  Antenna power: "));
+        Serial.println(hw.aPower == 1 ? F("ON") : (hw.aPower == 0 ? F("OFF") : F("UNKNOWN")));
+        Serial.print(F("  Noise/ms: "));
+        Serial.println(hw.noisePerMS);
+        Serial.print(F("  AGC count: "));
+        Serial.println(hw.agcCnt);
+        Serial.print(F("  Jamming: "));
+        Serial.print(hw.jamInd);
+        Serial.println(F("/255"));
+    } else {
+        Serial.println(F("  MON-HW: query failed"));
+    }
+
+    // GLONASS enabled check (BBR config test)
+    bool glonassOn = gpsPtr->isGNSSenabled(SFE_UBLOX_GNSS_ID_GLONASS);
+    Serial.print(F("  GLONASS enabled: "));
+    Serial.println(glonassOn ? F("YES (BBR config intact)") : F("NO (BBR config lost)"));
+
+    // Current fix info
+    Serial.print(F("  Satellites: "));
+    Serial.println(currentGPSData.satellites);
+    Serial.print(F("  HDOP: "));
+    Serial.println(currentGPSData.hdop, 1);
+    Serial.print(F("  Config saved to BBR: "));
+    Serial.println(configSavedToBBR ? F("YES") : F("NO"));
+
+    Serial.println(F("======================="));
+}

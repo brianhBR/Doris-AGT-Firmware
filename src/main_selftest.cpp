@@ -23,6 +23,15 @@
 #include <Wire.h>
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #include <IridiumSBD.h>
+#include "utils/SoftwareSerial.h"
+
+// ============================================================================
+// MESHTASTIC NMEA CONFIG
+// ============================================================================
+#define MESH_TX_PIN         39  // AGT D39 -> RAK RX1 (GPIO 15)
+#define MESH_RX_PIN         40  // AGT D40 (unused, SoftwareSerial needs both)
+#define MESH_BAUD           9600
+#define MESH_INTERVAL_MS    1000
 
 // ============================================================================
 // AGT HARDWARE PINS (from SparkFun Example16)
@@ -168,6 +177,80 @@ static unsigned long lastCycleTime = 0;
 static uint32_t sendCount = 0;
 static bool lastSendOK = false;
 static bool hasSentMessage = false;
+
+// Meshtastic NMEA output
+static SoftwareSerial* meshSerial = nullptr;
+static unsigned long lastMeshUpdate = 0;
+
+static void nmea_cs(const char* body, char* out) {
+    uint8_t cs = 0;
+    for (const char* p = body; *p; p++) cs ^= (uint8_t)*p;
+    snprintf(out, 4, "%02X", (unsigned)cs);
+}
+
+static void meshSendLine(const char* body) {
+    if (!meshSerial) return;
+    char cs[4];
+    nmea_cs(body, cs);
+    char line[140];
+    size_t n = 0;
+    line[n++] = '$';
+    size_t blen = strlen(body);
+    if (n + blen >= sizeof(line) - 6) return;
+    memcpy(line + n, body, blen);
+    n += blen;
+    line[n++] = '*';
+    line[n++] = cs[0];
+    line[n++] = cs[1];
+    line[n++] = '\r';
+    line[n++] = '\n';
+    meshSerial->write((const uint8_t*)line, n);
+    delay(10);
+}
+
+static void meshSendPosition(double lat, double lon, float alt, uint8_t sats,
+                              uint8_t h, uint8_t m, uint8_t s) {
+    char ns = (lat >= 0) ? 'N' : 'S';
+    if (lat < 0) lat = -lat;
+    int latDeg = (int)lat;
+    double latMin = (lat - latDeg) * 60.0;
+    int latMinI = (int)latMin;
+    long latMinF = (long)((latMin - latMinI) * 10000 + 0.5);
+
+    char ew = (lon >= 0) ? 'E' : 'W';
+    if (lon < 0) lon = -lon;
+    int lonDeg = (int)lon;
+    double lonMin = (lon - lonDeg) * 60.0;
+    int lonMinI = (int)lonMin;
+    long lonMinF = (long)((lonMin - lonMinI) * 10000 + 0.5);
+
+    long altI = (long)alt;
+    long altF = (long)(((alt < 0 ? -alt : alt) - (altI < 0 ? -altI : altI)) * 10 + 0.5);
+
+    char gga[128];
+    snprintf(gga, sizeof(gga),
+             "GPGGA,%02u%02u%02u.00,%02d%02d.%04ld,%c,%03d%02d.%04ld,%c,1,%02u,0.9,%ld.%01ld,M,0.0,M,,",
+             (unsigned)h, (unsigned)m, (unsigned)s,
+             latDeg, latMinI, latMinF, ns,
+             lonDeg, lonMinI, lonMinF, ew,
+             (unsigned)sats, altI, altF);
+    meshSendLine(gga);
+
+    char rmc[128];
+    snprintf(rmc, sizeof(rmc),
+             "GPRMC,%02u%02u%02u.00,A,%02d%02d.%04ld,%c,%03d%02d.%04ld,%c,0.0,0.0,150326,,,A",
+             (unsigned)h, (unsigned)m, (unsigned)s,
+             latDeg, latMinI, latMinF, ns,
+             lonDeg, lonMinI, lonMinF, ew);
+    meshSendLine(rmc);
+
+    meshSerial->flush();
+}
+
+static void meshSendTestFix() {
+    meshSendPosition(37.7024, -122.0841, 15.2, 10, 12, 0, 0);
+    Serial.println(F("[Mesh] Sent test NMEA (37.7024, -122.0841)"));
+}
 
 // ============================================================================
 // LAZY I2C INIT
@@ -455,6 +538,22 @@ void setup() {
     pModem->adjustSendReceiveTimeout(180);
     Serial.println(F("[Iridium] Pins configured, init deferred until first send"));
 
+    // Meshtastic NMEA output on SoftwareSerial
+    meshSerial = new SoftwareSerial(MESH_RX_PIN, MESH_TX_PIN);
+    meshSerial->begin(MESH_BAUD);
+    delay(300);
+    Serial.print(F("[Mesh] NMEA output on pin "));
+    Serial.print(MESH_TX_PIN);
+    Serial.print(F(" @ "));
+    Serial.print(MESH_BAUD);
+    Serial.println(F(" baud"));
+
+    // Send test fix immediately so we can verify the link
+    for (int i = 0; i < 5; i++) {
+        meshSendTestFix();
+        delay(1000);
+    }
+
     if (gpsInitOK) {
         showStatus(0, 255, 0); // green = GPS good
     } else {
@@ -467,6 +566,8 @@ void setup() {
     Serial.println(gpsInitOK ? F("OK") : F("FAILED"));
     Serial.println(F("  Iridium:  deferred (will init on first send)"));
     Serial.println(F("  NeoPixel: OK (custom driver)"));
+    Serial.print(F("  Mesh:     NMEA on pin "));
+    Serial.println(MESH_TX_PIN);
     Serial.println(F("-----------------------"));
     Serial.println();
 }
@@ -537,6 +638,20 @@ void loop() {
             }
         }
         lastPrint = now;
+    }
+
+    // ---- Meshtastic NMEA output (every 1s) ----
+    if (now - lastMeshUpdate >= MESH_INTERVAL_MS) {
+        lastMeshUpdate = now;
+        if (hasGoodFix) {
+            uint8_t hr = pGNSS->getHour();
+            uint8_t mn = pGNSS->getMinute();
+            uint8_t sc = pGNSS->getSecond();
+            meshSendPosition(gpsLat, gpsLon, gpsAlt, gpsSats, hr, mn, sc);
+            Serial.println(F("[Mesh] Sent live NMEA"));
+        } else {
+            meshSendTestFix();
+        }
     }
 
     // ---- Status LEDs + Iridium send logic ----
