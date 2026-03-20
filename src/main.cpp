@@ -31,6 +31,7 @@
 #include "modules/config_manager.h"
 #include "modules/state_machine.h"
 #include "modules/mission_data.h"
+#include "modules/doris_protocol.h"
 
 SFE_UBLOX_GNSS* myGPSPtr = nullptr;
 IridiumSBD* modemPtr = nullptr;
@@ -54,6 +55,8 @@ void processSerialCommands();
 void checkFailsafe();
 void checkStateTransitions();
 void set_leak_from_serial(const String& arg);
+void buildDorisReport(DorisReport* report);
+void handleMTMessage(uint8_t msgId, const DorisConfig* config, const DorisCommand* command);
 
 // Convert RTC date/time to Unix timestamp (microseconds). Returns 0 if RTC not set.
 // RTC is synced from GPS in updateLEDState(). ArduSub uses this when BRD_RTC_TYPES=2.
@@ -178,19 +181,26 @@ void loop() {
         }
     }
 
-    // Iridium: position + mission stats in Recovery (and Self Test for check)
+    // Iridium: binary Doris report + MT command check
     // Full RF switch cycle: GPS off -> Iridium on -> send -> Iridium off -> GPS on -> GPS reinit
     if (sysConfig.enableIridium && modemPtr && StateMachine_canTransmitIridium() &&
         (now - lastIridiumSend >= sysConfig.iridiumInterval)) {
         if (GPSManager_hasFix()) {
-            GPSData gpsData = GPSManager_getData();
-            MissionData mission;
-            MissionData_get(&mission);
+            DorisReport report;
+            buildDorisReport(&report);
+
             currentLEDState = LED_STATE_IRIDIUM_TX;
-            if (IridiumManager_sendMissionReport(&gpsData, &mission)) {
+
+            uint8_t mtMsgId = 0;
+            DorisConfig mtConfig = {};
+            DorisCommand mtCommand = {};
+
+            if (IridiumManager_sendDorisReport(&report, &mtMsgId, &mtConfig, &mtCommand)) {
                 lastIridiumSend = millis();
+                if (mtMsgId != 0) {
+                    handleMTMessage(mtMsgId, &mtConfig, &mtCommand);
+                }
             }
-            // GPS was power-cycled by antenna switch, must re-init
             Serial.println(F("GPS: Re-initializing after Iridium send..."));
             delay(2000);
             GPSManager_reinit();
@@ -405,4 +415,165 @@ void set_leak_from_serial(const String& arg) {
     MissionData_set_leak(v != 0);
     Serial.print(F("Leak flag: "));
     Serial.println(v ? F("SET") : F("CLEAR"));
+}
+
+// ============================================================================
+// DORIS BINARY PROTOCOL HELPERS
+// ============================================================================
+
+static float iridiumGetBusVoltage() {
+    pinMode(BUS_VOLTAGE_MON_EN, OUTPUT);
+    digitalWrite(BUS_VOLTAGE_MON_EN, HIGH);
+    delay(10);
+    int rawValue = analogRead(BUS_VOLTAGE_PIN);
+    float voltage = (rawValue / 16384.0) * 2.0 * 3.0;
+    digitalWrite(BUS_VOLTAGE_MON_EN, LOW);
+    return voltage;
+}
+
+void buildDorisReport(DorisReport* report) {
+    memset(report, 0, sizeof(DorisReport));
+
+    GPSData gps = GPSManager_getData();
+    MissionData mission;
+    MissionData_get(&mission);
+    BatteryData batt = PSMInterface_getData();
+
+    // State
+    SystemState st = StateMachine_getState();
+    StateMachineStatus smStatus = StateMachine_getStatus();
+    switch (st) {
+        case STATE_PRE_MISSION: report->mission_state = DORIS_STATE_PRE_MISSION; break;
+        case STATE_SELF_TEST:   report->mission_state = DORIS_STATE_SELF_TEST;   break;
+        case STATE_MISSION:     report->mission_state = DORIS_STATE_MISSION;     break;
+        case STATE_RECOVERY:    report->mission_state = DORIS_STATE_RECOVERY;    break;
+    }
+    if (smStatus.lastFailsafeSource != FAILSAFE_NONE) {
+        report->mission_state = DORIS_STATE_FAILSAFE;
+    }
+
+    // GPS
+    report->gps_fix_type = gps.fixType;
+    report->satellites   = gps.satellites;
+    report->latitude     = (float)gps.latitude;
+    report->longitude    = (float)gps.longitude;
+    report->altitude     = (int16_t)gps.altitude;
+    report->speed        = (uint16_t)(gps.speed * 100.0f);
+    report->course       = (uint16_t)(gps.course * 100.0f);
+    report->hdop         = (uint16_t)(gps.hdop * 100.0f);
+
+    // Mission
+    report->depth        = (uint16_t)(mission.depth_m * 10.0f);
+    report->max_depth    = (uint16_t)(mission.max_depth_m * 10.0f);
+    report->leak_detected = mission.leak_detected ? 1 : 0;
+
+    // Failsafe flags
+    report->failsafe_flags = 0;
+    if (mission.voltage_from_autopilot && mission.battery_voltage > 0) {
+        if (mission.battery_voltage < BATTERY_CRITICAL_VOLTAGE)
+            report->failsafe_flags |= DORIS_FAILSAFE_CRITICAL_VOLTAGE;
+        else if (mission.battery_voltage < BATTERY_LOW_VOLTAGE)
+            report->failsafe_flags |= DORIS_FAILSAFE_LOW_VOLTAGE;
+    }
+    if (mission.leak_detected)
+        report->failsafe_flags |= DORIS_FAILSAFE_LEAK;
+    if (mission.depth_valid && mission.max_depth_m >= FAILSAFE_MAX_DEPTH_M)
+        report->failsafe_flags |= DORIS_FAILSAFE_MAX_DEPTH;
+    if (mission.heartbeat_valid &&
+        (millis() - mission.last_heartbeat_ms) > FAILSAFE_HEARTBEAT_TIMEOUT_MS)
+        report->failsafe_flags |= DORIS_FAILSAFE_NO_HEARTBEAT;
+    if (smStatus.lastFailsafeSource == FAILSAFE_MANUAL)
+        report->failsafe_flags |= DORIS_FAILSAFE_MANUAL;
+
+    // Power — prefer autopilot voltage; fall back to PSM; bus voltage is AGT supply
+    float v = mission.battery_voltage > 0 ? mission.battery_voltage : batt.voltage;
+    report->battery_voltage = (uint16_t)(v * 1000.0f);
+    report->battery_current = (uint16_t)(batt.current * 1000.0f);
+    report->bus_voltage     = (uint16_t)(iridiumGetBusVoltage() * 1000.0f);
+
+    // Time
+    report->uptime_s = (uint32_t)(millis() / 1000UL);
+    uint64_t rtcUsec = getRTCUnixUsec();
+    report->time_unix = (uint32_t)(rtcUsec / 1000000ULL);
+
+    report->reserved = 0;
+}
+
+void handleMTMessage(uint8_t msgId, const DorisConfig* config, const DorisCommand* command) {
+    Serial.print(F("MT: Received message ID "));
+    Serial.println(msgId);
+
+    if (msgId == DORIS_MSG_ID_CONFIG && config != nullptr) {
+        if (config->iridium_interval_s > 0) {
+            uint32_t newInterval = (uint32_t)config->iridium_interval_s * 1000UL;
+            Serial.print(F("MT: Setting Iridium interval to "));
+            Serial.print(config->iridium_interval_s);
+            Serial.println(F("s"));
+            ConfigManager_setIridiumInterval(newInterval);
+        }
+        if (config->led_mode != DORIS_LED_NO_CHANGE) {
+            Serial.print(F("MT: LED mode -> "));
+            Serial.println(config->led_mode);
+            switch (config->led_mode) {
+                case DORIS_LED_OFF:
+                    sysConfig.enableNeoPixels = false;
+                    break;
+                case DORIS_LED_NORMAL:
+                    sysConfig.enableNeoPixels = true;
+                    break;
+                case DORIS_LED_STROBE:
+                    sysConfig.enableNeoPixels = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (config->neopixel_brightness > 0) {
+            Serial.print(F("MT: NeoPixel brightness -> "));
+            Serial.println(config->neopixel_brightness);
+            NeoPixelController_setBrightness(config->neopixel_brightness);
+        }
+        if (config->power_save_voltage_mv > 0) {
+            float newV = config->power_save_voltage_mv / 1000.0f;
+            Serial.print(F("MT: Power save voltage -> "));
+            Serial.println(newV, 2);
+            ConfigManager_setPowerSaveVoltage(newV);
+        }
+        ConfigManager_save(&sysConfig);
+    }
+
+    if (msgId == DORIS_MSG_ID_COMMAND && command != nullptr) {
+        Serial.print(F("MT: Command "));
+        Serial.println(command->command);
+        switch (command->command) {
+            case DORIS_CMD_SEND_REPORT:
+                Serial.println(F("MT: Forcing immediate report on next cycle"));
+                lastIridiumSend = 0;
+                break;
+            case DORIS_CMD_RELEASE:
+                Serial.println(F("MT: Remote release triggered!"));
+                StateMachine_triggerFailsafe(FAILSAFE_MANUAL);
+                break;
+            case DORIS_CMD_RESET_STATE:
+                Serial.println(F("MT: Resetting state machine"));
+                StateMachine_reset();
+                break;
+            case DORIS_CMD_REBOOT:
+                Serial.println(F("MT: Rebooting..."));
+                delay(500);
+                NVIC_SystemReset();
+                break;
+            case DORIS_CMD_ENABLE_IRIDIUM:
+                sysConfig.enableIridium = true;
+                ConfigManager_save(&sysConfig);
+                break;
+            case DORIS_CMD_DISABLE_IRIDIUM:
+                sysConfig.enableIridium = false;
+                ConfigManager_save(&sysConfig);
+                break;
+            default:
+                Serial.println(F("MT: Unknown command"));
+                break;
+        }
+    }
 }
