@@ -21,11 +21,36 @@ static unsigned long lastHeartbeat = 0;
 void MAVLinkInterface_init() {
     // MAVLink communicates over USB Serial
     // Serial is already initialized in main setup
-    Serial.println(F("MAVLink: Interface initialized"));
+    DebugPrintln(F("MAVLink: Interface initialized"));
     // Populate mavlink_system with configured IDs so MAVLink helpers use them
     mavlink_system.sysid = MAVLINK_SYSTEM_ID;
     mavlink_system.compid = MAVLINK_COMPONENT_ID;
     initialized = true;
+}
+
+static void calendarToGPSTime(uint16_t year, uint8_t month, uint8_t day,
+                              uint8_t hour, uint8_t minute, uint8_t second,
+                              uint16_t* gpsWeek, uint32_t* gpsTowMs) {
+    // GPS epoch: 1980-01-06 00:00:00 UTC
+    // Julian Day Number for a given date
+    auto jdn = [](int y, int m, int d) -> int32_t {
+        int a = (14 - m) / 12;
+        int y2 = y + 4800 - a;
+        int m2 = m + 12 * a - 3;
+        return d + (153 * m2 + 2) / 5 + 365 * y2 + y2 / 4 - y2 / 100 + y2 / 400 - 32045;
+    };
+    int32_t jdnDate  = jdn(year, month, day);
+    int32_t jdnEpoch = jdn(1980, 1, 6);
+    int32_t daysSinceEpoch = jdnDate - jdnEpoch;
+    if (daysSinceEpoch < 0) {
+        *gpsWeek = 0;
+        *gpsTowMs = 0;
+        return;
+    }
+    *gpsWeek  = (uint16_t)(daysSinceEpoch / 7);
+    uint32_t dow = daysSinceEpoch % 7;
+    *gpsTowMs = (dow * 86400UL + (uint32_t)hour * 3600UL +
+                 (uint32_t)minute * 60UL + second) * 1000UL;
 }
 
 void MAVLinkInterface_sendGPS(GPSData* gpsData) {
@@ -36,20 +61,17 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
     mavlink_message_t msg;
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
-    // Convert GPS data to MAVLink GPS_RAW_INT message
     int32_t lat = (int32_t)(gpsData->latitude * 1e7);
     int32_t lon = (int32_t)(gpsData->longitude * 1e7);
     int32_t alt = (int32_t)(gpsData->altitude * 1000);  // mm
     uint16_t eph = (uint16_t)(gpsData->hdop * 100);     // cm
-    uint16_t epv = 65535;  // Unknown
     uint16_t vel = (uint16_t)(gpsData->speed * 100);    // cm/s
     uint16_t cog = (uint16_t)(gpsData->course * 100);   // cdeg
     uint8_t fixType = gpsData->fixType;
     uint8_t satsVisible = gpsData->satellites;
-
-    // Time since boot in microseconds
     uint64_t timeUsec = millis() * 1000ULL;
 
+    // GPS_RAW_INT first (visible in MAVLink Inspector for debugging)
     mavlink_msg_gps_raw_int_pack(
         systemId,
         componentId,
@@ -60,20 +82,58 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
         lon,
         alt,
         eph,
-        epv,
+        65535,  // epv unknown
         vel,
         cog,
         satsVisible,
-        0,  // alt_ellipsoid (not used)
-        0,  // h_acc (not used)
-        0,  // v_acc (not used)
-        0,  // vel_acc (not used)
-        0,  // hdg_acc (not used)
-        0   // yaw (not used)
+        0, 0, 0, 0, 0, 0
     );
-
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     MAVLINK_SERIAL.write(buf, len);
+    MAVLINK_SERIAL.flush();
+
+    // GPS_INPUT for ArduSub consumption (GPS_TYPE=14)
+    uint16_t gpsWeek = 0;
+    uint32_t gpsTowMs = 0;
+    if (gpsData->year >= 1980) {
+        calendarToGPSTime(gpsData->year, gpsData->month, gpsData->day,
+                          gpsData->hour, gpsData->minute, gpsData->second,
+                          &gpsWeek, &gpsTowMs);
+    }
+
+    uint16_t ignoreFlags = GPS_INPUT_IGNORE_FLAG_VDOP |
+                           GPS_INPUT_IGNORE_FLAG_VEL_VERT |
+                           GPS_INPUT_IGNORE_FLAG_SPEED_ACCURACY |
+                           GPS_INPUT_IGNORE_FLAG_HORIZONTAL_ACCURACY |
+                           GPS_INPUT_IGNORE_FLAG_VERTICAL_ACCURACY;
+
+    mavlink_msg_gps_input_pack(
+        systemId,
+        componentId,
+        &msg,
+        timeUsec,           // time_usec
+        0,                  // gps_id
+        ignoreFlags,        // ignore_flags
+        gpsTowMs,           // time_week_ms
+        gpsWeek,            // time_week
+        fixType,            // fix_type
+        lat,                // lat (1e7)
+        lon,                // lon (1e7)
+        gpsData->altitude,  // alt (m, float)
+        gpsData->hdop,      // hdop (float)
+        65535.0f,           // vdop (ignored)
+        gpsData->speed,     // vn (m/s) — using as total horizontal speed
+        0.0f,               // ve
+        0.0f,               // vd (ignored)
+        0.0f,               // speed_accuracy (ignored)
+        0.0f,               // horiz_accuracy (ignored)
+        0.0f,               // vert_accuracy (ignored)
+        satsVisible,        // satellites_visible
+        0                   // yaw (cdeg, 0 = not available)
+    );
+    len = mavlink_msg_to_send_buffer(buf, &msg);
+    MAVLINK_SERIAL.write(buf, len);
+    MAVLINK_SERIAL.flush();
 }
 
 void MAVLinkInterface_sendHeartbeat() {
@@ -173,72 +233,76 @@ void MAVLinkInterface_sendStatus(float voltage, float current) {
     MAVLINK_SERIAL.write(buf, len);
 }
 
-void MAVLinkInterface_update() {
-    if (!initialized) {
-        return;
+void MAVLinkInterface_handleMessage(void* msgPtr) {
+    if (!initialized || !msgPtr) return;
+
+    mavlink_message_t* msg = (mavlink_message_t*)msgPtr;
+
+    switch (msg->msgid) {
+        case MAVLINK_MSG_ID_HEARTBEAT: {
+            MissionData_update_heartbeat();
+            break;
+        }
+
+        case MAVLINK_MSG_ID_SYS_STATUS: {
+            mavlink_sys_status_t sys;
+            mavlink_msg_sys_status_decode(msg, &sys);
+            if (sys.voltage_battery != 65535) {
+                MissionData_update_autopilot_voltage(sys.voltage_battery / 1000.0f);
+            }
+            break;
+        }
+
+        case MAVLINK_MSG_ID_SCALED_PRESSURE: {
+            mavlink_scaled_pressure_t sp;
+            mavlink_msg_scaled_pressure_decode(msg, &sp);
+            float press_mbar = sp.press_abs;
+            if (press_mbar > 0) {
+                float depth = (press_mbar - SURFACE_PRESSURE_MBAR) * MBAR_TO_DEPTH_M;
+                if (depth > 0) MissionData_update_depth(depth);
+            }
+            break;
+        }
+
+        case MAVLINK_MSG_ID_VFR_HUD: {
+            mavlink_vfr_hud_t vfr;
+            mavlink_msg_vfr_hud_decode(msg, &vfr);
+            if (vfr.alt < 0) {
+                MissionData_update_depth(-vfr.alt);
+            }
+            break;
+        }
+
+        case MAVLINK_MSG_ID_BATTERY_STATUS: {
+            mavlink_battery_status_t bat;
+            mavlink_msg_battery_status_decode(msg, &bat);
+            if (bat.voltages[0] != 65535) {
+                MissionData_update_autopilot_voltage(bat.voltages[0] / 1000.0f);
+            }
+            break;
+        }
+
+        case MAVLINK_MSG_ID_COMMAND_LONG: {
+            mavlink_command_long_t cmd;
+            mavlink_msg_command_long_decode(msg, &cmd);
+            break;
+        }
+
+        default:
+            break;
     }
+}
+
+void MAVLinkInterface_update() {
+    if (!initialized) return;
 
     mavlink_message_t msg;
     mavlink_status_t status;
 
     while (MAVLINK_SERIAL.available()) {
         uint8_t c = MAVLINK_SERIAL.read();
-
         if (mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &status)) {
-            switch (msg.msgid) {
-                case MAVLINK_MSG_ID_HEARTBEAT: {
-                    MissionData_update_heartbeat();
-                    break;
-                }
-
-                case MAVLINK_MSG_ID_SYS_STATUS: {
-                    mavlink_sys_status_t sys;
-                    mavlink_msg_sys_status_decode(&msg, &sys);
-                    if (sys.voltage_battery != 65535) {
-                        MissionData_update_autopilot_voltage(sys.voltage_battery / 1000.0f);
-                    }
-                    break;
-                }
-
-                case MAVLINK_MSG_ID_SCALED_PRESSURE: {
-                    mavlink_scaled_pressure_t sp;
-                    mavlink_msg_scaled_pressure_decode(&msg, &sp);
-                    float press_mbar = sp.press_abs;  // hPa (mbar) per MAVLink
-                    if (press_mbar > 0) {
-                        float depth = (press_mbar - SURFACE_PRESSURE_MBAR) * MBAR_TO_DEPTH_M;
-                        if (depth > 0) MissionData_update_depth(depth);
-                    }
-                    break;
-                }
-
-                case MAVLINK_MSG_ID_VFR_HUD: {
-                    mavlink_vfr_hud_t vfr;
-                    mavlink_msg_vfr_hud_decode(&msg, &vfr);
-                    // alt is altitude in m (negative below surface for subs); depth = -alt when underwater
-                    if (vfr.alt < 0) {
-                        MissionData_update_depth(-vfr.alt);
-                    }
-                    break;
-                }
-
-                case MAVLINK_MSG_ID_BATTERY_STATUS: {
-                    mavlink_battery_status_t bat;
-                    mavlink_msg_battery_status_decode(&msg, &bat);
-                    if (bat.voltages[0] != 65535) {
-                        MissionData_update_autopilot_voltage(bat.voltages[0] / 1000.0f);
-                    }
-                    break;
-                }
-
-                case MAVLINK_MSG_ID_COMMAND_LONG: {
-                    mavlink_command_long_t cmd;
-                    mavlink_msg_command_long_decode(&msg, &cmd);
-                    break;
-                }
-
-                default:
-                    break;
-            }
+            MAVLinkInterface_handleMessage(&msg);
         }
     }
 }

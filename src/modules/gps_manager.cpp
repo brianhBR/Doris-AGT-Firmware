@@ -20,7 +20,7 @@ static bool configSavedToBBR = false;   // Track whether we've saved config to B
 
 // Toggle SCL manually to free a stuck I2C bus (SDA held low by slave).
 static void i2cBusRecovery() {
-    Serial.println(F("GPS: I2C bus recovery..."));
+    DebugPrintln(F("GPS: I2C bus recovery..."));
     pinMode(PIN_AGTWIRE_SDA, INPUT);
     pinMode(PIN_AGTWIRE_SCL, OUTPUT);
     for (int i = 0; i < 16; i++) {
@@ -60,7 +60,7 @@ static bool initI2CAndGPS(bool fullConfig) {
     delay(100);
 
     if (!gpsPtr->begin(agtWire)) {
-        Serial.println(F("GPS: ZOE-M8Q not detected on I2C"));
+        DebugPrintln(F("GPS: ZOE-M8Q not detected on I2C"));
         return false;
     }
 
@@ -73,7 +73,7 @@ static bool initI2CAndGPS(bool fullConfig) {
         bool alreadyConfigured = gpsPtr->isGNSSenabled(SFE_UBLOX_GNSS_ID_GLONASS);
 
         if (!alreadyConfigured) {
-            Serial.println(F("GPS: First boot — configuring GPS+GLONASS..."));
+            DebugPrintln(F("GPS: First boot — configuring GPS+GLONASS..."));
             gpsPtr->setI2COutput(COM_TYPE_UBX);
             gpsPtr->setNavigationFrequency(GPS_UPDATE_RATE_HZ);
             gpsPtr->setDynamicModel(DYN_MODEL_PORTABLE);
@@ -83,16 +83,16 @@ static bool initI2CAndGPS(bool fullConfig) {
 
             if (gpsPtr->saveConfiguration()) {
                 configSavedToBBR = true;
-                Serial.println(F("GPS: Config saved to BBR (warm starts enabled)"));
+                DebugPrintln(F("GPS: Config saved to BBR (warm starts enabled)"));
             } else {
-                Serial.println(F("GPS: WARNING - failed to save config to BBR"));
+                DebugPrintln(F("GPS: WARNING - failed to save config to BBR"));
             }
         } else {
             configSavedToBBR = true;
-            Serial.println(F("GPS: BBR config valid, skipping reconfig (ephemeris preserved)"));
+            DebugPrintln(F("GPS: BBR config valid, skipping reconfig (ephemeris preserved)"));
         }
     } else {
-        Serial.println(F("GPS: Light reinit (BBR config retained)"));
+        DebugPrintln(F("GPS: Light reinit (BBR config retained)"));
     }
 
     // autoPVT is a library-side flag, must be set every time
@@ -111,7 +111,7 @@ bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
     // This keeps ephemeris + RTC alive across power cycles for hot/warm starts.
     pinMode(GNSS_BCKP_BAT_CHG_EN, OUTPUT);
     digitalWrite(GNSS_BCKP_BAT_CHG_EN, LOW);
-    Serial.println(F("GPS: Backup battery charging enabled"));
+    DebugPrintln(F("GPS: Backup battery charging enabled"));
 
     // Enable GNSS power
     am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
@@ -126,13 +126,13 @@ bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
     currentGPSData.valid = false;
     currentGPSData.satellites = 0;
 
-    Serial.println(F("GPS: ZOE-M8Q initialized (GPS+GLONASS, config saved to BBR)"));
+    DebugPrintln(F("GPS: ZOE-M8Q initialized (GPS+GLONASS, config saved to BBR)"));
     return true;
 }
 
 bool GPSManager_reinit() {
     if (gpsPtr == nullptr) return false;
-    Serial.println(F("GPS: Re-initializing after power cycle (warm start)..."));
+    DebugPrintln(F("GPS: Re-initializing after power cycle (warm start)..."));
 
     am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
     pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
@@ -144,15 +144,15 @@ bool GPSManager_reinit() {
     // BBR retains config from initial setup; skip full reconfiguration
     bool useLightInit = configSavedToBBR;
     if (!initI2CAndGPS(!useLightInit)) {
-        Serial.println(F("GPS: Re-init FAILED, retrying with full config..."));
+        DebugPrintln(F("GPS: Re-init FAILED, retrying with full config..."));
         delay(1000);
         if (!initI2CAndGPS(true)) {
-            Serial.println(F("GPS: Re-init FAILED"));
+            DebugPrintln(F("GPS: Re-init FAILED"));
             return false;
         }
     }
 
-    Serial.println(F("GPS: Re-init OK"));
+    DebugPrintln(F("GPS: Re-init OK"));
     return true;
 }
 
@@ -187,44 +187,46 @@ void GPSManager_update() {
         if (currentGPSData.fixType >= 2 && currentGPSData.satellites >= GPS_MIN_SATS) {
             currentGPSData.valid = true;
             lastFixAttempt = currentMillis;
+            digitalWrite(LED_WHITE, HIGH);
 
             if (!ttffLogged && powerOnTime > 0) {
                 unsigned long ttff = currentMillis - powerOnTime;
-                Serial.print(F("GPS: TTFF = "));
-                Serial.print(ttff / 1000);
-                Serial.print(F("s ("));
-                if (ttff < 5000)       Serial.print(F("hot start"));
-                else if (ttff < 35000) Serial.print(F("warm start"));
-                else                   Serial.print(F("cold start"));
-                Serial.println(F(")"));
+                DebugPrint(F("GPS: TTFF = "));
+                DebugPrint(ttff / 1000);
+                DebugPrint(F("s ("));
+                if (ttff < 5000)       DebugPrint(F("hot start"));
+                else if (ttff < 35000) DebugPrint(F("warm start"));
+                else                   DebugPrint(F("cold start"));
+                DebugPrintln(F(")"));
                 ttffLogged = true;
             }
 
             static unsigned long lastPrint = 0;
             if (currentMillis - lastPrint > 10000) {
-                Serial.print(F("GPS: Fix - Lat: "));
-                Serial.print(currentGPSData.latitude, 6);
-                Serial.print(F(" Lon: "));
-                Serial.print(currentGPSData.longitude, 6);
-                Serial.print(F(" Sats: "));
-                Serial.print(currentGPSData.satellites);
-                Serial.print(F(" HDOP: "));
-                Serial.println(currentGPSData.hdop, 1);
+                DebugPrint(F("GPS: Fix - Lat: "));
+                DebugPrint(currentGPSData.latitude, 6);
+                DebugPrint(F(" Lon: "));
+                DebugPrint(currentGPSData.longitude, 6);
+                DebugPrint(F(" Sats: "));
+                DebugPrint(currentGPSData.satellites);
+                DebugPrint(F(" HDOP: "));
+                DebugPrintln(currentGPSData.hdop, 1);
                 lastPrint = currentMillis;
             }
         } else {
             currentGPSData.valid = false;
+            digitalWrite(LED_WHITE, LOW);
 
             static unsigned long lastSearchPrint = 0;
             if (currentMillis - lastSearchPrint > 15000) {
-                Serial.print(F("GPS: Searching... Sats: "));
-                Serial.print(currentGPSData.satellites);
-                Serial.print(F(" Fix: "));
-                Serial.print(currentGPSData.fixType);
+                DebugPrint(F("GPS: Searching... Sats: "));
+                DebugPrint(currentGPSData.satellites);
+                DebugPrint(F(" Fix: "));
+                DebugPrint(currentGPSData.fixType);
                 unsigned long elapsed = (powerOnTime > 0) ? (currentMillis - powerOnTime) / 1000 : 0;
-                Serial.print(F(" Elapsed: "));
-                Serial.print(elapsed);
-                Serial.println(F("s"));
+                DebugPrint(F(" Elapsed: "));
+                DebugPrint(elapsed);
+                DebugPrintln(F("s"));
                 lastSearchPrint = currentMillis;
             }
         }
@@ -272,7 +274,7 @@ void GPSManager_sleep() {
     pin_config(PinName(GNSS_EN), pinCfg);
     delay(1);
     digitalWrite(GNSS_EN, HIGH);  // Disable main power (backup battery keeps BBR alive)
-    Serial.println(F("GPS: Sleep (BBR retained via backup battery)"));
+    DebugPrintln(F("GPS: Sleep (BBR retained via backup battery)"));
 }
 
 void GPSManager_wake() {
@@ -286,7 +288,7 @@ void GPSManager_wake() {
     if (gpsPtr != nullptr) {
         TwoWire& agtWire = getAGTWire();
         if (!gpsPtr->begin(agtWire)) {
-            Serial.println(F("GPS: Wake failed, retrying..."));
+            DebugPrintln(F("GPS: Wake failed, retrying..."));
             delay(500);
             gpsPtr->begin(agtWire);
         }
@@ -294,74 +296,74 @@ void GPSManager_wake() {
 
         powerOnTime = millis();
         ttffLogged = false;
-        Serial.println(F("GPS: Wake (expecting hot/warm start from BBR)"));
+        DebugPrintln(F("GPS: Wake (expecting hot/warm start from BBR)"));
     }
 }
 
 void GPSManager_printDiagnostics() {
     if (gpsPtr == nullptr) {
-        Serial.println(F("GPS: Not initialized"));
+        DebugPrintln(F("GPS: Not initialized"));
         return;
     }
 
-    Serial.println(F("=== GPS Diagnostics ==="));
+    DebugPrintln(F("=== GPS Diagnostics ==="));
 
     // NAV-STATUS: receiver's own TTFF, time validity, BBR state
     if (gpsPtr->getNAVSTATUS()) {
         auto &s = gpsPtr->packetUBXNAVSTATUS->data;
-        Serial.print(F("  Receiver TTFF: "));
-        Serial.print(s.ttff);
-        Serial.println(F(" ms"));
-        Serial.print(F("  Uptime (msss): "));
-        Serial.print(s.msss);
-        Serial.println(F(" ms"));
-        Serial.print(F("  Fix type: "));
-        Serial.println(s.gpsFix);
-        Serial.print(F("  Week # valid (wknSet): "));
-        Serial.println(s.flags.bits.wknSet ? F("YES (BBR RTC intact)") : F("NO (BBR lost)"));
-        Serial.print(F("  TOW valid (towSet): "));
-        Serial.println(s.flags.bits.towSet ? F("YES") : F("NO"));
+        DebugPrint(F("  Receiver TTFF: "));
+        DebugPrint(s.ttff);
+        DebugPrintln(F(" ms"));
+        DebugPrint(F("  Uptime (msss): "));
+        DebugPrint(s.msss);
+        DebugPrintln(F(" ms"));
+        DebugPrint(F("  Fix type: "));
+        DebugPrintln(s.gpsFix);
+        DebugPrint(F("  Week # valid (wknSet): "));
+        DebugPrintln(s.flags.bits.wknSet ? F("YES (BBR RTC intact)") : F("NO (BBR lost)"));
+        DebugPrint(F("  TOW valid (towSet): "));
+        DebugPrintln(s.flags.bits.towSet ? F("YES") : F("NO"));
     } else {
-        Serial.println(F("  NAV-STATUS: query failed"));
+        DebugPrintln(F("  NAV-STATUS: query failed"));
     }
 
     // MON-HW: antenna status, noise, jamming
     UBX_MON_HW_data_t hw;
     if (gpsPtr->getHWstatus(&hw)) {
-        Serial.print(F("  Antenna status: "));
+        DebugPrint(F("  Antenna status: "));
         switch (hw.aStatus) {
-            case 0: Serial.println(F("INIT")); break;
-            case 1: Serial.println(F("UNKNOWN")); break;
-            case 2: Serial.println(F("OK")); break;
-            case 3: Serial.println(F("SHORT")); break;
-            case 4: Serial.println(F("OPEN")); break;
-            default: Serial.println(hw.aStatus); break;
+            case 0: DebugPrintln(F("INIT")); break;
+            case 1: DebugPrintln(F("UNKNOWN")); break;
+            case 2: DebugPrintln(F("OK")); break;
+            case 3: DebugPrintln(F("SHORT")); break;
+            case 4: DebugPrintln(F("OPEN")); break;
+            default: DebugPrintln(hw.aStatus); break;
         }
-        Serial.print(F("  Antenna power: "));
-        Serial.println(hw.aPower == 1 ? F("ON") : (hw.aPower == 0 ? F("OFF") : F("UNKNOWN")));
-        Serial.print(F("  Noise/ms: "));
-        Serial.println(hw.noisePerMS);
-        Serial.print(F("  AGC count: "));
-        Serial.println(hw.agcCnt);
-        Serial.print(F("  Jamming: "));
-        Serial.print(hw.jamInd);
-        Serial.println(F("/255"));
+        DebugPrint(F("  Antenna power: "));
+        DebugPrintln(hw.aPower == 1 ? F("ON") : (hw.aPower == 0 ? F("OFF") : F("UNKNOWN")));
+        DebugPrint(F("  Noise/ms: "));
+        DebugPrintln(hw.noisePerMS);
+        DebugPrint(F("  AGC count: "));
+        DebugPrintln(hw.agcCnt);
+        DebugPrint(F("  Jamming: "));
+        DebugPrint(hw.jamInd);
+        DebugPrintln(F("/255"));
     } else {
-        Serial.println(F("  MON-HW: query failed"));
+        DebugPrintln(F("  MON-HW: query failed"));
     }
 
     // GLONASS enabled check (BBR config test)
     bool glonassOn = gpsPtr->isGNSSenabled(SFE_UBLOX_GNSS_ID_GLONASS);
-    Serial.print(F("  GLONASS enabled: "));
-    Serial.println(glonassOn ? F("YES (BBR config intact)") : F("NO (BBR config lost)"));
+    DebugPrint(F("  GLONASS enabled: "));
+    DebugPrintln(glonassOn ? F("YES (BBR config intact)") : F("NO (BBR config lost)"));
 
     // Current fix info
-    Serial.print(F("  Satellites: "));
-    Serial.println(currentGPSData.satellites);
-    Serial.print(F("  HDOP: "));
-    Serial.println(currentGPSData.hdop, 1);
-    Serial.print(F("  Config saved to BBR: "));
-    Serial.println(configSavedToBBR ? F("YES") : F("NO"));
+    DebugPrint(F("  Satellites: "));
+    DebugPrintln(currentGPSData.satellites);
+    DebugPrint(F("  HDOP: "));
+    DebugPrintln(currentGPSData.hdop, 1);
+    DebugPrint(F("  Config saved to BBR: "));
+    DebugPrintln(configSavedToBBR ? F("YES") : F("NO"));
 
-    Serial.println(F("======================="));
+    DebugPrintln(F("======================="));
 }

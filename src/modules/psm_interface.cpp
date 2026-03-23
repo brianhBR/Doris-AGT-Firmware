@@ -35,7 +35,7 @@ static float totalCapacity = 0.0;   // Ah
 static unsigned long lastUpdate = 0;
 
 bool PSMInterface_init() {
-    Serial.println(F("PSM: Initializing analog interface..."));
+    DebugPrintln(F("PSM: Initializing analog interface..."));
 
     // Configure PSM analog input pins
     pinMode(PSM_VOLTAGE_PIN, INPUT);
@@ -55,15 +55,15 @@ bool PSMInterface_init() {
     initialized = true;
     lastUpdate = millis();
 
-    Serial.println(F("PSM: Initialized successfully (analog mode)"));
-    Serial.print(F("PSM: Voltage calibration: "));
-    Serial.print(PSM_VOLTAGE_RATIO);
-    Serial.println(F(" V/V"));
-    Serial.print(F("PSM: Current calibration: "));
-    Serial.print(PSM_CURRENT_RATIO);
-    Serial.print(F(" A/V, offset "));
-    Serial.print(PSM_CURRENT_OFFSET);
-    Serial.println(F("V"));
+    DebugPrintln(F("PSM: Initialized successfully (analog mode)"));
+    DebugPrint(F("PSM: Voltage calibration: "));
+    DebugPrint(PSM_VOLTAGE_RATIO);
+    DebugPrintln(F(" V/V"));
+    DebugPrint(F("PSM: Current calibration: "));
+    DebugPrint(PSM_CURRENT_RATIO);
+    DebugPrint(F(" A/V, offset "));
+    DebugPrint(PSM_CURRENT_OFFSET);
+    DebugPrintln(F("V"));
 
     return true;
 }
@@ -110,17 +110,17 @@ void PSMInterface_update() {
     // Print battery info periodically
     static unsigned long lastPrint = 0;
     if (currentMillis - lastPrint > 30000) {  // Every 30 seconds
-        Serial.print(F("PSM: V="));
-        Serial.print(currentBatteryData.voltage, 2);
-        Serial.print(F("V I="));
-        Serial.print(currentBatteryData.current, 2);
-        Serial.print(F("A P="));
-        Serial.print(currentBatteryData.power, 2);
-        Serial.print(F("W (ADC: V="));
-        Serial.print(voltageADC);
-        Serial.print(F(" I="));
-        Serial.print(currentADC);
-        Serial.println(F(")"));
+        DebugPrint(F("PSM: V="));
+        DebugPrint(currentBatteryData.voltage, 2);
+        DebugPrint(F("V I="));
+        DebugPrint(currentBatteryData.current, 2);
+        DebugPrint(F("A P="));
+        DebugPrint(currentBatteryData.power, 2);
+        DebugPrint(F("W (ADC: V="));
+        DebugPrint(voltageADC);
+        DebugPrint(F(" I="));
+        DebugPrint(currentADC);
+        DebugPrintln(F(")"));
         lastPrint = currentMillis;
     }
 }
@@ -135,7 +135,7 @@ void PSMInterface_resetCounters() {
     currentBatteryData.energy = 0.0;
     currentBatteryData.capacity = 0.0;
 
-    Serial.println(F("PSM: Energy/capacity counters reset"));
+    DebugPrintln(F("PSM: Energy/capacity counters reset"));
 }
 
 float PSMInterface_getSOC() {

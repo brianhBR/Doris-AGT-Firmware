@@ -7,9 +7,10 @@
 // SIMPLIFIED STATE MACHINE - Drop Camera
 // ============================================================================
 // PRE_MISSION  -> SELF_TEST (run tests: GPS, Iridium, battery, mission loaded)
-// SELF_TEST    -> MISSION   when MAVLink depth > 2m
-// MISSION      -> RECOVERY  when depth < 3m OR GPS fix (surfaced)
+// SELF_TEST    -> MISSION   when MAVLink depth > 5m
+// MISSION      -> RECOVERY  when depth < 1.5m AND GPS fix (after 60s min)
 // Failsafe in MISSION: low voltage, leak, max depth, no heartbeat -> release relay, RECOVERY
+// Nonessentials powered off in RECOVERY to conserve power.
 
 enum SystemState {
     STATE_PRE_MISSION,   // Initial setup
@@ -50,10 +51,10 @@ uint32_t StateMachine_getTimeInState();
 // Pre-mission -> Self Test (e.g. serial command "start_self_test")
 void StateMachine_startSelfTest();
 
-// Self Test -> Mission when MAVLink depth > 2m
+// Self Test -> Mission when MAVLink depth > 5m
 void StateMachine_enterMission();
 
-// Mission -> Recovery when depth < 3m or GPS fix
+// Mission -> Recovery when depth < 1.5m AND GPS fix (after 60s min)
 void StateMachine_enterRecovery();
 
 // Reset to Pre-mission (for testing)

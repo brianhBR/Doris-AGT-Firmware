@@ -149,7 +149,7 @@ void MeshtasticInterface_sendTestNMEA() {
     send_nmea_line("GPGGA,120000.00,3742.1445,N,12205.0466,W,1,10,0.9,15.2,M,0.0,M,,");
     send_nmea_line("GPRMC,120000.00,A,3742.1445,N,12205.0466,W,0.0,0.0,150326,,,A");
     MeshtasticSerial->flush();
-    Serial.println(F("Mesh: sent test NMEA (37.7024, -122.0841)"));
+    DebugPrintln(F("Mesh: sent test NMEA (37.7024, -122.0841)"));
 }
 
 bool MeshtasticInterface_sendText(const char* message) {
@@ -188,5 +188,5 @@ void MeshtasticInterface_init() {
     MeshtasticSerial->begin(MESHTASTIC_BAUD);
     delay(300);
     initialized = true;
-    Serial.println(F("Meshtastic: NMEA GPS output -> J10 (external GPS UART)"));
+    DebugPrintln(F("Meshtastic: NMEA GPS output -> J10 (external GPS UART)"));
 }

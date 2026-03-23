@@ -24,4 +24,7 @@ void MissionData_update_autopilot_voltage(float voltage);
 void MissionData_set_leak(bool leak);
 void MissionData_get(MissionData* out);
 
+// True when Pi/Navigator heartbeat has been received recently
+bool MissionData_isPiConnected(void);
+
 #endif // MISSION_DATA_H

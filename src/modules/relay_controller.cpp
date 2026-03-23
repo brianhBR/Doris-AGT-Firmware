@@ -7,31 +7,38 @@ static bool timedEventActive = false;
 static unsigned long timedEventStartTime = 0;
 static uint32_t timedEventDurationSeconds = 0;
 
+// Drive a relay pin to conduct (close the circuit) or not.
+// NC relay: conduct when coil is OFF (pin LOW).  Coil ON (pin HIGH) = open.
+// NO relay: conduct when coil is ON  (pin HIGH). Coil OFF (pin LOW) = open.
+static void driveRelay(int pin, bool nc, bool conduct) {
+    bool coilOn;
+    if (nc) {
+        coilOn = !conduct;  // NC: coil OFF = closed/conduct, coil ON = open
+    } else {
+        coilOn = conduct;   // NO: coil ON = closed/conduct, coil OFF = open
+    }
+    digitalWrite(pin, (RELAY_COIL_ACTIVE_HIGH == coilOn) ? HIGH : LOW);
+}
+
 void RelayController_init() {
     pinMode(RELAY_POWER_MGMT, OUTPUT);
     pinMode(RELAY_TIMED_EVENT, OUTPUT);
 
-    // Pi/Navigator relay defaults ON — never cut power unless we have a confirmed reason
-    digitalWrite(RELAY_POWER_MGMT, RELAY_ACTIVE_HIGH ? HIGH : LOW);
-    digitalWrite(RELAY_TIMED_EVENT, RELAY_ACTIVE_HIGH ? LOW : HIGH);
+    driveRelay(RELAY_POWER_MGMT, RELAY_POWER_MGMT_NC, true);   // devices ON
+    driveRelay(RELAY_TIMED_EVENT, RELAY_TIMED_EVENT_NC, false); // release OFF
 
     powerMgmtState = true;
     timedEventActive = false;
 
-    Serial.println(F("Relay: Controller initialized (Pi power ON)"));
+    DebugPrintln(F("Relay: Controller initialized (Pi power ON)"));
 }
 
 void RelayController_setPowerManagement(bool state) {
     powerMgmtState = state;
+    driveRelay(RELAY_POWER_MGMT, RELAY_POWER_MGMT_NC, state);
 
-    if (RELAY_ACTIVE_HIGH) {
-        digitalWrite(RELAY_POWER_MGMT, state ? HIGH : LOW);
-    } else {
-        digitalWrite(RELAY_POWER_MGMT, state ? LOW : HIGH);
-    }
-
-    Serial.print(F("Relay: Power management "));
-    Serial.println(state ? F("ON") : F("OFF"));
+    DebugPrint(F("Relay: Power management "));
+    DebugPrintln(state ? F("ON") : F("OFF"));
 }
 
 bool RelayController_getPowerManagement() {
@@ -40,24 +47,19 @@ bool RelayController_getPowerManagement() {
 
 void RelayController_triggerTimedEvent(uint32_t durationSeconds) {
     if (timedEventActive) {
-        Serial.println(F("Relay: Timed event already active!"));
+        DebugPrintln(F("Relay: Timed event already active!"));
         return;
     }
 
-    Serial.print(F("Relay: Triggering timed event for "));
-    Serial.print(durationSeconds);
-    Serial.println(F("s"));
+    DebugPrint(F("Relay: Triggering timed event for "));
+    DebugPrint(durationSeconds);
+    DebugPrintln(F("s"));
 
     timedEventActive = true;
     timedEventStartTime = millis();
     timedEventDurationSeconds = durationSeconds;
 
-    // Activate relay
-    if (RELAY_ACTIVE_HIGH) {
-        digitalWrite(RELAY_TIMED_EVENT, HIGH);
-    } else {
-        digitalWrite(RELAY_TIMED_EVENT, LOW);
-    }
+    driveRelay(RELAY_TIMED_EVENT, RELAY_TIMED_EVENT_NC, true);
 }
 
 bool RelayController_isTimedEventActive() {
@@ -65,38 +67,25 @@ bool RelayController_isTimedEventActive() {
 }
 
 void RelayController_update() {
-    // Check if timed event should be deactivated
     if (timedEventActive) {
         unsigned long currentMillis = millis();
         unsigned long elapsedMs = currentMillis - timedEventStartTime;
         unsigned long elapsedSeconds = elapsedMs / 1000;
 
         if (elapsedSeconds >= timedEventDurationSeconds) {
-            // Deactivate timed event relay
-            if (RELAY_ACTIVE_HIGH) {
-                digitalWrite(RELAY_TIMED_EVENT, LOW);
-            } else {
-                digitalWrite(RELAY_TIMED_EVENT, HIGH);
-            }
-
+            driveRelay(RELAY_TIMED_EVENT, RELAY_TIMED_EVENT_NC, false);
             timedEventActive = false;
-            Serial.println(F("Relay: Timed event completed"));
+            DebugPrintln(F("Relay: Timed event completed"));
         }
     }
 }
 
 void RelayController_emergencyDisable() {
-    // Disable both relays immediately
-    if (RELAY_ACTIVE_HIGH) {
-        digitalWrite(RELAY_POWER_MGMT, LOW);
-        digitalWrite(RELAY_TIMED_EVENT, LOW);
-    } else {
-        digitalWrite(RELAY_POWER_MGMT, HIGH);
-        digitalWrite(RELAY_TIMED_EVENT, HIGH);
-    }
+    driveRelay(RELAY_POWER_MGMT, RELAY_POWER_MGMT_NC, false);
+    driveRelay(RELAY_TIMED_EVENT, RELAY_TIMED_EVENT_NC, false);
 
     powerMgmtState = false;
     timedEventActive = false;
 
-    Serial.println(F("Relay: EMERGENCY DISABLE"));
+    DebugPrintln(F("Relay: EMERGENCY DISABLE"));
 }

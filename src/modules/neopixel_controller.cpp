@@ -94,7 +94,7 @@ void NeoPixelController_init() {
     digitalWrite(NEOPIXEL_PIN, LOW);
     memset(ledBuffer, 0, sizeof(ledBuffer));
     ws_show();
-    Serial.println(F("NeoPixel: SK6805 RGBW custom driver initialized"));
+    DebugPrintln(F("NeoPixel: SK6805 RGBW custom driver initialized"));
 }
 
 void NeoPixelController_setColor(uint32_t color) {
@@ -221,7 +221,11 @@ void NeoPixelController_update(int systemState) {
         case LED_STATE_PRE_MISSION:
         case LED_STATE_SELF_TEST:
         case LED_STATE_MISSION:
-            NeoPixelController_pulse(COLOR_STANDBY, 3000);
+            NeoPixelController_pulse(COLOR_GPS_SEARCH, 3000);
+            break;
+
+        case LED_STATE_PI_CONNECTED:
+            NeoPixelController_pulse(COLOR_GPS_FIX, 3000);
             break;
 
         case LED_STATE_ERROR:

@@ -1,6 +1,18 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+// Suppress all Serial.print debug text so ASCII doesn't corrupt MAVLink framing.
+// Comment out this line to re-enable debug output for direct-serial debugging.
+#define SUPPRESS_DEBUG_TEXT
+
+#ifdef SUPPRESS_DEBUG_TEXT
+  #define DebugPrint(...)   ((void)0)
+  #define DebugPrintln(...) ((void)0)
+#else
+  #define DebugPrint(...)   Serial.print(__VA_ARGS__)
+  #define DebugPrintln(...) Serial.println(__VA_ARGS__)
+#endif
+
 // ============================================================================
 // ARTEMIS GLOBAL TRACKER PIN DEFINITIONS
 // ============================================================================
@@ -83,19 +95,29 @@
 #define BATTERY_LOW_VOLTAGE      11.5  // Volts
 #define BATTERY_CRITICAL_VOLTAGE 11.0  // Volts (failsafe trigger)
 #define BATTERY_FULL_VOLTAGE     14.8  // Volts (for 4S LiPo)
-#define FAILSAFE_HEARTBEAT_TIMEOUT_MS  30000  // No MAVLink heartbeat -> failsafe (30 s)
+#define FAILSAFE_HEARTBEAT_TIMEOUT_MS  120000 // No MAVLink heartbeat -> failsafe (120 s)
+#define PI_HEARTBEAT_TIMEOUT_MS        5000   // Pi considered disconnected if no heartbeat in 5 s
 #define FAILSAFE_MAX_DEPTH_M           200.0  // Max depth (m) before failsafe
-#define MISSION_DEPTH_THRESHOLD_M      2.0    // Depth > this: leave Self Test -> Mission
-#define RECOVERY_DEPTH_THRESHOLD_M     3.0   // Depth < this OR GPS fix: Mission -> Recovery
+#define MISSION_DEPTH_THRESHOLD_M      5.0    // Depth > this: leave Self Test -> Mission
+#define RECOVERY_DEPTH_THRESHOLD_M     1.5    // Depth < this AND GPS fix: Mission -> Recovery
+#define MISSION_MIN_DURATION_MS        60000  // Min time in MISSION before RECOVERY transition (60 s)
+#define HEARTBEAT_GRACE_PERIOD_MS      90000  // Ignore heartbeat timeout for this long after entering MISSION
 
 // ============================================================================
 // RELAY CONFIGURATION
 // ============================================================================
-// Both relays use NO (Normally Open) wiring:
-//   HIGH = coil energized = NO closes = device powered / release active
-//   LOW  = coil de-energized = NO opens = device off / release inactive
-#define RELAY_ACTIVE_HIGH    true
-#define RELEASE_RELAY_DURATION_SEC  1500  // Failsafe release: relay on time (e.g. electrolytic release)
+// Power management relay uses NC (Normally Closed) wiring:
+//   Coil OFF (pin LOW / floating) = NC closed = devices POWERED (safe default)
+//   Coil ON  (pin HIGH)           = NC opens  = devices OFF
+// This ensures devices stay powered during MCU resets (pin floats low).
+//
+// Timed event (drop weight) relay uses NO (Normally Open) wiring:
+//   Coil OFF (pin LOW / floating) = NO open   = release INACTIVE (safe default)
+//   Coil ON  (pin HIGH)           = NO closes = release ACTIVE
+#define RELAY_COIL_ACTIVE_HIGH       true   // Both relay modules energize on HIGH
+#define RELAY_POWER_MGMT_NC          true   // Power relay wired through NC terminal
+#define RELAY_TIMED_EVENT_NC         false  // Timed relay wired through NO terminal
+#define RELEASE_RELAY_DURATION_SEC   1500   // Failsafe release: relay on time (e.g. electrolytic release)
 
 // ============================================================================
 // IRIDIUM CONFIGURATION

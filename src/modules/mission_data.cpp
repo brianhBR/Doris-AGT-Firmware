@@ -45,3 +45,8 @@ void MissionData_set_leak(bool leak) {
 void MissionData_get(MissionData* out) {
     if (out) *out = data;
 }
+
+bool MissionData_isPiConnected(void) {
+    if (!data.heartbeat_valid) return false;
+    return (millis() - data.last_heartbeat_ms) < PI_HEARTBEAT_TIMEOUT_MS;
+}

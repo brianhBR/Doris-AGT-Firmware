@@ -14,7 +14,8 @@ enum LEDState {
     LED_STATE_IRIDIUM_TX,
     LED_STATE_ERROR,
     LED_STATE_LOW_BATTERY,
-    LED_STATE_STANDBY
+    LED_STATE_STANDBY,
+    LED_STATE_PI_CONNECTED
 };
 
 // Initialize custom SK6805 RGBW driver (no library needed)

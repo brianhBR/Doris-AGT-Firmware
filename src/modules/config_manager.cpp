@@ -21,30 +21,30 @@ uint32_t calculateChecksum(SystemConfig* config) {
 }
 
 bool ConfigManager_load(SystemConfig* config) {
-    Serial.println(F("Config: Loading from EEPROM..."));
+    DebugPrintln(F("Config: Loading from EEPROM..."));
 
     // Read config from EEPROM
     EEPROM.get(EEPROM_CONFIG_ADDRESS, *config);
 
     // Verify magic number
     if (config->magic != CONFIG_MAGIC_NUMBER) {
-        Serial.println(F("Config: Invalid magic number!"));
+        DebugPrintln(F("Config: Invalid magic number!"));
         return false;
     }
 
     // Verify checksum
     uint32_t calculatedChecksum = calculateChecksum(config);
     if (config->checksum != calculatedChecksum) {
-        Serial.println(F("Config: Checksum mismatch!"));
+        DebugPrintln(F("Config: Checksum mismatch!"));
         return false;
     }
 
-    Serial.println(F("Config: Loaded successfully"));
+    DebugPrintln(F("Config: Loaded successfully"));
     return true;
 }
 
 bool ConfigManager_save(SystemConfig* config) {
-    Serial.println(F("Config: Saving to EEPROM..."));
+    DebugPrintln(F("Config: Saving to EEPROM..."));
 
     // Calculate and set checksum
     config->checksum = calculateChecksum(config);
@@ -52,12 +52,12 @@ bool ConfigManager_save(SystemConfig* config) {
     // Write config to EEPROM (auto-commits on Apollo3)
     EEPROM.put(EEPROM_CONFIG_ADDRESS, *config);
 
-    Serial.println(F("Config: Saved successfully"));
+    DebugPrintln(F("Config: Saved successfully"));
     return true;
 }
 
 void ConfigManager_setDefaults(SystemConfig* config) {
-    Serial.println(F("Config: Setting defaults"));
+    DebugPrintln(F("Config: Setting defaults"));
 
     // Set magic number
     config->magic = CONFIG_MAGIC_NUMBER;
@@ -88,50 +88,50 @@ void ConfigManager_setDefaults(SystemConfig* config) {
 }
 
 void ConfigManager_printConfig(SystemConfig* config) {
-    Serial.println(F("=== System Configuration ==="));
-    Serial.print(F("Iridium Interval: "));
-    Serial.print(config->iridiumInterval / 1000);
-    Serial.println(F(" seconds"));
+    DebugPrintln(F("=== System Configuration ==="));
+    DebugPrint(F("Iridium Interval: "));
+    DebugPrint(config->iridiumInterval / 1000);
+    DebugPrintln(F(" seconds"));
 
-    Serial.print(F("Meshtastic Interval: "));
-    Serial.print(config->meshtasticInterval / 1000);
-    Serial.println(F(" seconds"));
+    DebugPrint(F("Meshtastic Interval: "));
+    DebugPrint(config->meshtasticInterval / 1000);
+    DebugPrintln(F(" seconds"));
 
-    Serial.print(F("MAVLink Interval: "));
-    Serial.print(config->mavlinkInterval);
-    Serial.println(F(" ms"));
+    DebugPrint(F("MAVLink Interval: "));
+    DebugPrint(config->mavlinkInterval);
+    DebugPrintln(F(" ms"));
 
-    Serial.print(F("Features: "));
-    if (config->enableIridium) Serial.print(F("Iridium "));
-    if (config->enableMeshtastic) Serial.print(F("Meshtastic "));
-    if (config->enableMAVLink) Serial.print(F("MAVLink "));
-    if (config->enablePSM) Serial.print(F("PSM "));
-    if (config->enableNeoPixels) Serial.print(F("NeoPixels"));
-    Serial.println();
+    DebugPrint(F("Features: "));
+    if (config->enableIridium) DebugPrint(F("Iridium "));
+    if (config->enableMeshtastic) DebugPrint(F("Meshtastic "));
+    if (config->enableMAVLink) DebugPrint(F("MAVLink "));
+    if (config->enablePSM) DebugPrint(F("PSM "));
+    if (config->enableNeoPixels) DebugPrint(F("NeoPixels"));
+    DebugPrintln();
 
-    Serial.print(F("Timed Event: "));
+    DebugPrint(F("Timed Event: "));
     if (config->timedEvent.enabled) {
-        Serial.print(F("ENABLED - "));
+        DebugPrint(F("ENABLED - "));
         if (config->timedEvent.useAbsoluteTime) {
-            Serial.print(F("GMT: "));
-            Serial.print(config->timedEvent.triggerTime);
+            DebugPrint(F("GMT: "));
+            DebugPrint(config->timedEvent.triggerTime);
         } else {
-            Serial.print(F("Delay: "));
-            Serial.print(config->timedEvent.triggerTime);
-            Serial.print(F("s from boot"));
+            DebugPrint(F("Delay: "));
+            DebugPrint(config->timedEvent.triggerTime);
+            DebugPrint(F("s from boot"));
         }
-        Serial.print(F(", Duration: "));
-        Serial.print(config->timedEvent.durationSeconds);
-        Serial.println(F("s"));
+        DebugPrint(F(", Duration: "));
+        DebugPrint(config->timedEvent.durationSeconds);
+        DebugPrintln(F("s"));
     } else {
-        Serial.println(F("DISABLED"));
+        DebugPrintln(F("DISABLED"));
     }
 
-    Serial.print(F("Power Save Voltage: "));
-    Serial.print(config->powerSaveVoltage, 2);
-    Serial.println(F("V"));
+    DebugPrint(F("Power Save Voltage: "));
+    DebugPrint(config->powerSaveVoltage, 2);
+    DebugPrintln(F("V"));
 
-    Serial.println(F("==========================="));
+    DebugPrintln(F("==========================="));
 }
 
 void ConfigManager_processCommands() {
@@ -150,13 +150,13 @@ void ConfigManager_processCommand(String command) {
     else if (command.startsWith("save")) {
         // Save configuration
         ConfigManager_save(&sysConfig);
-        Serial.println(F("Config: Saved"));
+        DebugPrintln(F("Config: Saved"));
     }
     else if (command.startsWith("reset")) {
         // Reset to defaults
         ConfigManager_setDefaults(&sysConfig);
         ConfigManager_save(&sysConfig);
-        Serial.println(F("Config: Reset to defaults"));
+        DebugPrintln(F("Config: Reset to defaults"));
     }
     else if (command.startsWith("set_iridium_interval ")) {
         uint32_t interval = command.substring(21).toInt();
@@ -199,23 +199,23 @@ void ConfigManager_processCommand(String command) {
 
 void ConfigManager_setIridiumInterval(uint32_t intervalMs) {
     sysConfig.iridiumInterval = intervalMs;
-    Serial.print(F("Config: Iridium interval set to "));
-    Serial.print(intervalMs / 1000);
-    Serial.println(F(" seconds"));
+    DebugPrint(F("Config: Iridium interval set to "));
+    DebugPrint(intervalMs / 1000);
+    DebugPrintln(F(" seconds"));
 }
 
 void ConfigManager_setMeshtasticInterval(uint32_t intervalMs) {
     sysConfig.meshtasticInterval = intervalMs;
-    Serial.print(F("Config: Meshtastic interval set to "));
-    Serial.print(intervalMs / 1000);
-    Serial.println(F(" seconds"));
+    DebugPrint(F("Config: Meshtastic interval set to "));
+    DebugPrint(intervalMs / 1000);
+    DebugPrintln(F(" seconds"));
 }
 
 void ConfigManager_setMAVLinkInterval(uint32_t intervalMs) {
     sysConfig.mavlinkInterval = intervalMs;
-    Serial.print(F("Config: MAVLink interval set to "));
-    Serial.print(intervalMs);
-    Serial.println(F(" ms"));
+    DebugPrint(F("Config: MAVLink interval set to "));
+    DebugPrint(intervalMs);
+    DebugPrintln(F(" ms"));
 }
 
 void ConfigManager_enableFeature(const char* feature, bool enable) {
@@ -233,14 +233,14 @@ void ConfigManager_enableFeature(const char* feature, bool enable) {
     } else if (feat == "neopixels") {
         sysConfig.enableNeoPixels = enable;
     } else {
-        Serial.println(F("Config: Unknown feature"));
+        DebugPrintln(F("Config: Unknown feature"));
         return;
     }
 
-    Serial.print(F("Config: "));
-    Serial.print(feature);
-    Serial.print(F(" "));
-    Serial.println(enable ? F("enabled") : F("disabled"));
+    DebugPrint(F("Config: "));
+    DebugPrint(feature);
+    DebugPrint(F(" "));
+    DebugPrintln(enable ? F("enabled") : F("disabled"));
 }
 
 void ConfigManager_setTimedEvent(bool useGMT, uint32_t triggerTime, uint32_t durationSeconds) {
@@ -249,23 +249,23 @@ void ConfigManager_setTimedEvent(bool useGMT, uint32_t triggerTime, uint32_t dur
     sysConfig.timedEvent.triggerTime = triggerTime;
     sysConfig.timedEvent.durationSeconds = durationSeconds;
 
-    Serial.print(F("Config: Timed event set - "));
+    DebugPrint(F("Config: Timed event set - "));
     if (useGMT) {
-        Serial.print(F("GMT: "));
-        Serial.print(triggerTime);
+        DebugPrint(F("GMT: "));
+        DebugPrint(triggerTime);
     } else {
-        Serial.print(F("Delay: "));
-        Serial.print(triggerTime);
-        Serial.print(F("s from boot"));
+        DebugPrint(F("Delay: "));
+        DebugPrint(triggerTime);
+        DebugPrint(F("s from boot"));
     }
-    Serial.print(F(", Duration: "));
-    Serial.print(durationSeconds);
-    Serial.println(F("s"));
+    DebugPrint(F(", Duration: "));
+    DebugPrint(durationSeconds);
+    DebugPrintln(F("s"));
 }
 
 void ConfigManager_setPowerSaveVoltage(float voltage) {
     sysConfig.powerSaveVoltage = voltage;
-    Serial.print(F("Config: Power save voltage set to "));
-    Serial.print(voltage, 2);
-    Serial.println(F("V"));
+    DebugPrint(F("Config: Power save voltage set to "));
+    DebugPrint(voltage, 2);
+    DebugPrintln(F("V"));
 }

@@ -29,7 +29,7 @@ void StateMachine_init() {
     status.releaseTriggered = false;
     status.nonessentialsPowered = true;
     RelayController_setPowerManagement(true);
-    Serial.println(F("State: PRE_MISSION"));
+    DebugPrintln(F("State: PRE_MISSION"));
 }
 
 void StateMachine_update() {
@@ -67,7 +67,7 @@ uint32_t StateMachine_getTimeInState() {
 
 void StateMachine_startSelfTest() {
     if (status.currentState != STATE_PRE_MISSION) {
-        Serial.println(F("State: startSelfTest only from PRE_MISSION"));
+        DebugPrintln(F("State: startSelfTest only from PRE_MISSION"));
         return;
     }
     enterState(STATE_SELF_TEST);
@@ -75,7 +75,7 @@ void StateMachine_startSelfTest() {
 
 void StateMachine_enterMission() {
     if (status.currentState != STATE_SELF_TEST) {
-        Serial.println(F("State: enterMission only from SELF_TEST"));
+        DebugPrintln(F("State: enterMission only from SELF_TEST"));
         return;
     }
     enterState(STATE_MISSION);
@@ -91,8 +91,8 @@ void StateMachine_reset() {
 
 void StateMachine_triggerFailsafe(FailsafeSource source) {
     status.lastFailsafeSource = source;
-    Serial.print(F("FAILSAFE: "));
-    Serial.println(failsafeNames[source]);
+    DebugPrint(F("FAILSAFE: "));
+    DebugPrintln(failsafeNames[source]);
     if (!status.releaseTriggered) {
         status.releaseTriggered = true;
         RelayController_triggerTimedEvent(RELEASE_RELAY_DURATION_SEC);
@@ -117,30 +117,30 @@ bool StateMachine_isRecoveryStrobe() {
 }
 
 void StateMachine_printState() {
-    Serial.println(F("===== STATE ====="));
-    Serial.print(F("State: "));
-    Serial.println(stateNames[status.currentState]);
-    Serial.print(F("Time in state: "));
-    Serial.print(StateMachine_getTimeInState());
-    Serial.println(F(" s"));
-    Serial.print(F("Nonessentials: "));
-    Serial.println(status.nonessentialsPowered ? F("ON") : F("OFF"));
-    Serial.print(F("Release triggered: "));
-    Serial.println(status.releaseTriggered ? F("YES") : F("NO"));
+    DebugPrintln(F("===== STATE ====="));
+    DebugPrint(F("State: "));
+    DebugPrintln(stateNames[status.currentState]);
+    DebugPrint(F("Time in state: "));
+    DebugPrint(StateMachine_getTimeInState());
+    DebugPrintln(F(" s"));
+    DebugPrint(F("Nonessentials: "));
+    DebugPrintln(status.nonessentialsPowered ? F("ON") : F("OFF"));
+    DebugPrint(F("Release triggered: "));
+    DebugPrintln(status.releaseTriggered ? F("YES") : F("NO"));
     if (status.lastFailsafeSource != FAILSAFE_NONE) {
-        Serial.print(F("Last failsafe: "));
-        Serial.println(failsafeNames[status.lastFailsafeSource]);
+        DebugPrint(F("Last failsafe: "));
+        DebugPrintln(failsafeNames[status.lastFailsafeSource]);
     }
-    Serial.println(F("================="));
+    DebugPrintln(F("================="));
 }
 
 static void enterState(SystemState newState) {
     if (newState == status.currentState) return;
 
-    Serial.print(F("State: "));
-    Serial.print(stateNames[status.currentState]);
-    Serial.print(F(" -> "));
-    Serial.println(stateNames[newState]);
+    DebugPrint(F("State: "));
+    DebugPrint(stateNames[status.currentState]);
+    DebugPrint(F(" -> "));
+    DebugPrintln(stateNames[newState]);
 
     status.previousState = status.currentState;
     status.currentState = newState;
