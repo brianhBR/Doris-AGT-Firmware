@@ -4,27 +4,26 @@
 #include <stdint.h>
 
 // ============================================================================
-// SIMPLIFIED STATE MACHINE - Drop Camera
+// DORIS AGT STATE MACHINE — subordinate to Lua dive script
 // ============================================================================
-// PRE_MISSION  -> SELF_TEST (run tests: GPS, Iridium, battery, mission loaded)
-// SELF_TEST    -> MISSION   when MAVLink depth > 5m
-// MISSION      -> RECOVERY  when depth < 1.5m AND GPS fix (after 60s min)
-// Failsafe in MISSION: low voltage, leak, max depth, no heartbeat -> release relay, RECOVERY
-// Nonessentials powered off in RECOVERY to conserve power.
+// The AGT does NOT control the dive.  It provides GPS relay, Iridium comms,
+// status LEDs, and safety failsafes (voltage / leak / heartbeat).
+//
+// PRE_DIVE  -> DIVING    depth > DIVE_DEPTH_THRESHOLD_M (vehicle went underwater)
+// DIVING    -> RECOVERY  depth < RECOVERY_DEPTH_THRESHOLD_M AND GPS fix
+//                        (after DIVE_MIN_DURATION_MS), OR failsafe trigger
+// RECOVERY  -> PRE_DIVE  manual reset only
 
 enum SystemState {
-    STATE_PRE_MISSION,   // Initial setup
-    STATE_SELF_TEST,     // GPS, Iridium, battery health, mission loaded to autopilot
-    STATE_MISSION,       // Monitor MAVLink, check GPS; run failsafe checks
-    STATE_RECOVERY       // Send position, strobe lights, relay off (low power)
+    STATE_PRE_DIVE,   // Surface: GPS relay, Iridium test, Meshtastic, ready
+    STATE_DIVING,     // Underwater: monitor voltage/leak/heartbeat failsafes
+    STATE_RECOVERY    // Post-dive: Iridium reporting, strobe, low-power
 };
 
-// Failsafe trigger sources
 enum FailsafeSource {
     FAILSAFE_NONE,
     FAILSAFE_LOW_VOLTAGE,
     FAILSAFE_LEAK,
-    FAILSAFE_MAX_DEPTH,
     FAILSAFE_NO_HEARTBEAT,
     FAILSAFE_MANUAL
 };
@@ -39,35 +38,31 @@ struct StateMachineStatus {
     bool nonessentialsPowered;   // Relay 1 (Navigator/Pi, camera, lights)
 };
 
-// Initialize / update
 void StateMachine_init();
 void StateMachine_update();
 
-// Queries
 SystemState StateMachine_getState();
 StateMachineStatus StateMachine_getStatus();
 uint32_t StateMachine_getTimeInState();
 
-// Pre-mission -> Self Test (e.g. serial command "start_self_test")
-void StateMachine_startSelfTest();
+// PRE_DIVE -> DIVING (called when depth crosses threshold)
+void StateMachine_enterDiving();
 
-// Self Test -> Mission when MAVLink depth > 5m
-void StateMachine_enterMission();
-
-// Mission -> Recovery when depth < 1.5m AND GPS fix (after 60s min)
+// DIVING -> RECOVERY (called when surfaced with GPS, or failsafe)
 void StateMachine_enterRecovery();
 
-// Reset to Pre-mission (for testing)
+// Reset to PRE_DIVE
 void StateMachine_reset();
 
 // Failsafe: trigger release relay and enter recovery
 void StateMachine_triggerFailsafe(FailsafeSource source);
 
-// State queries
+// Transmission gating
 bool StateMachine_canTransmitIridium();
-bool StateMachine_canTransmitMeshtastic();
-bool StateMachine_shouldShutdownNonessentials();  // Relay off for low power
-bool StateMachine_isRecoveryStrobe();            // Recovery: strobe for locating
+
+// Recovery queries
+bool StateMachine_shouldShutdownNonessentials();
+bool StateMachine_isRecoveryStrobe();
 
 void StateMachine_printState();
 

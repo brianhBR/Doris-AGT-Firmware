@@ -34,19 +34,17 @@
 // Backend identifies the unit via the RockBlock IMEI in the webhook payload.
 
 enum DorisMissionState : uint8_t {
-    DORIS_STATE_PRE_MISSION = 0,
-    DORIS_STATE_SELF_TEST   = 1,
-    DORIS_STATE_MISSION     = 2,
-    DORIS_STATE_RECOVERY    = 3,
-    DORIS_STATE_FAILSAFE    = 4,
+    DORIS_STATE_PRE_DIVE  = 0,
+    DORIS_STATE_DIVING    = 1,
+    DORIS_STATE_RECOVERY  = 2,
+    DORIS_STATE_FAILSAFE  = 3,
 };
 
 #define DORIS_FAILSAFE_LOW_VOLTAGE     (1 << 0)
 #define DORIS_FAILSAFE_CRITICAL_VOLTAGE (1 << 1)
 #define DORIS_FAILSAFE_LEAK            (1 << 2)
-#define DORIS_FAILSAFE_MAX_DEPTH       (1 << 3)
-#define DORIS_FAILSAFE_NO_HEARTBEAT    (1 << 4)
-#define DORIS_FAILSAFE_MANUAL          (1 << 5)
+#define DORIS_FAILSAFE_NO_HEARTBEAT    (1 << 3)
+#define DORIS_FAILSAFE_MANUAL          (1 << 4)
 
 #pragma pack(push, 1)
 typedef struct {

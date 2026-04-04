@@ -21,7 +21,7 @@ void test_serialize_report_writes_header(void) {
 void test_serialize_report_payload_matches_struct(void) {
     DorisReport report;
     memset(&report, 0, sizeof(report));
-    report.mission_state = DORIS_STATE_MISSION;
+    report.mission_state = DORIS_STATE_DIVING;
     report.latitude = 47.6062f;
     report.longitude = -122.3321f;
     report.battery_voltage = 12500;
@@ -34,7 +34,7 @@ void test_serialize_report_payload_matches_struct(void) {
 
     DorisReport decoded;
     memcpy(&decoded, buf + DORIS_MSG_HEADER_SIZE, sizeof(DorisReport));
-    TEST_ASSERT_EQUAL_UINT8(DORIS_STATE_MISSION, decoded.mission_state);
+    TEST_ASSERT_EQUAL_UINT8(DORIS_STATE_DIVING, decoded.mission_state);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 47.6062f, decoded.latitude);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, -122.3321f, decoded.longitude);
     TEST_ASSERT_EQUAL_UINT16(12500, decoded.battery_voltage);
@@ -263,12 +263,11 @@ void test_failsafe_flags_are_independent_bits(void) {
     uint8_t flags = 0;
     flags |= DORIS_FAILSAFE_LOW_VOLTAGE;
     flags |= DORIS_FAILSAFE_LEAK;
-    flags |= DORIS_FAILSAFE_MAX_DEPTH;
+    flags |= DORIS_FAILSAFE_NO_HEARTBEAT;
 
     TEST_ASSERT_TRUE(flags & DORIS_FAILSAFE_LOW_VOLTAGE);
     TEST_ASSERT_TRUE(flags & DORIS_FAILSAFE_LEAK);
-    TEST_ASSERT_TRUE(flags & DORIS_FAILSAFE_MAX_DEPTH);
-    TEST_ASSERT_FALSE(flags & DORIS_FAILSAFE_NO_HEARTBEAT);
+    TEST_ASSERT_TRUE(flags & DORIS_FAILSAFE_NO_HEARTBEAT);
     TEST_ASSERT_FALSE(flags & DORIS_FAILSAFE_MANUAL);
     TEST_ASSERT_FALSE(flags & DORIS_FAILSAFE_CRITICAL_VOLTAGE);
 }

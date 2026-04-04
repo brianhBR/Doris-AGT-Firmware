@@ -10,9 +10,9 @@
 // Initialization
 // ---------------------------------------------------------------------------
 
-void test_init_starts_in_pre_mission(void) {
+void test_init_starts_in_pre_dive(void) {
     StateMachine_init();
-    TEST_ASSERT_EQUAL(STATE_PRE_MISSION, StateMachine_getState());
+    TEST_ASSERT_EQUAL(STATE_PRE_DIVE, StateMachine_getState());
 }
 
 void test_init_clears_failsafe(void) {
@@ -33,36 +33,25 @@ void test_init_powers_nonessentials(void) {
 // Valid transitions
 // ---------------------------------------------------------------------------
 
-void test_pre_mission_to_self_test(void) {
+void test_pre_dive_to_diving(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
-    TEST_ASSERT_EQUAL(STATE_SELF_TEST, StateMachine_getState());
+    StateMachine_enterDiving();
+    TEST_ASSERT_EQUAL(STATE_DIVING, StateMachine_getState());
 }
 
-void test_self_test_to_mission(void) {
+void test_diving_to_recovery(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
-    TEST_ASSERT_EQUAL(STATE_MISSION, StateMachine_getState());
-}
-
-void test_mission_to_recovery(void) {
-    StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
     StateMachine_enterRecovery();
     TEST_ASSERT_EQUAL(STATE_RECOVERY, StateMachine_getState());
 }
 
 void test_full_happy_path(void) {
     StateMachine_init();
-    TEST_ASSERT_EQUAL(STATE_PRE_MISSION, StateMachine_getState());
+    TEST_ASSERT_EQUAL(STATE_PRE_DIVE, StateMachine_getState());
 
-    StateMachine_startSelfTest();
-    TEST_ASSERT_EQUAL(STATE_SELF_TEST, StateMachine_getState());
-
-    StateMachine_enterMission();
-    TEST_ASSERT_EQUAL(STATE_MISSION, StateMachine_getState());
+    StateMachine_enterDiving();
+    TEST_ASSERT_EQUAL(STATE_DIVING, StateMachine_getState());
 
     StateMachine_enterRecovery();
     TEST_ASSERT_EQUAL(STATE_RECOVERY, StateMachine_getState());
@@ -72,48 +61,39 @@ void test_full_happy_path(void) {
 // Invalid transitions (guard conditions)
 // ---------------------------------------------------------------------------
 
-void test_cannot_start_self_test_from_mission(void) {
+void test_cannot_enter_diving_from_recovery(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
-
-    StateMachine_startSelfTest();  // should be rejected
-    TEST_ASSERT_EQUAL(STATE_MISSION, StateMachine_getState());
-}
-
-void test_cannot_enter_mission_from_pre_mission(void) {
-    StateMachine_init();
-    StateMachine_enterMission();  // should be rejected
-    TEST_ASSERT_EQUAL(STATE_PRE_MISSION, StateMachine_getState());
-}
-
-void test_cannot_enter_mission_from_recovery(void) {
-    StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
     StateMachine_enterRecovery();
 
-    StateMachine_enterMission();  // should be rejected
+    StateMachine_enterDiving();  // should be rejected
     TEST_ASSERT_EQUAL(STATE_RECOVERY, StateMachine_getState());
+}
+
+void test_cannot_enter_diving_from_diving(void) {
+    StateMachine_init();
+    StateMachine_enterDiving();
+
+    // enterDiving again should be no-op (enterState rejects same-state)
+    StateMachine_enterDiving();
+    TEST_ASSERT_EQUAL(STATE_DIVING, StateMachine_getState());
 }
 
 // ---------------------------------------------------------------------------
 // Reset
 // ---------------------------------------------------------------------------
 
-void test_reset_returns_to_pre_mission(void) {
+void test_reset_returns_to_pre_dive(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
 
     StateMachine_reset();
-    TEST_ASSERT_EQUAL(STATE_PRE_MISSION, StateMachine_getState());
+    TEST_ASSERT_EQUAL(STATE_PRE_DIVE, StateMachine_getState());
 }
 
 void test_reset_restores_nonessentials(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
     StateMachine_enterRecovery();
 
     StateMachineStatus s = StateMachine_getStatus();
@@ -124,14 +104,24 @@ void test_reset_restores_nonessentials(void) {
     TEST_ASSERT_TRUE(s.nonessentialsPowered);
 }
 
+void test_reset_clears_failsafe(void) {
+    StateMachine_init();
+    StateMachine_enterDiving();
+    StateMachine_triggerFailsafe(FAILSAFE_LOW_VOLTAGE);
+
+    StateMachine_reset();
+    StateMachineStatus s = StateMachine_getStatus();
+    TEST_ASSERT_EQUAL(FAILSAFE_NONE, s.lastFailsafeSource);
+    TEST_ASSERT_FALSE(s.releaseTriggered);
+}
+
 // ---------------------------------------------------------------------------
 // Failsafe
 // ---------------------------------------------------------------------------
 
 void test_failsafe_enters_recovery(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
 
     StateMachine_triggerFailsafe(FAILSAFE_LOW_VOLTAGE);
     TEST_ASSERT_EQUAL(STATE_RECOVERY, StateMachine_getState());
@@ -139,8 +129,7 @@ void test_failsafe_enters_recovery(void) {
 
 void test_failsafe_sets_source(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
 
     StateMachine_triggerFailsafe(FAILSAFE_LEAK);
     StateMachineStatus s = StateMachine_getStatus();
@@ -150,10 +139,9 @@ void test_failsafe_sets_source(void) {
 void test_failsafe_triggers_release_relay(void) {
     StateMachine_init();
     stub_relay_reset();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
 
-    StateMachine_triggerFailsafe(FAILSAFE_MAX_DEPTH);
+    StateMachine_triggerFailsafe(FAILSAFE_NO_HEARTBEAT);
 
     StateMachineStatus s = StateMachine_getStatus();
     TEST_ASSERT_TRUE(s.releaseTriggered);
@@ -164,13 +152,11 @@ void test_failsafe_triggers_release_relay(void) {
 void test_failsafe_does_not_double_trigger_relay(void) {
     StateMachine_init();
     stub_relay_reset();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
 
     StateMachine_triggerFailsafe(FAILSAFE_LOW_VOLTAGE);
     int count_after_first = _stub_timed_event_trigger_count;
 
-    // Second failsafe should not fire relay again
     StateMachine_triggerFailsafe(FAILSAFE_LEAK);
     TEST_ASSERT_EQUAL(count_after_first, _stub_timed_event_trigger_count);
 }
@@ -179,15 +165,13 @@ void test_failsafe_all_sources(void) {
     FailsafeSource sources[] = {
         FAILSAFE_LOW_VOLTAGE,
         FAILSAFE_LEAK,
-        FAILSAFE_MAX_DEPTH,
         FAILSAFE_NO_HEARTBEAT,
         FAILSAFE_MANUAL
     };
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 4; i++) {
         StateMachine_init();
-        StateMachine_startSelfTest();
-        StateMachine_enterMission();
+        StateMachine_enterDiving();
         StateMachine_triggerFailsafe(sources[i]);
 
         TEST_ASSERT_EQUAL(STATE_RECOVERY, StateMachine_getState());
@@ -202,8 +186,7 @@ void test_failsafe_all_sources(void) {
 
 void test_recovery_shuts_down_nonessentials(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
     StateMachine_enterRecovery();
 
     StateMachineStatus s = StateMachine_getStatus();
@@ -215,46 +198,35 @@ void test_recovery_enables_strobe(void) {
     StateMachine_init();
     TEST_ASSERT_FALSE(StateMachine_isRecoveryStrobe());
 
-    StateMachine_startSelfTest();
-    TEST_ASSERT_FALSE(StateMachine_isRecoveryStrobe());
-
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
     TEST_ASSERT_FALSE(StateMachine_isRecoveryStrobe());
 
     StateMachine_enterRecovery();
     TEST_ASSERT_TRUE(StateMachine_isRecoveryStrobe());
 }
 
-// ---------------------------------------------------------------------------
-// Iridium / Meshtastic transmission rules
-// ---------------------------------------------------------------------------
-
-void test_iridium_allowed_in_self_test_and_recovery(void) {
+void test_diving_keeps_nonessentials_powered(void) {
     StateMachine_init();
-    TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
+    StateMachine_enterDiving();
 
-    StateMachine_startSelfTest();
-    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
-
-    StateMachine_enterMission();
-    TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
-
-    StateMachine_enterRecovery();
-    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
+    StateMachineStatus s = StateMachine_getStatus();
+    TEST_ASSERT_TRUE(s.nonessentialsPowered);
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
-void test_meshtastic_always_allowed(void) {
+// ---------------------------------------------------------------------------
+// Iridium transmission rules
+// ---------------------------------------------------------------------------
+
+void test_iridium_allowed_in_pre_dive_and_recovery(void) {
     StateMachine_init();
-    TEST_ASSERT_TRUE(StateMachine_canTransmitMeshtastic());
+    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
 
-    StateMachine_startSelfTest();
-    TEST_ASSERT_TRUE(StateMachine_canTransmitMeshtastic());
-
-    StateMachine_enterMission();
-    TEST_ASSERT_TRUE(StateMachine_canTransmitMeshtastic());
+    StateMachine_enterDiving();
+    TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
 
     StateMachine_enterRecovery();
-    TEST_ASSERT_TRUE(StateMachine_canTransmitMeshtastic());
+    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
 }
 
 // ---------------------------------------------------------------------------
@@ -263,11 +235,11 @@ void test_meshtastic_always_allowed(void) {
 
 void test_previous_state_tracked(void) {
     StateMachine_init();
-    StateMachine_startSelfTest();
+    StateMachine_enterDiving();
 
     StateMachineStatus s = StateMachine_getStatus();
-    TEST_ASSERT_EQUAL(STATE_PRE_MISSION, s.previousState);
-    TEST_ASSERT_EQUAL(STATE_SELF_TEST, s.currentState);
+    TEST_ASSERT_EQUAL(STATE_PRE_DIVE, s.previousState);
+    TEST_ASSERT_EQUAL(STATE_DIVING, s.currentState);
 }
 
 // ---------------------------------------------------------------------------
@@ -292,10 +264,7 @@ void test_should_shutdown_nonessentials_only_in_recovery(void) {
     StateMachine_init();
     TEST_ASSERT_FALSE(StateMachine_shouldShutdownNonessentials());
 
-    StateMachine_startSelfTest();
-    TEST_ASSERT_FALSE(StateMachine_shouldShutdownNonessentials());
-
-    StateMachine_enterMission();
+    StateMachine_enterDiving();
     TEST_ASSERT_FALSE(StateMachine_shouldShutdownNonessentials());
 
     StateMachine_enterRecovery();
@@ -317,24 +286,23 @@ int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     // Init
-    RUN_TEST(test_init_starts_in_pre_mission);
+    RUN_TEST(test_init_starts_in_pre_dive);
     RUN_TEST(test_init_clears_failsafe);
     RUN_TEST(test_init_powers_nonessentials);
 
     // Valid transitions
-    RUN_TEST(test_pre_mission_to_self_test);
-    RUN_TEST(test_self_test_to_mission);
-    RUN_TEST(test_mission_to_recovery);
+    RUN_TEST(test_pre_dive_to_diving);
+    RUN_TEST(test_diving_to_recovery);
     RUN_TEST(test_full_happy_path);
 
     // Invalid transitions
-    RUN_TEST(test_cannot_start_self_test_from_mission);
-    RUN_TEST(test_cannot_enter_mission_from_pre_mission);
-    RUN_TEST(test_cannot_enter_mission_from_recovery);
+    RUN_TEST(test_cannot_enter_diving_from_recovery);
+    RUN_TEST(test_cannot_enter_diving_from_diving);
 
     // Reset
-    RUN_TEST(test_reset_returns_to_pre_mission);
+    RUN_TEST(test_reset_returns_to_pre_dive);
     RUN_TEST(test_reset_restores_nonessentials);
+    RUN_TEST(test_reset_clears_failsafe);
 
     // Failsafe
     RUN_TEST(test_failsafe_enters_recovery);
@@ -346,10 +314,10 @@ int main(int argc, char** argv) {
     // Recovery behavior
     RUN_TEST(test_recovery_shuts_down_nonessentials);
     RUN_TEST(test_recovery_enables_strobe);
+    RUN_TEST(test_diving_keeps_nonessentials_powered);
 
     // Transmission rules
-    RUN_TEST(test_iridium_allowed_in_self_test_and_recovery);
-    RUN_TEST(test_meshtastic_always_allowed);
+    RUN_TEST(test_iridium_allowed_in_pre_dive_and_recovery);
 
     // State tracking
     RUN_TEST(test_previous_state_tracked);

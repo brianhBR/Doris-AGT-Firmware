@@ -67,7 +67,7 @@
 // ============================================================================
 #define GPS_FIX_TIMEOUT_MS         180000  // 3 minutes
 #define IRIDIUM_SEND_INTERVAL_MS   600000  // 10 minutes
-#define MESHTASTIC_UPDATE_MS       1000    // 1 second (matches typical GPS cadence)
+#define MESHTASTIC_UPDATE_MS       10000   // 10 seconds (Meshtastic mesh relay, low rate OK)
 #define MAVLINK_UPDATE_MS          1000    // 1 Hz
 #define PSM_UPDATE_MS              5000    // 5 seconds
 
@@ -76,18 +76,22 @@
 // ============================================================================
 // NEOPIXEL CONFIGURATION
 // ============================================================================
-#define NEOPIXEL_COUNT       30
-#define NEOPIXEL_BRIGHTNESS  50  // 0-255
+#define NEOPIXEL_COUNT             30
+#define NEOPIXEL_BRIGHTNESS        50   // 0-255
+#define NEOPIXEL_BYTES_PER_LED     4    // 3 = RGB (SK6812), 4 = RGBW (SK6812 RGBW)
 
-// LED Status Colors (RGB)
-#define COLOR_BOOT           0x0000FF  // Blue
-#define COLOR_GPS_SEARCH     0xFFFF00  // Yellow
-#define COLOR_GPS_FIX        0x00FF00  // Green
-#define COLOR_IRIDIUM_TX     0xFF00FF  // Magenta
-#define COLOR_ERROR          0xFF0000  // Red
-#define COLOR_LOW_BATTERY    0xFF8000  // Orange
-#define COLOR_STANDBY        0x00FFFF  // Cyan (dimmed by global brightness)
-#define COLOR_OFF            0x000000  // Off
+// Recovery strobe timing
+#define RECOVERY_STROBE_ON_MS      100   // Flash duration
+#define RECOVERY_STROBE_PERIOD_MS  1000  // Full on-off cycle (configurable via Iridium)
+
+// Lua command timeout: if no LED command received within this window,
+// AGT reclaims LED authority (Lua script may have crashed)
+#define LUA_COMMAND_TIMEOUT_MS     10000
+
+// MAVLink user command IDs for Lua → AGT control
+#define MAVLINK_CMD_LED_CONTROL    31010  // MAV_CMD_USER_1
+#define MAVLINK_CMD_MISSION_STATUS 31011  // MAV_CMD_USER_2
+#define MAVLINK_CMD_GPS_DIAG       31012  // MAV_CMD_USER_3
 
 // ============================================================================
 // BATTERY MONITORING & FAILSAFE
@@ -97,11 +101,10 @@
 #define BATTERY_FULL_VOLTAGE     14.8  // Volts (for 4S LiPo)
 #define FAILSAFE_HEARTBEAT_TIMEOUT_MS  120000 // No MAVLink heartbeat -> failsafe (120 s)
 #define PI_HEARTBEAT_TIMEOUT_MS        5000   // Pi considered disconnected if no heartbeat in 5 s
-#define FAILSAFE_MAX_DEPTH_M           200.0  // Max depth (m) before failsafe
-#define MISSION_DEPTH_THRESHOLD_M      5.0    // Depth > this: leave Self Test -> Mission
-#define RECOVERY_DEPTH_THRESHOLD_M     1.5    // Depth < this AND GPS fix: Mission -> Recovery
-#define MISSION_MIN_DURATION_MS        60000  // Min time in MISSION before RECOVERY transition (60 s)
-#define HEARTBEAT_GRACE_PERIOD_MS      90000  // Ignore heartbeat timeout for this long after entering MISSION
+#define DIVE_DEPTH_THRESHOLD_M         2.0    // Depth > this: PRE_DIVE -> DIVING (underwater detection)
+#define RECOVERY_DEPTH_THRESHOLD_M     1.5    // Depth < this AND GPS fix: DIVING -> RECOVERY
+#define DIVE_MIN_DURATION_MS           60000  // Min time in DIVING before RECOVERY transition (60 s)
+#define DIVE_HEARTBEAT_GRACE_MS        90000  // Ignore heartbeat timeout for this long after entering DIVING
 
 // ============================================================================
 // RELAY CONFIGURATION
@@ -183,7 +186,7 @@ struct SystemConfig {
 
 // Default configuration
 #define DEFAULT_IRIDIUM_INTERVAL     600000
-#define DEFAULT_MESHTASTIC_INTERVAL  3000
+#define DEFAULT_MESHTASTIC_INTERVAL  10000
 #define DEFAULT_MAVLINK_INTERVAL     1000
 #define DEFAULT_POWER_SAVE_VOLTAGE   11.5
 

@@ -5,51 +5,30 @@
 
 static StateMachineStatus status;
 static const char* stateNames[] = {
-    "PRE_MISSION",
-    "SELF_TEST",
-    "MISSION",
+    "PRE_DIVE",
+    "DIVING",
     "RECOVERY"
 };
 static const char* failsafeNames[] = {
-    "NONE", "LOW_VOLTAGE", "LEAK", "MAX_DEPTH", "NO_HEARTBEAT", "MANUAL"
+    "NONE", "LOW_VOLTAGE", "LEAK", "NO_HEARTBEAT", "MANUAL"
 };
 
 static void enterState(SystemState newState);
-static void handlePreMission();
-static void handleSelfTest();
-static void handleMission();
-static void handleRecovery();
 
 void StateMachine_init() {
-    status.currentState = STATE_PRE_MISSION;
-    status.previousState = STATE_PRE_MISSION;
+    status.currentState = STATE_PRE_DIVE;
+    status.previousState = STATE_PRE_DIVE;
     status.stateEntryTime = millis();
     status.timeInState = 0;
     status.lastFailsafeSource = FAILSAFE_NONE;
     status.releaseTriggered = false;
     status.nonessentialsPowered = true;
     RelayController_setPowerManagement(true);
-    DebugPrintln(F("State: PRE_MISSION"));
+    DebugPrintln(F("State: PRE_DIVE"));
 }
 
 void StateMachine_update() {
-    unsigned long now = millis();
-    status.timeInState = now - status.stateEntryTime;
-
-    switch (status.currentState) {
-        case STATE_PRE_MISSION:
-            handlePreMission();
-            break;
-        case STATE_SELF_TEST:
-            handleSelfTest();
-            break;
-        case STATE_MISSION:
-            handleMission();
-            break;
-        case STATE_RECOVERY:
-            handleRecovery();
-            break;
-    }
+    status.timeInState = millis() - status.stateEntryTime;
     RelayController_update();
 }
 
@@ -65,20 +44,12 @@ uint32_t StateMachine_getTimeInState() {
     return status.timeInState / 1000;
 }
 
-void StateMachine_startSelfTest() {
-    if (status.currentState != STATE_PRE_MISSION) {
-        DebugPrintln(F("State: startSelfTest only from PRE_MISSION"));
+void StateMachine_enterDiving() {
+    if (status.currentState != STATE_PRE_DIVE) {
+        DebugPrintln(F("State: enterDiving only from PRE_DIVE"));
         return;
     }
-    enterState(STATE_SELF_TEST);
-}
-
-void StateMachine_enterMission() {
-    if (status.currentState != STATE_SELF_TEST) {
-        DebugPrintln(F("State: enterMission only from SELF_TEST"));
-        return;
-    }
-    enterState(STATE_MISSION);
+    enterState(STATE_DIVING);
 }
 
 void StateMachine_enterRecovery() {
@@ -86,7 +57,9 @@ void StateMachine_enterRecovery() {
 }
 
 void StateMachine_reset() {
-    enterState(STATE_PRE_MISSION);
+    status.lastFailsafeSource = FAILSAFE_NONE;
+    status.releaseTriggered = false;
+    enterState(STATE_PRE_DIVE);
 }
 
 void StateMachine_triggerFailsafe(FailsafeSource source) {
@@ -101,11 +74,7 @@ void StateMachine_triggerFailsafe(FailsafeSource source) {
 }
 
 bool StateMachine_canTransmitIridium() {
-    return status.currentState == STATE_SELF_TEST || status.currentState == STATE_RECOVERY;
-}
-
-bool StateMachine_canTransmitMeshtastic() {
-    return true;
+    return status.currentState == STATE_PRE_DIVE || status.currentState == STATE_RECOVERY;
 }
 
 bool StateMachine_shouldShutdownNonessentials() {
@@ -148,15 +117,11 @@ static void enterState(SystemState newState) {
     status.timeInState = 0;
 
     switch (newState) {
-        case STATE_PRE_MISSION:
+        case STATE_PRE_DIVE:
             status.nonessentialsPowered = true;
             RelayController_setPowerManagement(true);
             break;
-        case STATE_SELF_TEST:
-            status.nonessentialsPowered = true;
-            RelayController_setPowerManagement(true);
-            break;
-        case STATE_MISSION:
+        case STATE_DIVING:
             status.nonessentialsPowered = true;
             RelayController_setPowerManagement(true);
             break;
@@ -165,24 +130,4 @@ static void enterState(SystemState newState) {
             RelayController_setPowerManagement(false);
             break;
     }
-}
-
-static void handlePreMission() {
-    // Wait for external trigger to start self test (e.g. serial command or BlueOS)
-    (void)status;
-}
-
-static void handleSelfTest() {
-    // Self test is run from main (GPS, Iridium, battery, mission loaded).
-    // Transition to MISSION happens when depth > 2m (from main, using MissionData).
-    (void)status;
-}
-
-static void handleMission() {
-    // Failsafe checks are done in main. Transition to RECOVERY when depth < 3m or GPS fix (in main).
-    (void)status;
-}
-
-static void handleRecovery() {
-    (void)status;
 }

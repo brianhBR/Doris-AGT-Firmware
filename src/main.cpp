@@ -1,16 +1,18 @@
 /*
- * Doris AGT Firmware - Simplified Drop Camera
+ * Doris AGT Firmware — Subordinate Safety Monitor & Comms Relay
  *
- * Core functions:
- * - GPS -> ArduSub via MAVLink over USB
- * - GPS -> Meshtastic via protobuf (built-in position)
- * - Iridium: position + mission stats (voltage, leak, max depth)
- * - Failsafe: release relay on low voltage, leak, max depth, no heartbeat
- * - LEDs: status + strobe in Recovery for locating
+ * The Lua dive script on ArduSub controls the dive profile.  The AGT provides:
+ *   - GPS -> ArduSub via MAVLink (GPS_INPUT for navigation)
+ *   - GPS -> Meshtastic via NMEA (surface tracking)
+ *   - Iridium SBD reporting (pre-dive test + recovery)
+ *   - Safety failsafes: voltage, leak, heartbeat -> release relay
+ *   - Status LEDs / strobe in recovery
+ *   - Power relay: low-power mode in recovery
  *
- * States: PRE_MISSION -> SELF_TEST -> MISSION -> RECOVERY
- * - Self Test -> Mission: depth > 5m (from MAVLink)
- * - Mission -> Recovery: depth < 1.5m AND GPS fix (after 60s min in MISSION)
+ * States: PRE_DIVE -> DIVING -> RECOVERY
+ *   PRE_DIVE -> DIVING:   depth > threshold (vehicle went underwater)
+ *   DIVING   -> RECOVERY: depth < threshold AND GPS fix (after min duration)
+ *                          OR failsafe trigger
  */
 
 #include <Arduino.h>
@@ -26,7 +28,7 @@
 #include "modules/meshtastic_interface.h"
 #include "modules/mavlink_interface.h"
 #include "modules/neopixel_controller.h"
-#include "modules/psm_interface.h"
+// PSM removed — battery voltage comes from MAVLink autopilot
 #include "modules/relay_controller.h"
 #include "modules/config_manager.h"
 #include "modules/state_machine.h"
@@ -45,11 +47,8 @@ Apollo3RTC& myRTC = rtc;
 unsigned long lastIridiumSend = 0;
 unsigned long lastMeshtasticUpdate = 0;
 unsigned long lastMAVLinkUpdate = 0;
-
-
 unsigned long lastPSMUpdate = 0;
 unsigned long lastStatusPrint = 0;
-LEDState currentLEDState = LED_STATE_BOOT;
 
 void setupPins();
 void loadConfiguration();
@@ -62,8 +61,6 @@ void set_leak_from_serial(const String& arg);
 void buildDorisReport(DorisReport* report);
 void handleMTMessage(uint8_t msgId, const DorisConfig* config, const DorisCommand* command);
 
-// Convert RTC date/time to Unix timestamp (microseconds). Returns 0 if RTC not set.
-// RTC is synced from GPS in updateLEDState(). ArduSub uses this when BRD_RTC_TYPES=2.
 static uint64_t getRTCUnixUsec() {
     myRTC.getTime();
     uint16_t y = myRTC.year;
@@ -72,7 +69,6 @@ static uint64_t getRTCUnixUsec() {
     uint8_t mo = myRTC.month, d = myRTC.dayOfMonth;
     uint8_t h = myRTC.hour, mi = myRTC.minute, s = myRTC.seconds;
     if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
-    // Days since 1970-01-01 (UTC)
     uint32_t days = (y - 1970) * 365UL + (y - 1969) / 4 - (y - 1901) / 100 + (y - 1601) / 400;
     static const uint16_t daysToMonth[] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
     days += daysToMonth[mo - 1] + (d - 1);
@@ -82,8 +78,6 @@ static uint64_t getRTCUnixUsec() {
 }
 
 void setup() {
-    // Relay and RF pins FIRST — before Serial, before anything.
-    // DTR-triggered resets leave GPIOs floating; restore relay ASAP.
     setupPins();
 
     Serial.begin(MAVLINK_BAUD);
@@ -92,7 +86,7 @@ void setup() {
     delay(100);
 
     DebugPrintln(F("==========================================="));
-    DebugPrintln(F("  Doris AGT - Drop Camera (Simplified)"));
+    DebugPrintln(F("  Doris AGT — Safety Monitor & Comms Relay"));
     DebugPrintln(F("==========================================="));
     myRTC.setTime(0, 0, 0, 0, 1, 1, 2025);
 
@@ -101,7 +95,6 @@ void setup() {
     RelayController_init();
     StateMachine_init();
 
-    // GPS first — Iridium deferred until first send to avoid power-cycling GPS
     myGPSPtr = new SFE_UBLOX_GNSS();
     if (!GPSManager_init(myGPSPtr)) {
         DebugPrintln(F("WARNING: GPS init failed"));
@@ -125,16 +118,20 @@ void setup() {
         NeoPixelController_init();
     }
 
-    if (sysConfig.enablePSM) {
-        if (!PSMInterface_init()) sysConfig.enablePSM = false;
-    }
 
-    DebugPrintln(F("Setup complete. State: PRE_MISSION"));
-    DebugPrintln(F("Send 'start_self_test' to begin. Type 'help' for commands."));
+    DebugPrintln(F("Setup complete. State: PRE_DIVE (ready)"));
+    DebugPrintln(F("Type 'help' for commands."));
 }
 
 void loop() {
     unsigned long now = millis();
+
+    // LEDs first: animation must stay smooth regardless of blocking I/O below.
+    // Uses state/data from the previous iteration — perfectly fine for display.
+    if (sysConfig.enableNeoPixels) {
+        updateLEDState();
+        NeoPixelController_update();
+    }
 
     StateMachine_update();
     GPSManager_update();
@@ -146,35 +143,27 @@ void loop() {
     }
 
     checkStateTransitions();
-    if (StateMachine_getState() == STATE_MISSION) {
+    if (StateMachine_getState() == STATE_DIVING) {
         checkFailsafe();
     }
 
-    updateLEDState();
-    if (sysConfig.enableNeoPixels) {
-        NeoPixelController_update(currentLEDState);
+    if (sysConfig.enableMAVLink) {
+        MAVLinkInterface_sendHeartbeat();
     }
 
-    // GPS -> MAVLink (feed ArduSub) + RTC time for ArduSub clock (set BRD_RTC_TYPES=2 on autopilot)
-    if (sysConfig.enableMAVLink && (now - lastMAVLinkUpdate >= sysConfig.mavlinkInterval)) {
-        if (GPSManager_hasFix()) {
-            GPSData gpsData = GPSManager_getData();
-            MAVLinkInterface_sendGPS(&gpsData);
-        }
-        if (sysConfig.enablePSM) {
-            BatteryData b = PSMInterface_getData();
-            MAVLinkInterface_sendStatus(b.voltage, b.current);
-        }
+    if (sysConfig.enableMAVLink &&
+        (now - lastMAVLinkUpdate >= sysConfig.mavlinkInterval)) {
+        GPSData gpsData = GPSManager_getData();
+        MAVLinkInterface_sendGPS(&gpsData);
         uint64_t rtcUsec = getRTCUnixUsec();
         if (rtcUsec != 0) {
             MAVLinkInterface_sendSystemTime(rtcUsec);
         }
-        MAVLinkInterface_sendHeartbeat();
         lastMAVLinkUpdate = now;
     }
 
-    // Meshtastic: NMEA GPS on pin 39 (D39). Send real position when fix, else "no fix" so UART sees activity.
-    if (sysConfig.enableMeshtastic && StateMachine_canTransmitMeshtastic() &&
+    // Meshtastic: NMEA GPS position relay (always allowed)
+    if (sysConfig.enableMeshtastic &&
         (now - lastMeshtasticUpdate >= sysConfig.meshtasticInterval)) {
         lastMeshtasticUpdate = now;
         if (GPSManager_hasFix()) {
@@ -185,15 +174,12 @@ void loop() {
         }
     }
 
-    // Iridium: binary Doris report + MT command check
-    // Full RF switch cycle: GPS off -> Iridium on -> send -> Iridium off -> GPS on -> GPS reinit
+    // Iridium: binary Doris report (allowed in PRE_DIVE and RECOVERY only)
     if (sysConfig.enableIridium && modemPtr && StateMachine_canTransmitIridium() &&
         (now - lastIridiumSend >= sysConfig.iridiumInterval)) {
         if (GPSManager_hasFix()) {
             DorisReport report;
             buildDorisReport(&report);
-
-            currentLEDState = LED_STATE_IRIDIUM_TX;
 
             uint8_t mtMsgId = 0;
             DorisConfig mtConfig = {};
@@ -211,17 +197,6 @@ void loop() {
         }
     }
 
-    if (sysConfig.enablePSM && (now - lastPSMUpdate >= PSM_UPDATE_MS)) {
-        PSMInterface_update();
-        lastPSMUpdate = now;
-        MissionData md;
-        MissionData_get(&md);
-        if (md.battery_voltage <= 0) {
-            BatteryData b = PSMInterface_getData();
-            MissionData_update_voltage(b.voltage);
-        }
-    }
-
     if (now - lastStatusPrint > 60000) {
         StateMachine_printState();
         lastStatusPrint = now;
@@ -231,33 +206,26 @@ void loop() {
 }
 
 void setupPins() {
-    // Relay pins FIRST.
-    // Power relay is NC: pin LOW (or floating during reset) = devices stay powered.
-    // Explicitly drive LOW here to match the safe default.
+#ifndef NO_RELAYS
     pinMode(RELAY_POWER_MGMT, OUTPUT);
-    digitalWrite(RELAY_POWER_MGMT, LOW);    // NC: coil off = closed = devices ON
-    // Timed relay is NO: pin LOW = release inactive (safe).
+    digitalWrite(RELAY_POWER_MGMT, LOW);
     pinMode(RELAY_TIMED_EVENT, OUTPUT);
-    digitalWrite(RELAY_TIMED_EVENT, LOW);   // NO: coil off = open = release OFF
+    digitalWrite(RELAY_TIMED_EVENT, LOW);
+#endif
 
-    // Force both RF paths OFF immediately at boot.
-    // Apollo3 GPIOs default to input (high-Z) — GNSS_EN could float LOW (GPS on)
-    // and IRIDIUM_PWR_EN could float (Iridium on), damaging the AS179 switch.
     pinMode(IRIDIUM_PWR_EN, OUTPUT);
-    digitalWrite(IRIDIUM_PWR_EN, LOW);     // Iridium power OFF
+    digitalWrite(IRIDIUM_PWR_EN, LOW);
     pinMode(IRIDIUM_SLEEP, OUTPUT);
-    digitalWrite(IRIDIUM_SLEEP, LOW);      // Iridium modem sleep
+    digitalWrite(IRIDIUM_SLEEP, LOW);
     pinMode(SUPERCAP_CHG_EN, OUTPUT);
-    digitalWrite(SUPERCAP_CHG_EN, LOW);    // Supercap charger OFF
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
 
-    // GNSS_EN must be open-drain (per SparkFun AGT schematic)
     am_hal_gpio_pincfg_t pinCfg = g_AM_HAL_GPIO_OUTPUT;
     pinCfg.eGPOutcfg = AM_HAL_GPIO_PIN_OUTCFG_OPENDRAIN;
     pin_config(PinName(GNSS_EN), pinCfg);
     delay(1);
-    digitalWrite(GNSS_EN, HIGH);           // GPS power OFF (active low)
+    digitalWrite(GNSS_EN, HIGH);
 
-    // Other pins
     pinMode(BUS_VOLTAGE_MON_EN, OUTPUT);
     pinMode(LED_WHITE, OUTPUT);
     pinMode(IRIDIUM_NA, INPUT);
@@ -277,49 +245,74 @@ void loadConfiguration() {
 }
 
 void updateLEDState() {
-    if (StateMachine_isRecoveryStrobe()) {
-        currentLEDState = LED_STATE_RECOVERY_STROBE;
-        return;
-    }
-    switch (StateMachine_getState()) {
-        case STATE_PRE_MISSION:
-            currentLEDState = MissionData_isPiConnected() ? LED_STATE_PI_CONNECTED : LED_STATE_PRE_MISSION;
-            break;
-        case STATE_SELF_TEST:
-            currentLEDState = MissionData_isPiConnected() ? LED_STATE_PI_CONNECTED : LED_STATE_SELF_TEST;
-            break;
-        case STATE_MISSION:
-            currentLEDState = GPSManager_hasFix() ? LED_STATE_GPS_FIX : LED_STATE_GPS_SEARCH;
-            break;
-        case STATE_RECOVERY:
-            currentLEDState = LED_STATE_RECOVERY_STROBE;
-            break;
-    }
+    // Sync RTC whenever we have a GPS fix
     if (GPSManager_hasFix()) {
         GPSData g = GPSManager_getData();
         myRTC.setTime(g.hour, g.minute, g.second, 0, g.day, g.month, g.year);
     }
+
+    if (StateMachine_getState() == STATE_RECOVERY) {
+        NeoPixelController_setMode(LED_MODE_RECOVERY);
+        return;
+    }
+
+    if (StateMachine_getState() == STATE_DIVING) {
+        if (NeoPixelController_isLuaActive()) {
+            NeoPixelController_setMode(LED_MODE_LUA);
+        } else {
+            NeoPixelController_setMode(LED_MODE_DIVING);
+        }
+        return;
+    }
+
+    // Pre-dive: ready when GPS + MAVLink + mission loaded, error if something broke
+    bool gps   = GPSManager_hasFix();
+    bool pi    = MissionData_isPiConnected();
+    bool ready = MissionData_isMissionReady();
+
+    MissionData md;
+    MissionData_get(&md);
+    bool failsafe = md.leak_detected ||
+                    (md.voltage_from_autopilot && md.battery_voltage > 0 &&
+                     md.battery_voltage < BATTERY_LOW_VOLTAGE) ||
+                    (!pi && MissionData_hasHadHeartbeat()) ||
+                    MissionData_isAutopilotFailsafe() ||
+                    MissionData_hasUnhealthySensors();
+
+    if (failsafe) {
+        NeoPixelController_setMode(LED_MODE_ERROR);
+    } else if (ready && gps) {
+        NeoPixelController_setMode(LED_MODE_READY);
+    } else {
+        NeoPixelController_setMode(LED_MODE_STANDBY);
+    }
 }
 
 void checkStateTransitions() {
-    MissionData md;
-    MissionData_get(&md);
+    int dorisState = MissionData_getDorisState();
 
-    // SELF_TEST -> MISSION: only on confirmed depth from autopilot
-    if (StateMachine_getState() == STATE_SELF_TEST &&
-        md.depth_valid && md.depth_m > MISSION_DEPTH_THRESHOLD_M) {
-        StateMachine_enterMission();
+    // Follow autopilot: CONFIG/MISSION_START → PRE_DIVE
+    if (dorisState <= 0 && StateMachine_getState() != STATE_PRE_DIVE) {
+        StateMachine_reset();
     }
 
-    // MISSION -> RECOVERY: require minimum time in MISSION to ride out boot transients,
-    // AND require both shallow depth and GPS fix (belt-and-suspenders: depth < 1.5m
-    // proves we're near the surface, GPS fix proves we're actually on the surface).
-    if (StateMachine_getState() == STATE_MISSION) {
-        unsigned long timeInMission = StateMachine_getTimeInState() * 1000UL;
-        if (timeInMission < MISSION_MIN_DURATION_MS) return;
+    // Follow autopilot: DESCENT/ON_BOTTOM/ASCENT → DIVING
+    if (dorisState >= 1 && dorisState <= 3 &&
+        StateMachine_getState() == STATE_PRE_DIVE) {
+        StateMachine_enterDiving();
+    }
 
+    // Follow autopilot: RECOVERY
+    if (dorisState >= 4 && StateMachine_getState() != STATE_RECOVERY) {
+        StateMachine_enterRecovery();
+    }
+
+    // Independent surface detection: ASCENT + shallow + GPS → RECOVERY
+    if (StateMachine_getState() == STATE_DIVING && dorisState >= 3) {
+        MissionData md;
+        MissionData_get(&md);
         bool shallow = md.depth_valid && md.depth_m < RECOVERY_DEPTH_THRESHOLD_M;
-        bool gpsFix  = GPSManager_hasFix();
+        bool gpsFix = GPSManager_hasFix();
         if (shallow && gpsFix) {
             StateMachine_enterRecovery();
         }
@@ -330,7 +323,7 @@ void checkFailsafe() {
     MissionData md;
     MissionData_get(&md);
     unsigned long now = millis();
-    unsigned long timeInMission = StateMachine_getTimeInState() * 1000UL;
+    unsigned long timeInDive = StateMachine_getTimeInState() * 1000UL;
 
     if (md.voltage_from_autopilot &&
         md.battery_voltage > 0 && md.battery_voltage < BATTERY_CRITICAL_VOLTAGE) {
@@ -341,14 +334,8 @@ void checkFailsafe() {
         StateMachine_triggerFailsafe(FAILSAFE_LEAK);
         return;
     }
-    if (md.depth_valid && md.max_depth_m >= FAILSAFE_MAX_DEPTH_M) {
-        StateMachine_triggerFailsafe(FAILSAFE_MAX_DEPTH);
-        return;
-    }
-    // Heartbeat failsafe: only after a grace period in MISSION so the autopilot
-    // has time to fully boot and establish a stable heartbeat stream.
     if (md.heartbeat_valid &&
-        timeInMission > HEARTBEAT_GRACE_PERIOD_MS &&
+        timeInDive > DIVE_HEARTBEAT_GRACE_MS &&
         (now - md.last_heartbeat_ms) > FAILSAFE_HEARTBEAT_TIMEOUT_MS) {
         StateMachine_triggerFailsafe(FAILSAFE_NO_HEARTBEAT);
         return;
@@ -356,7 +343,6 @@ void checkFailsafe() {
 }
 
 // Unified serial reader: routes bytes to MAVLink parser and text command buffer.
-// MAVLink binary frames and ASCII commands share the same USB Serial port.
 static char cmdBuf[128];
 static uint8_t cmdLen = 0;
 
@@ -366,23 +352,24 @@ void processSerialInput() {
     mavlink_message_t msg;
     mavlink_status_t mavStatus;
 
-    while (Serial.available()) {
+    // Limit bytes per loop iteration to keep LED animation smooth.
+    // A full MAVLink message is ~60 bytes; 64 handles one message per loop.
+    uint8_t bytesRead = 0;
+    while (Serial.available() && bytesRead < 64) {
+        bytesRead++;
         uint8_t c = Serial.read();
 
-        // Feed every byte to MAVLink parser first
         if (sysConfig.enableMAVLink &&
             mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &mavStatus)) {
             MAVLinkInterface_handleMessage(&msg);
             continue;
         }
 
-        // If MAVLink parser is mid-frame, don't route to command buffer
         mavlink_status_t* chanStatus = mavlink_get_channel_status(MAVLINK_COMM_0);
         if (chanStatus->parse_state != MAVLINK_PARSE_STATE_IDLE) {
             continue;
         }
 
-        // Printable ASCII goes to the command buffer
         if (c == '\n' || c == '\r') {
             if (cmdLen > 0) {
                 cmdBuf[cmdLen] = '\0';
@@ -402,21 +389,16 @@ void processSerialInput() {
 void processCommand(const String& cmd) {
     if (cmd == "help") {
         DebugPrintln(F("--- Commands ---"));
-        DebugPrintln(F("start_self_test   Start self test; depth>5m -> Mission"));
         DebugPrintln(F("status / gps      State and GPS"));
         DebugPrintln(F("gps_diag          GPS BBR/backup battery diagnostics"));
         DebugPrintln(F("release_now       Trigger release relay (failsafe)"));
-        DebugPrintln(F("reset             Back to PRE_MISSION"));
-        DebugPrintln(F("set_leak <0|1>   Set leak flag for testing"));
+        DebugPrintln(F("reset             Back to PRE_DIVE"));
+        DebugPrintln(F("set_leak <0|1>    Set leak flag for testing"));
         DebugPrintln(F("config / save / set_* / enable_* / disable_*"));
         DebugPrintln(F("mesh_test / mesh_test_gps / mesh_send <text>"));
         return;
     }
 
-    if (cmd == "start_self_test") {
-        StateMachine_startSelfTest();
-        return;
-    }
     if (cmd == "status") {
         StateMachine_printState();
         return;
@@ -491,16 +473,14 @@ void buildDorisReport(DorisReport* report) {
     GPSData gps = GPSManager_getData();
     MissionData mission;
     MissionData_get(&mission);
-    BatteryData batt = PSMInterface_getData();
 
-    // State
+    // Map AGT state to Doris protocol state
     SystemState st = StateMachine_getState();
     StateMachineStatus smStatus = StateMachine_getStatus();
     switch (st) {
-        case STATE_PRE_MISSION: report->mission_state = DORIS_STATE_PRE_MISSION; break;
-        case STATE_SELF_TEST:   report->mission_state = DORIS_STATE_SELF_TEST;   break;
-        case STATE_MISSION:     report->mission_state = DORIS_STATE_MISSION;     break;
-        case STATE_RECOVERY:    report->mission_state = DORIS_STATE_RECOVERY;    break;
+        case STATE_PRE_DIVE:  report->mission_state = DORIS_STATE_PRE_DIVE; break;
+        case STATE_DIVING:    report->mission_state = DORIS_STATE_DIVING;   break;
+        case STATE_RECOVERY:  report->mission_state = DORIS_STATE_RECOVERY; break;
     }
     if (smStatus.lastFailsafeSource != FAILSAFE_NONE) {
         report->mission_state = DORIS_STATE_FAILSAFE;
@@ -531,18 +511,15 @@ void buildDorisReport(DorisReport* report) {
     }
     if (mission.leak_detected)
         report->failsafe_flags |= DORIS_FAILSAFE_LEAK;
-    if (mission.depth_valid && mission.max_depth_m >= FAILSAFE_MAX_DEPTH_M)
-        report->failsafe_flags |= DORIS_FAILSAFE_MAX_DEPTH;
     if (mission.heartbeat_valid &&
         (millis() - mission.last_heartbeat_ms) > FAILSAFE_HEARTBEAT_TIMEOUT_MS)
         report->failsafe_flags |= DORIS_FAILSAFE_NO_HEARTBEAT;
     if (smStatus.lastFailsafeSource == FAILSAFE_MANUAL)
         report->failsafe_flags |= DORIS_FAILSAFE_MANUAL;
 
-    // Power — prefer autopilot voltage; fall back to PSM; bus voltage is AGT supply
-    float v = mission.battery_voltage > 0 ? mission.battery_voltage : batt.voltage;
-    report->battery_voltage = (uint16_t)(v * 1000.0f);
-    report->battery_current = (uint16_t)(batt.current * 1000.0f);
+    // Power (battery voltage from MAVLink autopilot, no PSM)
+    report->battery_voltage = (uint16_t)(mission.battery_voltage * 1000.0f);
+    report->battery_current = 0;
     report->bus_voltage     = (uint16_t)(iridiumGetBusVoltage() * 1000.0f);
 
     // Time
