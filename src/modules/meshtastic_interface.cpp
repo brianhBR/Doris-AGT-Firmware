@@ -21,6 +21,26 @@
 SoftwareSerial* MeshtasticSerial = nullptr;
 static bool initialized = false;
 
+// Non-blocking TX buffer: NMEA lines are queued here and drained
+// a few bytes at a time in update() to avoid blocking the main loop.
+#define MESH_TX_BUF_SIZE 320
+static uint8_t txBuf[MESH_TX_BUF_SIZE];
+static volatile uint16_t txHead = 0;
+static volatile uint16_t txTail = 0;
+
+static uint16_t txBufUsed() {
+    return (txHead >= txTail) ? (txHead - txTail) : (MESH_TX_BUF_SIZE - txTail + txHead);
+}
+
+static void txBufEnqueue(const uint8_t* data, uint16_t len) {
+    for (uint16_t i = 0; i < len; i++) {
+        uint16_t next = (txHead + 1) % MESH_TX_BUF_SIZE;
+        if (next == txTail) return;  // full — drop
+        txBuf[txHead] = data[i];
+        txHead = next;
+    }
+}
+
 static void nmea_checksum(const char* sentence, char* outHex) {
     uint8_t cs = 0;
     for (const char* p = sentence; *p; p++)
@@ -72,9 +92,7 @@ static int appendFixedPoint(char* buf, int pos, int maxLen, double val, int deci
     return (written > 0) ? pos + written : pos;
 }
 
-// Build and send NMEA sentence with checksum.
-// At 4800 baud, bit timing is relaxed (208μs) so no interrupt disabling needed.
-// DO NOT use noInterrupts()/interrupts() — corrupts MbedOS RTOS state.
+// Queue an NMEA sentence into the TX buffer for non-blocking drain.
 #define NMEA_LINE_MAX 140
 static void send_nmea_line(const char* body) {
     if (!MeshtasticSerial || !initialized) return;
@@ -92,8 +110,7 @@ static void send_nmea_line(const char* body) {
     line[n++] = csHex[1];
     line[n++] = '\r';
     line[n++] = '\n';
-    MeshtasticSerial->write((const uint8_t*)line, n);
-    delay(10);
+    txBufEnqueue((const uint8_t*)line, n);
 }
 
 bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
@@ -133,22 +150,18 @@ bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
     snprintf(rmc + pos, sizeof(rmc) - pos, ",%02u%02u%02u,,,A",
              (unsigned)d, (unsigned)mo, (unsigned)(yr % 100));
     send_nmea_line(rmc);
-
-    MeshtasticSerial->flush();
     return true;
 }
 
 void MeshtasticInterface_sendNoFixNMEA() {
     if (!MeshtasticSerial || !initialized) return;
     send_nmea_line("GPGGA,000000.00,,,,,0,00,99.9,,,,,,,");
-    MeshtasticSerial->flush();
 }
 
 void MeshtasticInterface_sendTestNMEA() {
     if (!MeshtasticSerial || !initialized) return;
     send_nmea_line("GPGGA,120000.00,3742.1445,N,12205.0466,W,1,10,0.9,15.2,M,0.0,M,,");
     send_nmea_line("GPRMC,120000.00,A,3742.1445,N,12205.0466,W,0.0,0.0,150326,,,A");
-    MeshtasticSerial->flush();
     DebugPrintln(F("Mesh: sent test NMEA (37.7024, -122.0841)"));
 }
 
@@ -180,7 +193,16 @@ bool MeshtasticInterface_checkMessages() {
 }
 
 void MeshtasticInterface_update() {
-    // TX-only: NMEA output to Meshtastic J10
+    if (!MeshtasticSerial || !initialized) return;
+
+    // Drain up to 4 bytes per call (~4ms at 9600 baud).
+    // At 50Hz LED refresh the main loop runs every ~20ms,
+    // so this leaves plenty of headroom for smooth animation.
+    uint8_t maxBytes = 4;
+    while (maxBytes-- && txTail != txHead) {
+        MeshtasticSerial->write(txBuf[txTail]);
+        txTail = (txTail + 1) % MESH_TX_BUF_SIZE;
+    }
 }
 
 void MeshtasticInterface_init() {

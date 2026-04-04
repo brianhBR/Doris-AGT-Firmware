@@ -7,15 +7,67 @@ static bool timedEventActive = false;
 static unsigned long timedEventStartTime = 0;
 static uint32_t timedEventDurationSeconds = 0;
 
-// Drive a relay pin to conduct (close the circuit) or not.
-// NC relay: conduct when coil is OFF (pin LOW).  Coil ON (pin HIGH) = open.
-// NO relay: conduct when coil is ON  (pin HIGH). Coil OFF (pin LOW) = open.
+#ifdef NO_RELAYS
+
+// Relays disabled at compile time — state tracking and logging only, no pin drives.
+// Build with -DNO_RELAYS (no-relays environment).
+
+void RelayController_init() {
+    powerMgmtState = true;
+    timedEventActive = false;
+    DebugPrintln(F("Relay: DISABLED (build flag) — no pins will be driven"));
+}
+
+void RelayController_setPowerManagement(bool state) {
+    powerMgmtState = state;
+    DebugPrint(F("Relay: Power management -> "));
+    DebugPrintln(state ? F("ON (simulated)") : F("OFF (simulated)"));
+}
+
+bool RelayController_getPowerManagement() {
+    return powerMgmtState;
+}
+
+void RelayController_triggerTimedEvent(uint32_t durationSeconds) {
+    if (timedEventActive) return;
+    timedEventActive = true;
+    timedEventStartTime = millis();
+    timedEventDurationSeconds = durationSeconds;
+    DebugPrint(F("Relay: Timed event logged (simulated) for "));
+    DebugPrint(durationSeconds);
+    DebugPrintln(F("s"));
+}
+
+bool RelayController_isTimedEventActive() {
+    return timedEventActive;
+}
+
+void RelayController_update() {
+    if (timedEventActive) {
+        unsigned long elapsedSeconds = (millis() - timedEventStartTime) / 1000;
+        if (elapsedSeconds >= timedEventDurationSeconds) {
+            timedEventActive = false;
+            DebugPrintln(F("Relay: Timed event completed (simulated)"));
+        }
+    }
+}
+
+void RelayController_emergencyDisable() {
+    powerMgmtState = false;
+    timedEventActive = false;
+    DebugPrintln(F("Relay: EMERGENCY DISABLE (simulated)"));
+}
+
+#else
+
+// Production build — relay pins are driven.
+
 static void driveRelay(int pin, bool nc, bool conduct) {
     bool coilOn;
     if (nc) {
-        coilOn = !conduct;  // NC: coil OFF = closed/conduct, coil ON = open
+        coilOn = !conduct;
     } else {
-        coilOn = conduct;   // NO: coil ON = closed/conduct, coil OFF = open
+        coilOn = conduct;
     }
     digitalWrite(pin, (RELAY_COIL_ACTIVE_HIGH == coilOn) ? HIGH : LOW);
 }
@@ -68,10 +120,7 @@ bool RelayController_isTimedEventActive() {
 
 void RelayController_update() {
     if (timedEventActive) {
-        unsigned long currentMillis = millis();
-        unsigned long elapsedMs = currentMillis - timedEventStartTime;
-        unsigned long elapsedSeconds = elapsedMs / 1000;
-
+        unsigned long elapsedSeconds = (millis() - timedEventStartTime) / 1000;
         if (elapsedSeconds >= timedEventDurationSeconds) {
             driveRelay(RELAY_TIMED_EVENT, RELAY_TIMED_EVENT_NC, false);
             timedEventActive = false;
@@ -89,3 +138,5 @@ void RelayController_emergencyDisable() {
 
     DebugPrintln(F("Relay: EMERGENCY DISABLE"));
 }
+
+#endif // NO_RELAYS
