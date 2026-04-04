@@ -1,5 +1,6 @@
 #include "modules/mavlink_interface.h"
 #include "modules/mission_data.h"
+#include "modules/neopixel_controller.h"
 #include "config.h"
 #include <Arduino.h>
 
@@ -14,9 +15,8 @@ static uint8_t systemId = MAVLINK_SYSTEM_ID;
 static uint8_t componentId = MAVLINK_COMPONENT_ID;
 static unsigned long lastHeartbeat = 0;
 
-// Depth from pressure: sea water approx (press_abs_mbar - 1013.25) * 0.0992 = depth_m
-#define SURFACE_PRESSURE_MBAR  1013.25f
-#define MBAR_TO_DEPTH_M        0.0992f
+// Depth comes from the autopilot EKF (VFR_HUD.alt and GLOBAL_POSITION_INT.relative_alt).
+// No raw pressure conversion needed — ArduSub's EKF handles surface calibration.
 
 void MAVLinkInterface_init() {
     // MAVLink communicates over USB Serial
@@ -54,9 +54,7 @@ static void calendarToGPSTime(uint16_t year, uint8_t month, uint8_t day,
 }
 
 void MAVLinkInterface_sendGPS(GPSData* gpsData) {
-    if (!initialized || !gpsData->valid) {
-        return;
-    }
+    if (!initialized || !MAVLINK_SERIAL) return;
 
     mavlink_message_t msg;
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
@@ -71,7 +69,7 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
     uint8_t satsVisible = gpsData->satellites;
     uint64_t timeUsec = millis() * 1000ULL;
 
-    // GPS_RAW_INT first (visible in MAVLink Inspector for debugging)
+    // GPS_RAW_INT always sent so autopilot sees sensor status + sat count
     mavlink_msg_gps_raw_int_pack(
         systemId,
         componentId,
@@ -90,54 +88,55 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
     );
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     MAVLINK_SERIAL.write(buf, len);
-    MAVLINK_SERIAL.flush();
 
-    // GPS_INPUT for ArduSub consumption (GPS_TYPE=14)
-    uint16_t gpsWeek = 0;
-    uint32_t gpsTowMs = 0;
-    if (gpsData->year >= 1980) {
-        calendarToGPSTime(gpsData->year, gpsData->month, gpsData->day,
-                          gpsData->hour, gpsData->minute, gpsData->second,
-                          &gpsWeek, &gpsTowMs);
+    // GPS_INPUT only with valid fix — feeds ArduSub EKF (GPS_TYPE=14)
+    if (gpsData->valid) {
+        uint16_t gpsWeek = 0;
+        uint32_t gpsTowMs = 0;
+        if (gpsData->year >= 1980) {
+            calendarToGPSTime(gpsData->year, gpsData->month, gpsData->day,
+                              gpsData->hour, gpsData->minute, gpsData->second,
+                              &gpsWeek, &gpsTowMs);
+        }
+
+        uint16_t ignoreFlags = GPS_INPUT_IGNORE_FLAG_VDOP |
+                               GPS_INPUT_IGNORE_FLAG_VEL_VERT |
+                               GPS_INPUT_IGNORE_FLAG_SPEED_ACCURACY |
+                               GPS_INPUT_IGNORE_FLAG_HORIZONTAL_ACCURACY |
+                               GPS_INPUT_IGNORE_FLAG_VERTICAL_ACCURACY;
+
+        mavlink_msg_gps_input_pack(
+            systemId,
+            componentId,
+            &msg,
+            timeUsec,           // time_usec
+            0,                  // gps_id
+            ignoreFlags,        // ignore_flags
+            gpsTowMs,           // time_week_ms
+            gpsWeek,            // time_week
+            fixType,            // fix_type
+            lat,                // lat (1e7)
+            lon,                // lon (1e7)
+            gpsData->altitude,  // alt (m, float)
+            gpsData->hdop,      // hdop (float)
+            65535.0f,           // vdop (ignored)
+            gpsData->speed,     // vn (m/s) — using as total horizontal speed
+            0.0f,               // ve
+            0.0f,               // vd (ignored)
+            0.0f,               // speed_accuracy (ignored)
+            0.0f,               // horiz_accuracy (ignored)
+            0.0f,               // vert_accuracy (ignored)
+            satsVisible,        // satellites_visible
+            0                   // yaw (cdeg, 0 = not available)
+        );
+        len = mavlink_msg_to_send_buffer(buf, &msg);
+        MAVLINK_SERIAL.write(buf, len);
     }
 
-    uint16_t ignoreFlags = GPS_INPUT_IGNORE_FLAG_VDOP |
-                           GPS_INPUT_IGNORE_FLAG_VEL_VERT |
-                           GPS_INPUT_IGNORE_FLAG_SPEED_ACCURACY |
-                           GPS_INPUT_IGNORE_FLAG_HORIZONTAL_ACCURACY |
-                           GPS_INPUT_IGNORE_FLAG_VERTICAL_ACCURACY;
-
-    mavlink_msg_gps_input_pack(
-        systemId,
-        componentId,
-        &msg,
-        timeUsec,           // time_usec
-        0,                  // gps_id
-        ignoreFlags,        // ignore_flags
-        gpsTowMs,           // time_week_ms
-        gpsWeek,            // time_week
-        fixType,            // fix_type
-        lat,                // lat (1e7)
-        lon,                // lon (1e7)
-        gpsData->altitude,  // alt (m, float)
-        gpsData->hdop,      // hdop (float)
-        65535.0f,           // vdop (ignored)
-        gpsData->speed,     // vn (m/s) — using as total horizontal speed
-        0.0f,               // ve
-        0.0f,               // vd (ignored)
-        0.0f,               // speed_accuracy (ignored)
-        0.0f,               // horiz_accuracy (ignored)
-        0.0f,               // vert_accuracy (ignored)
-        satsVisible,        // satellites_visible
-        0                   // yaw (cdeg, 0 = not available)
-    );
-    len = mavlink_msg_to_send_buffer(buf, &msg);
-    MAVLINK_SERIAL.write(buf, len);
-    MAVLINK_SERIAL.flush();
 }
 
 void MAVLinkInterface_sendHeartbeat() {
-    if (!initialized) {
+    if (!initialized || !MAVLINK_SERIAL) {
         return;
     }
 
@@ -167,7 +166,7 @@ void MAVLinkInterface_sendHeartbeat() {
 }
 
 void MAVLinkInterface_sendSystemTime(uint64_t time_unix_usec) {
-    if (!initialized) return;
+    if (!initialized || !MAVLINK_SERIAL) return;
     mavlink_message_t msg;
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     uint32_t time_boot_ms = (uint32_t)millis();
@@ -183,7 +182,7 @@ void MAVLinkInterface_sendSystemTime(uint64_t time_unix_usec) {
 }
 
 void MAVLinkInterface_sendStatus(float voltage, float current) {
-    if (!initialized) {
+    if (!initialized || !MAVLINK_SERIAL) {
         return;
     }
 
@@ -233,6 +232,21 @@ void MAVLinkInterface_sendStatus(float voltage, float current) {
     MAVLINK_SERIAL.write(buf, len);
 }
 
+void MAVLinkInterface_sendStatusText(uint8_t severity, const char* text) {
+    if (!initialized || !MAVLINK_SERIAL) return;
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    char truncated[50];
+    strncpy(truncated, text, sizeof(truncated) - 1);
+    truncated[sizeof(truncated) - 1] = '\0';
+    mavlink_msg_statustext_pack(
+        systemId, componentId, &msg,
+        severity, truncated, 0, 0
+    );
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    MAVLINK_SERIAL.write(buf, len);
+}
+
 void MAVLinkInterface_handleMessage(void* msgPtr) {
     if (!initialized || !msgPtr) return;
 
@@ -240,7 +254,10 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
 
     switch (msg->msgid) {
         case MAVLINK_MSG_ID_HEARTBEAT: {
+            mavlink_heartbeat_t hb;
+            mavlink_msg_heartbeat_decode(msg, &hb);
             MissionData_update_heartbeat();
+            MissionData_update_autopilot_state(hb.system_status);
             break;
         }
 
@@ -250,26 +267,25 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
             if (sys.voltage_battery != 65535) {
                 MissionData_update_autopilot_voltage(sys.voltage_battery / 1000.0f);
             }
-            break;
-        }
-
-        case MAVLINK_MSG_ID_SCALED_PRESSURE: {
-            mavlink_scaled_pressure_t sp;
-            mavlink_msg_scaled_pressure_decode(msg, &sp);
-            float press_mbar = sp.press_abs;
-            if (press_mbar > 0) {
-                float depth = (press_mbar - SURFACE_PRESSURE_MBAR) * MBAR_TO_DEPTH_M;
-                if (depth > 0) MissionData_update_depth(depth);
-            }
+            MissionData_update_sensor_health(
+                sys.onboard_control_sensors_enabled,
+                sys.onboard_control_sensors_health);
             break;
         }
 
         case MAVLINK_MSG_ID_VFR_HUD: {
             mavlink_vfr_hud_t vfr;
             mavlink_msg_vfr_hud_decode(msg, &vfr);
-            if (vfr.alt < 0) {
-                MissionData_update_depth(-vfr.alt);
-            }
+            // ArduSub EKF altitude: negative = below surface
+            MissionData_update_depth(-vfr.alt);
+            break;
+        }
+
+        case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
+            mavlink_global_position_int_t gpi;
+            mavlink_msg_global_position_int_decode(msg, &gpi);
+            // relative_alt is mm relative to home (surface); negative = underwater
+            MissionData_update_depth(-gpi.relative_alt / 1000.0f);
             break;
         }
 
@@ -282,9 +298,56 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
             break;
         }
 
+        case MAVLINK_MSG_ID_NAMED_VALUE_FLOAT: {
+            mavlink_named_value_float_t nv;
+            mavlink_msg_named_value_float_decode(msg, &nv);
+            if (strncmp(nv.name, "DORIS_ST", 8) == 0) {
+                MissionData_update_doris_state((int)nv.value);
+            }
+            break;
+        }
+
         case MAVLINK_MSG_ID_COMMAND_LONG: {
             mavlink_command_long_t cmd;
             mavlink_msg_command_long_decode(msg, &cmd);
+
+            if (cmd.command == MAVLINK_CMD_LED_CONTROL) {
+                uint8_t pattern   = (uint8_t)cmd.param1;
+                uint32_t color    = (uint32_t)cmd.param2;
+                uint16_t speedMs  = (uint16_t)cmd.param3;
+                uint8_t bright    = (uint8_t)cmd.param4;
+                NeoPixelController_setLuaCommand(pattern, color, speedMs, bright);
+
+                mavlink_message_t ack;
+                uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+                mavlink_msg_command_ack_pack(systemId, componentId, &ack,
+                    cmd.command, MAV_RESULT_ACCEPTED, 0, 0,
+                    msg->sysid, msg->compid);
+                uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
+                MAVLINK_SERIAL.write(buf, ackLen);
+            }
+            else if (cmd.command == MAVLINK_CMD_MISSION_STATUS) {
+                MissionData_setMissionReady(cmd.param1 > 0.5f);
+
+                mavlink_message_t ack;
+                uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+                mavlink_msg_command_ack_pack(systemId, componentId, &ack,
+                    cmd.command, MAV_RESULT_ACCEPTED, 0, 0,
+                    msg->sysid, msg->compid);
+                uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
+                MAVLINK_SERIAL.write(buf, ackLen);
+            }
+            else if (cmd.command == MAVLINK_CMD_GPS_DIAG) {
+                GPSManager_printDiagnostics();
+
+                mavlink_message_t ack;
+                uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+                mavlink_msg_command_ack_pack(systemId, componentId, &ack,
+                    cmd.command, MAV_RESULT_ACCEPTED, 0, 0,
+                    msg->sysid, msg->compid);
+                uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
+                MAVLINK_SERIAL.write(buf, ackLen);
+            }
             break;
         }
 

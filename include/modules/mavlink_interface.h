@@ -24,4 +24,8 @@ void MAVLinkInterface_handleMessage(void* msg);
 // Send SYSTEM_TIME so ArduSub can set its clock from Artemis RTC (set BRD_RTC_TYPES=2 on autopilot)
 void MAVLinkInterface_sendSystemTime(uint64_t time_unix_usec);
 
+// Send STATUSTEXT visible in BlueOS/QGC message panel (max 50 chars)
+// severity: 0=EMERGENCY..6=INFO..7=DEBUG
+void MAVLinkInterface_sendStatusText(uint8_t severity, const char* text);
+
 #endif // MAVLINK_INTERFACE_H

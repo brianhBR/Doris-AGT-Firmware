@@ -1,4 +1,5 @@
 #include "modules/gps_manager.h"
+#include "modules/mavlink_interface.h"
 #include "config.h"
 #include <Wire.h>
 
@@ -121,12 +122,20 @@ bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
     digitalWrite(GNSS_EN, LOW);
     delay(2000);
 
-    if (!initI2CAndGPS(true)) return false;
+    if (!initI2CAndGPS(true)) {
+        DebugPrintln(F("GPS: ZOE-M8Q init FAILED"));
+        MAVLinkInterface_sendStatusText(3, "GPS: ZOE-M8Q init FAILED");
+        return false;
+    }
 
     currentGPSData.valid = false;
     currentGPSData.satellites = 0;
 
-    DebugPrintln(F("GPS: ZOE-M8Q initialized (GPS+GLONASS, config saved to BBR)"));
+    const char* initMsg = configSavedToBBR ?
+        "GPS: Init OK (BBR valid, warm start)" :
+        "GPS: Init OK (fresh config, cold start)";
+    DebugPrintln(initMsg);
+    MAVLinkInterface_sendStatusText(6, initMsg);
     return true;
 }
 
@@ -156,80 +165,194 @@ bool GPSManager_reinit() {
     return true;
 }
 
-void GPSManager_update() {
-    if (gpsPtr == nullptr) {
-        return;
-    }
+// ============================================================================
+// NON-BLOCKING UBX PARSER
+// Reads GPS I2C in small chunks (~16 bytes per loop) to avoid blocking
+// the main loop. The SparkFun library's getPVT() reads ALL buffered data
+// in one call which causes a visible stutter in LED animations.
+// ============================================================================
+#define UBX_I2C_ADDR       0x42
+#define UBX_MAX_PER_LOOP   16     // bytes to read per loop iteration
+#define UBX_SYNC1          0xB5
+#define UBX_SYNC2          0x62
+#define UBX_NAV_CLASS      0x01
+#define UBX_NAV_PVT_ID     0x07
+#define UBX_NAV_PVT_LEN    92
 
-    unsigned long currentMillis = millis();
+static uint8_t  ubxBuf[UBX_NAV_PVT_LEN];
+static uint16_t ubxPayloadIdx = 0;
+static uint8_t  ubxState = 0;       // parser state machine
+static uint16_t ubxPayloadLen = 0;
+static uint8_t  ubxClass = 0;
+static uint8_t  ubxId = 0;
+static uint8_t  ubxCkA = 0, ubxCkB = 0;
 
-    // Check if new PVT data is available
-    if (gpsPtr->getPVT()) {
-        currentGPSData.latitude = gpsPtr->getLatitude() / 10000000.0;
-        currentGPSData.longitude = gpsPtr->getLongitude() / 10000000.0;
-        currentGPSData.altitude = gpsPtr->getAltitudeMSL() / 1000.0;
-        currentGPSData.speed = gpsPtr->getGroundSpeed() / 1000.0;  // m/s
-        currentGPSData.course = gpsPtr->getHeading() / 100000.0;
-        currentGPSData.satellites = gpsPtr->getSIV();
-        currentGPSData.fixType = gpsPtr->getFixType();
-        currentGPSData.hdop = gpsPtr->getHorizontalDOP() / 100.0;
+static void ubxReset() {
+    ubxState = 0;
+    ubxPayloadIdx = 0;
+    ubxCkA = 0;
+    ubxCkB = 0;
+}
 
-        // Get time
-        currentGPSData.year = gpsPtr->getYear();
-        currentGPSData.month = gpsPtr->getMonth();
-        currentGPSData.day = gpsPtr->getDay();
-        currentGPSData.hour = gpsPtr->getHour();
-        currentGPSData.minute = gpsPtr->getMinute();
-        currentGPSData.second = gpsPtr->getSecond();
+static int32_t ubxI32(uint16_t off) {
+    return (int32_t)((uint32_t)ubxBuf[off] | ((uint32_t)ubxBuf[off+1] << 8) |
+           ((uint32_t)ubxBuf[off+2] << 16) | ((uint32_t)ubxBuf[off+3] << 24));
+}
+static uint32_t ubxU32(uint16_t off) {
+    return (uint32_t)ubxBuf[off] | ((uint32_t)ubxBuf[off+1] << 8) |
+           ((uint32_t)ubxBuf[off+2] << 16) | ((uint32_t)ubxBuf[off+3] << 24);
+}
+static uint16_t ubxU16(uint16_t off) {
+    return (uint16_t)ubxBuf[off] | ((uint16_t)ubxBuf[off+1] << 8);
+}
 
-        // Check if fix is valid
-        // Fix type: 0=no fix, 1=dead reckoning, 2=2D, 3=3D, 4=GNSS+dead reckoning, 5=time only
-        if (currentGPSData.fixType >= 2 && currentGPSData.satellites >= GPS_MIN_SATS) {
-            currentGPSData.valid = true;
-            lastFixAttempt = currentMillis;
-            digitalWrite(LED_WHITE, HIGH);
+static void processPVT() {
+    // UBX-NAV-PVT payload offsets (u-blox M8 protocol spec)
+    currentGPSData.year      = ubxU16(4);
+    currentGPSData.month     = ubxBuf[6];
+    currentGPSData.day       = ubxBuf[7];
+    currentGPSData.hour      = ubxBuf[8];
+    currentGPSData.minute    = ubxBuf[9];
+    currentGPSData.second    = ubxBuf[10];
+    currentGPSData.fixType   = ubxBuf[20];
+    currentGPSData.satellites = ubxBuf[23];
+    currentGPSData.longitude = ubxI32(24) / 10000000.0;
+    currentGPSData.latitude  = ubxI32(28) / 10000000.0;
+    currentGPSData.altitude  = ubxI32(36) / 1000.0;   // hMSL
+    currentGPSData.speed     = ubxI32(60) / 1000.0;   // gSpeed mm/s → m/s
+    currentGPSData.course    = ubxI32(64) / 100000.0;  // headMot
+    currentGPSData.hdop      = ubxU16(76) / 100.0;    // pDOP as proxy
 
-            if (!ttffLogged && powerOnTime > 0) {
-                unsigned long ttff = currentMillis - powerOnTime;
-                DebugPrint(F("GPS: TTFF = "));
-                DebugPrint(ttff / 1000);
-                DebugPrint(F("s ("));
-                if (ttff < 5000)       DebugPrint(F("hot start"));
-                else if (ttff < 35000) DebugPrint(F("warm start"));
-                else                   DebugPrint(F("cold start"));
-                DebugPrintln(F(")"));
-                ttffLogged = true;
-            }
+    unsigned long now = millis();
 
-            static unsigned long lastPrint = 0;
-            if (currentMillis - lastPrint > 10000) {
-                DebugPrint(F("GPS: Fix - Lat: "));
-                DebugPrint(currentGPSData.latitude, 6);
-                DebugPrint(F(" Lon: "));
-                DebugPrint(currentGPSData.longitude, 6);
-                DebugPrint(F(" Sats: "));
-                DebugPrint(currentGPSData.satellites);
-                DebugPrint(F(" HDOP: "));
-                DebugPrintln(currentGPSData.hdop, 1);
-                lastPrint = currentMillis;
-            }
-        } else {
-            currentGPSData.valid = false;
-            digitalWrite(LED_WHITE, LOW);
+    if (currentGPSData.fixType >= 2 && currentGPSData.satellites >= GPS_MIN_SATS) {
+        currentGPSData.valid = true;
+        lastFixAttempt = now;
+        digitalWrite(LED_WHITE, HIGH);
 
-            static unsigned long lastSearchPrint = 0;
-            if (currentMillis - lastSearchPrint > 15000) {
-                DebugPrint(F("GPS: Searching... Sats: "));
-                DebugPrint(currentGPSData.satellites);
-                DebugPrint(F(" Fix: "));
-                DebugPrint(currentGPSData.fixType);
-                unsigned long elapsed = (powerOnTime > 0) ? (currentMillis - powerOnTime) / 1000 : 0;
-                DebugPrint(F(" Elapsed: "));
-                DebugPrint(elapsed);
-                DebugPrintln(F("s"));
-                lastSearchPrint = currentMillis;
-            }
+        if (!ttffLogged && powerOnTime > 0) {
+            unsigned long ttff = now - powerOnTime;
+            const char* startType = (ttff < 5000) ? "hot" :
+                                    (ttff < 35000) ? "warm" : "cold";
+            char ttffMsg[50];
+            snprintf(ttffMsg, sizeof(ttffMsg), "GPS: TTFF=%lus (%s start) sats=%u",
+                     ttff / 1000, startType, currentGPSData.satellites);
+            MAVLinkInterface_sendStatusText(6, ttffMsg);
+            DebugPrintln(ttffMsg);
+            ttffLogged = true;
         }
+
+        static unsigned long lastPrint = 0;
+        if (now - lastPrint > 10000) {
+            DebugPrint(F("GPS: Fix - Lat: "));
+            DebugPrint(currentGPSData.latitude, 6);
+            DebugPrint(F(" Lon: "));
+            DebugPrint(currentGPSData.longitude, 6);
+            DebugPrint(F(" Sats: "));
+            DebugPrint(currentGPSData.satellites);
+            DebugPrint(F(" HDOP: "));
+            DebugPrintln(currentGPSData.hdop, 1);
+            lastPrint = now;
+        }
+    } else {
+        currentGPSData.valid = false;
+        digitalWrite(LED_WHITE, LOW);
+
+        static unsigned long lastSearchPrint = 0;
+        if (now - lastSearchPrint > 15000) {
+            unsigned long elapsed = (powerOnTime > 0) ? (now - powerOnTime) / 1000 : 0;
+            char searchMsg[50];
+            snprintf(searchMsg, sizeof(searchMsg), "GPS: Searching sats=%u fix=%u %lus",
+                     currentGPSData.satellites, currentGPSData.fixType, elapsed);
+            MAVLinkInterface_sendStatusText(6, searchMsg);
+            DebugPrintln(searchMsg);
+            lastSearchPrint = now;
+        }
+    }
+}
+
+// Feed one byte into the UBX frame parser
+static void ubxParseByte(uint8_t b) {
+    switch (ubxState) {
+        case 0: // waiting for sync1
+            if (b == UBX_SYNC1) ubxState = 1;
+            break;
+        case 1: // waiting for sync2
+            ubxState = (b == UBX_SYNC2) ? 2 : 0;
+            break;
+        case 2: // class
+            ubxClass = b;
+            ubxCkA = b; ubxCkB = ubxCkA;
+            ubxState = 3;
+            break;
+        case 3: // id
+            ubxId = b;
+            ubxCkA += b; ubxCkB += ubxCkA;
+            ubxState = 4;
+            break;
+        case 4: // length low byte
+            ubxPayloadLen = b;
+            ubxCkA += b; ubxCkB += ubxCkA;
+            ubxState = 5;
+            break;
+        case 5: // length high byte
+            ubxPayloadLen |= ((uint16_t)b << 8);
+            ubxCkA += b; ubxCkB += ubxCkA;
+            ubxPayloadIdx = 0;
+            ubxState = (ubxPayloadLen > 0) ? 6 : 7;
+            break;
+        case 6: // payload
+            ubxCkA += b; ubxCkB += ubxCkA;
+            if (ubxClass == UBX_NAV_CLASS && ubxId == UBX_NAV_PVT_ID &&
+                ubxPayloadIdx < UBX_NAV_PVT_LEN) {
+                ubxBuf[ubxPayloadIdx] = b;
+            }
+            ubxPayloadIdx++;
+            if (ubxPayloadIdx >= ubxPayloadLen) ubxState = 7;
+            break;
+        case 7: // checksum A
+            if (b == ubxCkA) {
+                ubxState = 8;
+            } else {
+                ubxReset();
+            }
+            break;
+        case 8: // checksum B
+            if (b == ubxCkB && ubxClass == UBX_NAV_CLASS &&
+                ubxId == UBX_NAV_PVT_ID && ubxPayloadLen == UBX_NAV_PVT_LEN) {
+                processPVT();
+            }
+            ubxReset();
+            break;
+        default:
+            ubxReset();
+            break;
+    }
+}
+
+void GPSManager_update() {
+    if (gpsPtr == nullptr) return;
+
+    TwoWire& wire = getAGTWire();
+
+    // Read available byte count (2 bytes from register 0xFD)
+    wire.beginTransmission(UBX_I2C_ADDR);
+    wire.write(0xFD);
+    if (wire.endTransmission(false) != 0) return;
+    uint8_t got = wire.requestFrom((uint8_t)UBX_I2C_ADDR, (uint8_t)2);
+    if (got < 2) return;
+    uint16_t avail = ((uint16_t)wire.read() << 8) | wire.read();
+
+    if (avail == 0 || avail == 0xFFFF) return;
+
+    // Read a small chunk — keeps I2C blocking under ~1ms at 400kHz
+    uint8_t toRead = (avail > UBX_MAX_PER_LOOP) ? UBX_MAX_PER_LOOP : (uint8_t)avail;
+    wire.beginTransmission(UBX_I2C_ADDR);
+    wire.write(0xFF);
+    if (wire.endTransmission(false) != 0) return;
+    got = wire.requestFrom((uint8_t)UBX_I2C_ADDR, toRead);
+    for (uint8_t i = 0; i < got; i++) {
+        ubxParseByte(wire.read());
     }
 }
 
@@ -302,68 +425,46 @@ void GPSManager_wake() {
 
 void GPSManager_printDiagnostics() {
     if (gpsPtr == nullptr) {
-        DebugPrintln(F("GPS: Not initialized"));
+        MAVLinkInterface_sendStatusText(4, "GPS: Not initialized");
         return;
     }
 
-    DebugPrintln(F("=== GPS Diagnostics ==="));
+    static unsigned long lastDiagTime = 0;
+    unsigned long now = millis();
+    if (lastDiagTime != 0 && (now - lastDiagTime) < 10000) return;
+    lastDiagTime = now;
 
-    // NAV-STATUS: receiver's own TTFF, time validity, BBR state
+    char msg[50];
+
     if (gpsPtr->getNAVSTATUS()) {
         auto &s = gpsPtr->packetUBXNAVSTATUS->data;
-        DebugPrint(F("  Receiver TTFF: "));
-        DebugPrint(s.ttff);
-        DebugPrintln(F(" ms"));
-        DebugPrint(F("  Uptime (msss): "));
-        DebugPrint(s.msss);
-        DebugPrintln(F(" ms"));
-        DebugPrint(F("  Fix type: "));
-        DebugPrintln(s.gpsFix);
-        DebugPrint(F("  Week # valid (wknSet): "));
-        DebugPrintln(s.flags.bits.wknSet ? F("YES (BBR RTC intact)") : F("NO (BBR lost)"));
-        DebugPrint(F("  TOW valid (towSet): "));
-        DebugPrintln(s.flags.bits.towSet ? F("YES") : F("NO"));
+        snprintf(msg, sizeof(msg), "GPS: TTFF=%lums up=%lums fix=%u",
+                 s.ttff, s.msss, s.gpsFix);
+        MAVLinkInterface_sendStatusText(6, msg);
+
+        snprintf(msg, sizeof(msg), "GPS: BBR wkn=%s tow=%s",
+                 s.flags.bits.wknSet ? "YES" : "NO",
+                 s.flags.bits.towSet ? "YES" : "NO");
+        MAVLinkInterface_sendStatusText(6, msg);
     } else {
-        DebugPrintln(F("  NAV-STATUS: query failed"));
+        MAVLinkInterface_sendStatusText(4, "GPS: NAV-STATUS query failed");
     }
 
-    // MON-HW: antenna status, noise, jamming
     UBX_MON_HW_data_t hw;
     if (gpsPtr->getHWstatus(&hw)) {
-        DebugPrint(F("  Antenna status: "));
-        switch (hw.aStatus) {
-            case 0: DebugPrintln(F("INIT")); break;
-            case 1: DebugPrintln(F("UNKNOWN")); break;
-            case 2: DebugPrintln(F("OK")); break;
-            case 3: DebugPrintln(F("SHORT")); break;
-            case 4: DebugPrintln(F("OPEN")); break;
-            default: DebugPrintln(hw.aStatus); break;
-        }
-        DebugPrint(F("  Antenna power: "));
-        DebugPrintln(hw.aPower == 1 ? F("ON") : (hw.aPower == 0 ? F("OFF") : F("UNKNOWN")));
-        DebugPrint(F("  Noise/ms: "));
-        DebugPrintln(hw.noisePerMS);
-        DebugPrint(F("  AGC count: "));
-        DebugPrintln(hw.agcCnt);
-        DebugPrint(F("  Jamming: "));
-        DebugPrint(hw.jamInd);
-        DebugPrintln(F("/255"));
+        const char* antNames[] = {"INIT","UNK","OK","SHORT","OPEN"};
+        const char* ant = (hw.aStatus <= 4) ? antNames[hw.aStatus] : "?";
+        snprintf(msg, sizeof(msg), "GPS: ant=%s noise=%u agc=%u jam=%u",
+                 ant, hw.noisePerMS, hw.agcCnt, hw.jamInd);
+        MAVLinkInterface_sendStatusText(6, msg);
     } else {
-        DebugPrintln(F("  MON-HW: query failed"));
+        MAVLinkInterface_sendStatusText(4, "GPS: MON-HW query failed");
     }
 
-    // GLONASS enabled check (BBR config test)
     bool glonassOn = gpsPtr->isGNSSenabled(SFE_UBLOX_GNSS_ID_GLONASS);
-    DebugPrint(F("  GLONASS enabled: "));
-    DebugPrintln(glonassOn ? F("YES (BBR config intact)") : F("NO (BBR config lost)"));
-
-    // Current fix info
-    DebugPrint(F("  Satellites: "));
-    DebugPrintln(currentGPSData.satellites);
-    DebugPrint(F("  HDOP: "));
-    DebugPrintln(currentGPSData.hdop, 1);
-    DebugPrint(F("  Config saved to BBR: "));
-    DebugPrintln(configSavedToBBR ? F("YES") : F("NO"));
-
-    DebugPrintln(F("======================="));
+    snprintf(msg, sizeof(msg), "GPS: GLONASS=%s BBR=%s sats=%u",
+             glonassOn ? "ON" : "OFF",
+             configSavedToBBR ? "YES" : "NO",
+             currentGPSData.satellites);
+    MAVLinkInterface_sendStatusText(6, msg);
 }
