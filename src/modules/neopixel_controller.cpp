@@ -52,7 +52,6 @@ static void ws_show() {
     __disable_irq();
 
     // Hold data line LOW for a full reset period before sending new data.
-    // Without this, LED 1 latches glitches as green from prior GPIO activity.
     am_hal_gpio_output_clear(NEOPIXEL_PIN);
     delayMicroseconds(80);
 
@@ -61,6 +60,16 @@ static void ws_show() {
     //   T1L 450-750 ns  → 20 NOPs + loop overhead ≈ 600 ns
     //   T0H 150-450 ns  → 10 NOPs ≈ 208 ns
     //   T0L 750-1050 ns → 35 NOPs + loop overhead ≈ 910 ns
+
+    // Send one dummy pixel (all zero bits) to absorb first-pixel
+    // signal glitches. The first physical LED latches this as black.
+    for (uint8_t dummy = 0; dummy < (8 * BYTES_PER_LED); dummy++) {
+        am_hal_gpio_output_set(NEOPIXEL_PIN);
+        NOP10;
+        am_hal_gpio_output_clear(NEOPIXEL_PIN);
+        NOP10; NOP10; NOP10; NOP5;
+    }
+
     while (numBytes--) {
         uint8_t b = *ptr++;
         for (uint8_t mask = 0x80; mask; mask >>= 1) {
@@ -282,6 +291,11 @@ void NeoPixelController_update() {
             blinkPattern(RECOVERY_STROBE_PERIOD_MS, RECOVERY_STROBE_ON_MS, true, 0xFFFFFF, true);
             break;
     }
+
+    // LED 0 is sacrificial: the first pixel on the data line picks up
+    // glitches from ADC/GPIO activity. Force it dark so it never
+    // shows a false color to the user.
+    ledBuffer[0] = 0; ledBuffer[1] = 0; ledBuffer[2] = 0; ledBuffer[3] = 0;
 
     ws_show();
 }
