@@ -317,7 +317,7 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         case MAVLINK_MSG_ID_NAMED_VALUE_FLOAT: {
             mavlink_named_value_float_t nv;
             mavlink_msg_named_value_float_decode(msg, &nv);
-            if (strncmp(nv.name, "DORIS_ST", 8) == 0) {
+            if (strncmp(nv.name, "STATE", 5) == 0) {
                 MissionData_update_doris_state((int)nv.value);
             }
             break;

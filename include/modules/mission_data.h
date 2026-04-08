@@ -20,7 +20,7 @@ struct MissionData {
     uint32_t sensor_enabled;        // SYS_STATUS onboard_control_sensors_enabled
     uint32_t sensor_health;         // SYS_STATUS onboard_control_sensors_health
 
-    // Lua mission state from NAMED_VALUE_FLOAT "DORIS_ST"
+    // Lua mission state from NAMED_VALUE_FLOAT "STATE"
     // -1=CONFIG, 0=MISSION_START, 1=DESCENT, 2=ON_BOTTOM, 3=ASCENT, 4=RECOVERY
     int      doris_state;
     unsigned long doris_state_ms;   // millis() when last received
@@ -53,7 +53,7 @@ bool MissionData_hasHadHeartbeat(void);
 void MissionData_setMissionReady(bool ready);
 bool MissionData_isMissionReady(void);
 
-// Lua mission state from NAMED_VALUE_FLOAT "DORIS_ST"
+// Lua mission state from NAMED_VALUE_FLOAT "STATE"
 void MissionData_update_doris_state(int state);
 int  MissionData_getDorisState(void);
 bool MissionData_hasDorisState(void);

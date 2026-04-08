@@ -304,10 +304,12 @@ void updateLEDState() {
         return;
     }
 
-    // Pre-dive: ready when GPS + MAVLink + mission loaded, error if something broke
+    // Pre-dive: ready when GPS + mission loaded, error if something broke
     bool gps   = GPSManager_hasFix();
     bool pi    = MissionData_isPiConnected();
-    bool ready = MissionData_isMissionReady();
+    // Ready via either: explicit MAVLink command, or Lua script past CONFIG (state >= 0)
+    bool ready = MissionData_isMissionReady() ||
+                 (MissionData_hasDorisState() && MissionData_getDorisState() >= 0);
 
     MissionData md;
     MissionData_get(&md);
