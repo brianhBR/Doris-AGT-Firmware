@@ -114,11 +114,8 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
                               &gpsWeek, &gpsTowMs);
         }
 
-        uint16_t ignoreFlags = GPS_INPUT_IGNORE_FLAG_VDOP;
-
-        float vn = gpsData->vel_n_mm / 1000.0f;  // mm/s → m/s
-        float ve = gpsData->vel_e_mm / 1000.0f;
-        float vd = gpsData->vel_d_mm / 1000.0f;
+        uint16_t ignoreFlags = GPS_INPUT_IGNORE_FLAG_VDOP |
+                               GPS_INPUT_IGNORE_FLAG_VEL_VERT;
 
         float horizAcc = gpsData->h_acc_mm / 1000.0f;  // mm → m
         float vertAcc  = gpsData->v_acc_mm / 1000.0f;
@@ -138,10 +135,10 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
             lon,                // lon (1e7)
             gpsData->altitude,  // alt (m, float)
             gpsData->hdop,      // hdop (float)
-            0.0f,               // vdop (ignored via flag)
-            vn,                 // vn (m/s)
-            ve,                 // ve (m/s)
-            vd,                 // vd (m/s)
+            0.0f,               // vdop (ignored)
+            gpsData->speed,     // vn (m/s) — ground speed as proxy
+            0.0f,               // ve
+            0.0f,               // vd (ignored)
             speedAcc,           // speed_accuracy (m/s)
             horizAcc,           // horiz_accuracy (m)
             vertAcc,            // vert_accuracy (m)
