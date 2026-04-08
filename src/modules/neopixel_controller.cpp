@@ -51,9 +51,10 @@ static void ws_show() {
     uint32_t savedPrimask = __get_PRIMASK();
     __disable_irq();
 
-    // Hold data line LOW for a full reset period before sending new data.
+    // Do NOT reset here — an 80μs LOW latch would display any noise
+    // that accumulated on the data line since the last frame.  The
+    // end-of-frame reset (after ws_show) is the only latch we need.
     am_hal_gpio_output_clear(NEOPIXEL_PIN);
-    delayMicroseconds(80);
 
     // SK6812 timing at 48 MHz (1 NOP ≈ 20.8 ns):
     //   T1H 450-750 ns  → 28 NOPs ≈ 583 ns

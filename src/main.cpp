@@ -50,6 +50,8 @@ unsigned long lastMAVLinkUpdate = 0;
 unsigned long lastPSMUpdate = 0;
 unsigned long lastStatusPrint = 0;
 
+bool iridiumTestRequested = false;
+
 void setupPins();
 void loadConfiguration();
 void updateLEDState();
@@ -151,6 +153,43 @@ void loop() {
         MAVLinkInterface_sendHeartbeat();
     }
 
+    // Manual Iridium test: triggered via MAVLink command or serial
+    if (iridiumTestRequested && sysConfig.enableIridium && modemPtr) {
+        iridiumTestRequested = false;
+
+        DebugPrintln(F("==================================="));
+        DebugPrintln(F("  IRIDIUM TEST: Starting"));
+        DebugPrintln(F("==================================="));
+        MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test starting");
+
+        DorisReport report;
+        buildDorisReport(&report);
+
+        uint8_t mtMsgId = 0;
+        DorisConfig mtConfig = {};
+        DorisCommand mtCommand = {};
+
+        if (IridiumManager_sendDorisReport(&report, &mtMsgId, &mtConfig, &mtCommand)) {
+            lastIridiumSend = millis();
+            DebugPrintln(F("==================================="));
+            DebugPrintln(F("  IRIDIUM TEST: PASSED"));
+            DebugPrintln(F("==================================="));
+            MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test PASSED");
+            if (mtMsgId != 0) {
+                handleMTMessage(mtMsgId, &mtConfig, &mtCommand);
+            }
+        } else {
+            lastIridiumSend = millis();
+            DebugPrintln(F("==================================="));
+            DebugPrintln(F("  IRIDIUM TEST: FAILED"));
+            DebugPrintln(F("==================================="));
+            MAVLinkInterface_sendStatusText(3, "IRIDIUM: Test FAILED");
+        }
+
+        delay(2000);
+        GPSManager_reinit();
+    }
+
     if (sysConfig.enableMAVLink &&
         (now - lastMAVLinkUpdate >= sysConfig.mavlinkInterval)) {
         GPSData gpsData = GPSManager_getData();
@@ -185,12 +224,12 @@ void loop() {
             DorisConfig mtConfig = {};
             DorisCommand mtCommand = {};
 
-            if (IridiumManager_sendDorisReport(&report, &mtMsgId, &mtConfig, &mtCommand)) {
-                lastIridiumSend = millis();
-                if (mtMsgId != 0) {
-                    handleMTMessage(mtMsgId, &mtConfig, &mtCommand);
-                }
+            bool sent = IridiumManager_sendDorisReport(&report, &mtMsgId, &mtConfig, &mtCommand);
+            lastIridiumSend = millis();
+            if (sent && mtMsgId != 0) {
+                handleMTMessage(mtMsgId, &mtConfig, &mtCommand);
             }
+
             DebugPrintln(F("GPS: Re-initializing after Iridium send..."));
             delay(2000);
             GPSManager_reinit();
@@ -393,6 +432,7 @@ void processCommand(const String& cmd) {
         DebugPrintln(F("gps_diag          GPS BBR/backup battery diagnostics"));
         DebugPrintln(F("release_now       Trigger release relay (failsafe)"));
         DebugPrintln(F("reset             Back to PRE_DIVE"));
+        DebugPrintln(F("iridium_test      Send Iridium test message"));
         DebugPrintln(F("set_leak <0|1>    Set leak flag for testing"));
         DebugPrintln(F("config / save / set_* / enable_* / disable_*"));
         DebugPrintln(F("mesh_test / mesh_test_gps / mesh_send <text>"));
@@ -420,6 +460,11 @@ void processCommand(const String& cmd) {
     }
     if (cmd == "release_now") {
         StateMachine_triggerFailsafe(FAILSAFE_MANUAL);
+        return;
+    }
+    if (cmd == "iridium_test") {
+        iridiumTestRequested = true;
+        DebugPrintln(F("Iridium test queued"));
         return;
     }
     if (cmd == "reset") {

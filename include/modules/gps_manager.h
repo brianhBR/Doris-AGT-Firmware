@@ -13,6 +13,13 @@ struct GPSData {
     uint8_t satellites;
     uint8_t fixType;
     float hdop;
+    uint32_t h_acc_mm;      // Horizontal accuracy estimate (mm) from u-blox hAcc
+    uint32_t v_acc_mm;      // Vertical accuracy estimate (mm) from u-blox vAcc
+    uint32_t s_acc_mm;      // Speed accuracy estimate (mm/s) from u-blox sAcc
+    int32_t alt_ellipsoid;  // Height above ellipsoid (mm) from u-blox height
+    int32_t vel_n_mm;       // North velocity (mm/s) from u-blox velN
+    int32_t vel_e_mm;       // East velocity (mm/s) from u-blox velE
+    int32_t vel_d_mm;       // Down velocity (mm/s) from u-blox velD
     uint16_t year;
     uint8_t month;
     uint8_t day;

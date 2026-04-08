@@ -218,10 +218,17 @@ static void processPVT() {
     currentGPSData.satellites = ubxBuf[23];
     currentGPSData.longitude = ubxI32(24) / 10000000.0;
     currentGPSData.latitude  = ubxI32(28) / 10000000.0;
-    currentGPSData.altitude  = ubxI32(36) / 1000.0;   // hMSL
-    currentGPSData.speed     = ubxI32(60) / 1000.0;   // gSpeed mm/s → m/s
-    currentGPSData.course    = ubxI32(64) / 100000.0;  // headMot
-    currentGPSData.hdop      = ubxU16(76) / 100.0;    // pDOP as proxy
+    currentGPSData.altitude      = ubxI32(36) / 1000.0;   // hMSL
+    currentGPSData.alt_ellipsoid = ubxI32(32);             // height above ellipsoid (mm)
+    currentGPSData.h_acc_mm      = ubxU32(40);             // hAcc (mm)
+    currentGPSData.v_acc_mm      = ubxU32(44);             // vAcc (mm)
+    currentGPSData.vel_n_mm      = ubxI32(48);             // velN (mm/s)
+    currentGPSData.vel_e_mm      = ubxI32(52);             // velE (mm/s)
+    currentGPSData.vel_d_mm      = ubxI32(56);             // velD (mm/s)
+    currentGPSData.speed         = ubxI32(60) / 1000.0;   // gSpeed mm/s → m/s
+    currentGPSData.course        = ubxI32(64) / 100000.0;  // headMot
+    currentGPSData.s_acc_mm      = ubxU32(68);             // sAcc (mm/s)
+    currentGPSData.hdop          = ubxU16(76) / 100.0;    // pDOP as proxy
 
     unsigned long now = millis();
 

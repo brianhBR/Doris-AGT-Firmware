@@ -68,7 +68,7 @@
 #define GPS_FIX_TIMEOUT_MS         180000  // 3 minutes
 #define IRIDIUM_SEND_INTERVAL_MS   600000  // 10 minutes
 #define MESHTASTIC_UPDATE_MS       10000   // 10 seconds (Meshtastic mesh relay, low rate OK)
-#define MAVLINK_UPDATE_MS          1000    // 1 Hz
+#define MAVLINK_UPDATE_MS          200     // 5 Hz
 #define PSM_UPDATE_MS              5000    // 5 seconds
 
 
@@ -92,6 +92,7 @@
 #define MAVLINK_CMD_LED_CONTROL    31010  // MAV_CMD_USER_1
 #define MAVLINK_CMD_MISSION_STATUS 31011  // MAV_CMD_USER_2
 #define MAVLINK_CMD_GPS_DIAG       31012  // MAV_CMD_USER_3
+#define MAVLINK_CMD_IRIDIUM_TEST   31013  // MAV_CMD_USER_4
 
 // ============================================================================
 // BATTERY MONITORING & FAILSAFE
@@ -132,7 +133,7 @@
 // ============================================================================
 // GPS CONFIGURATION
 // ============================================================================
-#define GPS_UPDATE_RATE_HZ       1
+#define GPS_UPDATE_RATE_HZ       6
 #define GPS_MIN_SATS             4
 #define GPS_DYNAMIC_MODEL        DYN_MODEL_PORTABLE  // or SEA, AIRBORNE1g, etc.
 
@@ -187,7 +188,7 @@ struct SystemConfig {
 // Default configuration
 #define DEFAULT_IRIDIUM_INTERVAL     600000
 #define DEFAULT_MESHTASTIC_INTERVAL  10000
-#define DEFAULT_MAVLINK_INTERVAL     1000
+#define DEFAULT_MAVLINK_INTERVAL     200
 #define DEFAULT_POWER_SAVE_VOLTAGE   11.5
 
 #endif // CONFIG_H

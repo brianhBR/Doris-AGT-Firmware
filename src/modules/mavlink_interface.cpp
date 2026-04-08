@@ -4,6 +4,8 @@
 #include "config.h"
 #include <Arduino.h>
 
+extern bool iridiumTestRequested;
+
 // Platform glue for MAVLink (maps MAVLink UART helpers to our Serial)
 #include "mavlink_platform.h"
 
@@ -62,12 +64,18 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
     int32_t lat = (int32_t)(gpsData->latitude * 1e7);
     int32_t lon = (int32_t)(gpsData->longitude * 1e7);
     int32_t alt = (int32_t)(gpsData->altitude * 1000);  // mm
-    uint16_t eph = (uint16_t)(gpsData->hdop * 100);     // cm
+    uint16_t eph = (uint16_t)(gpsData->hdop * 100);     // pDOP * 100
+    uint16_t epv = eph;                                  // pDOP as conservative proxy for VDOP
     uint16_t vel = (uint16_t)(gpsData->speed * 100);    // cm/s
     uint16_t cog = (uint16_t)(gpsData->course * 100);   // cdeg
-    uint8_t fixType = gpsData->fixType;
     uint8_t satsVisible = gpsData->satellites;
     uint64_t timeUsec = millis() * 1000ULL;
+
+    // Map u-blox fixType for ArduPilot: 0=NO_GPS means "not connected" in
+    // ArduPilot, but u-blox 0 just means "no fix yet." Use 1 (NO_FIX) instead
+    // so the GPS driver stays alive.
+    uint8_t fixType = gpsData->fixType;
+    if (fixType == 0) fixType = 1;
 
     // GPS_RAW_INT always sent so autopilot sees sensor status + sat count
     mavlink_msg_gps_raw_int_pack(
@@ -80,17 +88,24 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
         lon,
         alt,
         eph,
-        65535,  // epv unknown
+        epv,
         vel,
         cog,
         satsVisible,
-        0, 0, 0, 0, 0, 0
+        gpsData->alt_ellipsoid,     // alt_ellipsoid (mm)
+        gpsData->h_acc_mm,          // h_acc (mm)
+        gpsData->v_acc_mm,          // v_acc (mm)
+        gpsData->s_acc_mm,          // vel_acc (mm/s)
+        0,                          // hdg_acc
+        0                           // yaw
     );
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     MAVLINK_SERIAL.write(buf, len);
 
-    // GPS_INPUT only with valid fix — feeds ArduSub EKF (GPS_TYPE=14)
-    if (gpsData->valid) {
+    // GPS_INPUT always sent so AP_GPS_MAV driver stays healthy (avoids
+    // 4-second timeout that triggers "GPS1 not healthy").  ArduPilot uses
+    // fixType to decide whether the position is usable.
+    {
         uint16_t gpsWeek = 0;
         uint32_t gpsTowMs = 0;
         if (gpsData->year >= 1980) {
@@ -99,11 +114,15 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
                               &gpsWeek, &gpsTowMs);
         }
 
-        uint16_t ignoreFlags = GPS_INPUT_IGNORE_FLAG_VDOP |
-                               GPS_INPUT_IGNORE_FLAG_VEL_VERT |
-                               GPS_INPUT_IGNORE_FLAG_SPEED_ACCURACY |
-                               GPS_INPUT_IGNORE_FLAG_HORIZONTAL_ACCURACY |
-                               GPS_INPUT_IGNORE_FLAG_VERTICAL_ACCURACY;
+        uint16_t ignoreFlags = GPS_INPUT_IGNORE_FLAG_VDOP;
+
+        float vn = gpsData->vel_n_mm / 1000.0f;  // mm/s → m/s
+        float ve = gpsData->vel_e_mm / 1000.0f;
+        float vd = gpsData->vel_d_mm / 1000.0f;
+
+        float horizAcc = gpsData->h_acc_mm / 1000.0f;  // mm → m
+        float vertAcc  = gpsData->v_acc_mm / 1000.0f;
+        float speedAcc = gpsData->s_acc_mm / 1000.0f;
 
         mavlink_msg_gps_input_pack(
             systemId,
@@ -119,13 +138,13 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
             lon,                // lon (1e7)
             gpsData->altitude,  // alt (m, float)
             gpsData->hdop,      // hdop (float)
-            65535.0f,           // vdop (ignored)
-            gpsData->speed,     // vn (m/s) — using as total horizontal speed
-            0.0f,               // ve
-            0.0f,               // vd (ignored)
-            0.0f,               // speed_accuracy (ignored)
-            0.0f,               // horiz_accuracy (ignored)
-            0.0f,               // vert_accuracy (ignored)
+            0.0f,               // vdop (ignored via flag)
+            vn,                 // vn (m/s)
+            ve,                 // ve (m/s)
+            vd,                 // vd (m/s)
+            speedAcc,           // speed_accuracy (m/s)
+            horizAcc,           // horiz_accuracy (m)
+            vertAcc,            // vert_accuracy (m)
             satsVisible,        // satellites_visible
             0                   // yaw (cdeg, 0 = not available)
         );
@@ -339,6 +358,17 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
             }
             else if (cmd.command == MAVLINK_CMD_GPS_DIAG) {
                 GPSManager_printDiagnostics();
+
+                mavlink_message_t ack;
+                uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+                mavlink_msg_command_ack_pack(systemId, componentId, &ack,
+                    cmd.command, MAV_RESULT_ACCEPTED, 0, 0,
+                    msg->sysid, msg->compid);
+                uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
+                MAVLINK_SERIAL.write(buf, ackLen);
+            }
+            else if (cmd.command == MAVLINK_CMD_IRIDIUM_TEST) {
+                iridiumTestRequested = true;
 
                 mavlink_message_t ack;
                 uint8_t buf[MAVLINK_MAX_PACKET_LEN];

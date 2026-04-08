@@ -242,17 +242,24 @@ static bool iridiumSendText(const char* message) {
         DebugPrintln(F("/5"));
     }
 
-    DebugPrint(F("Iridium: Sending: "));
-    DebugPrintln(message);
-    err = modemPtr->sendSBDText(message);
+    bool success = false;
+    for (int attempt = 1; attempt <= MAX_IRIDIUM_RETRY; attempt++) {
+        DebugPrint(F("Iridium: Send attempt "));
+        DebugPrint(attempt);
+        DebugPrint(F("/"));
+        DebugPrintln(MAX_IRIDIUM_RETRY);
 
-    bool success = (err == ISBD_SUCCESS);
-    if (success) {
-        DebugPrintln(F("Iridium: >>> Message sent! <<<"));
-        modemPtr->clearBuffers(ISBD_CLEAR_MO);
-    } else {
-        DebugPrint(F("Iridium: Send failed: error "));
+        err = modemPtr->sendSBDText(message);
+        if (err == ISBD_SUCCESS) {
+            DebugPrintln(F("Iridium: >>> Message sent! <<<"));
+            modemPtr->clearBuffers(ISBD_CLEAR_MO);
+            success = true;
+            break;
+        }
+
+        DebugPrint(F("Iridium: Attempt failed, error "));
         DebugPrintln(err);
+        if (attempt < MAX_IRIDIUM_RETRY) delay(3000);
     }
 
     modemPtr->sleep();
@@ -447,10 +454,27 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
     DebugPrintln(F(" bytes)"));
 
     uint8_t rxBuf[270];
-    size_t rxLen = sizeof(rxBuf);
-    err = modemPtr->sendReceiveSBDBinary(txBuf, txLen, rxBuf, rxLen);
+    size_t rxLen = 0;
+    bool sendOk = false;
 
-    bool sendOk = (err == ISBD_SUCCESS);
+    for (int attempt = 1; attempt <= MAX_IRIDIUM_RETRY; attempt++) {
+        DebugPrint(F("Iridium: Send attempt "));
+        DebugPrint(attempt);
+        DebugPrint(F("/"));
+        DebugPrintln(MAX_IRIDIUM_RETRY);
+
+        rxLen = sizeof(rxBuf);
+        err = modemPtr->sendReceiveSBDBinary(txBuf, txLen, rxBuf, rxLen);
+        if (err == ISBD_SUCCESS) {
+            sendOk = true;
+            break;
+        }
+
+        DebugPrint(F("Iridium: Attempt failed, error "));
+        DebugPrintln(err);
+        if (attempt < MAX_IRIDIUM_RETRY) delay(3000);
+    }
+
     if (sendOk) {
         DebugPrintln(F("Iridium: >>> Report sent! <<<"));
         modemPtr->clearBuffers(ISBD_CLEAR_MO);
@@ -462,8 +486,9 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
             parseMTResponse(rxBuf, rxLen, mtMsgId, mtConfig, mtCommand);
         }
     } else {
-        DebugPrint(F("Iridium: Send failed: error "));
-        DebugPrintln(err);
+        DebugPrint(F("Iridium: All "));
+        DebugPrint(MAX_IRIDIUM_RETRY);
+        DebugPrintln(F(" attempts failed"));
     }
 
     modemPtr->sleep();
