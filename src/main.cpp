@@ -192,7 +192,7 @@ void loop() {
         GPSManager_reinit();
     }
 
-    if (sysConfig.enableMAVLink && now > 5000 &&
+    if (sysConfig.enableMAVLink &&
         (now - lastMAVLinkUpdate >= sysConfig.mavlinkInterval)) {
         GPSData gpsData = GPSManager_getData();
         MAVLinkInterface_sendGPS(&gpsData);
