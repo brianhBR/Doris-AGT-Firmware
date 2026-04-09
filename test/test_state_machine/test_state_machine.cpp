@@ -218,9 +218,9 @@ void test_diving_keeps_nonessentials_powered(void) {
 // Iridium transmission rules
 // ---------------------------------------------------------------------------
 
-void test_iridium_allowed_in_pre_dive_and_recovery(void) {
+void test_iridium_allowed_in_recovery_only(void) {
     StateMachine_init();
-    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
+    TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
 
     StateMachine_enterDiving();
     TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
@@ -317,7 +317,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_diving_keeps_nonessentials_powered);
 
     // Transmission rules
-    RUN_TEST(test_iridium_allowed_in_pre_dive_and_recovery);
+    RUN_TEST(test_iridium_allowed_in_recovery_only);
 
     // State tracking
     RUN_TEST(test_previous_state_tracked);

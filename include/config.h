@@ -93,6 +93,7 @@
 #define MAVLINK_CMD_MISSION_STATUS 31011  // MAV_CMD_USER_2
 #define MAVLINK_CMD_GPS_DIAG       31012  // MAV_CMD_USER_3
 #define MAVLINK_CMD_IRIDIUM_TEST   31013  // MAV_CMD_USER_4
+#define MAVLINK_CMD_REBOOT         31014  // MAV_CMD_USER_5
 
 // ============================================================================
 // BATTERY MONITORING & FAILSAFE

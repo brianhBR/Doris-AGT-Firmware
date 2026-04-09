@@ -121,6 +121,8 @@ void setup() {
     }
 
 
+    lastIridiumSend = millis();
+
     DebugPrintln(F("Setup complete. State: PRE_DIVE (ready)"));
     DebugPrintln(F("Type 'help' for commands."));
 }
@@ -190,7 +192,7 @@ void loop() {
         GPSManager_reinit();
     }
 
-    if (sysConfig.enableMAVLink &&
+    if (sysConfig.enableMAVLink && now > 5000 &&
         (now - lastMAVLinkUpdate >= sysConfig.mavlinkInterval)) {
         GPSData gpsData = GPSManager_getData();
         MAVLinkInterface_sendGPS(&gpsData);
@@ -435,6 +437,7 @@ void processCommand(const String& cmd) {
         DebugPrintln(F("release_now       Trigger release relay (failsafe)"));
         DebugPrintln(F("reset             Back to PRE_DIVE"));
         DebugPrintln(F("iridium_test      Send Iridium test message"));
+        DebugPrintln(F("reboot            Software reboot"));
         DebugPrintln(F("set_leak <0|1>    Set leak flag for testing"));
         DebugPrintln(F("config / save / set_* / enable_* / disable_*"));
         DebugPrintln(F("mesh_test / mesh_test_gps / mesh_send <text>"));
@@ -468,6 +471,12 @@ void processCommand(const String& cmd) {
         iridiumTestRequested = true;
         DebugPrintln(F("Iridium test queued"));
         return;
+    }
+    if (cmd == "reboot") {
+        DebugPrintln(F("Rebooting..."));
+        Serial.flush();
+        delay(100);
+        NVIC_SystemReset();
     }
     if (cmd == "reset") {
         StateMachine_reset();

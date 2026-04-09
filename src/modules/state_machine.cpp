@@ -74,7 +74,7 @@ void StateMachine_triggerFailsafe(FailsafeSource source) {
 }
 
 bool StateMachine_canTransmitIridium() {
-    return status.currentState == STATE_PRE_DIVE || status.currentState == STATE_RECOVERY;
+    return status.currentState == STATE_RECOVERY;
 }
 
 bool StateMachine_shouldShutdownNonessentials() {

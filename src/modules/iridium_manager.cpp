@@ -12,6 +12,31 @@ static bool modemReady = false;
 #define INITIAL_CHARGE_DELAY_MS     2000
 #define VBAT_LOW                    2.8
 
+// ============================================================================
+// Apollo3 Serial1 workarounds (SparkFun Arduino_Apollo3 issue #423)
+// The RX pin must be disabled when the modem is off to prevent a
+// power-on glitch that can hang the core.  beginSerialPort re-enables
+// the pins with a weak pull-up on RX before each modem session.
+// ============================================================================
+void IridiumSBD::beginSerialPort()
+{
+    am_hal_gpio_pincfg_t pinConfigTx = g_AM_BSP_GPIO_COM_UART_TX;
+    pinConfigTx.uFuncSel = AM_HAL_PIN_24_UART1TX;
+    pin_config(D24, pinConfigTx);
+
+    am_hal_gpio_pincfg_t pinConfigRx = g_AM_BSP_GPIO_COM_UART_RX;
+    pinConfigRx.uFuncSel = AM_HAL_PIN_25_UART1RX;
+    pinConfigRx.ePullup = AM_HAL_GPIO_PIN_PULLUP_WEAK;
+    pin_config(D25, pinConfigRx);
+
+    Serial1.begin(19200);
+}
+
+void IridiumSBD::endSerialPort()
+{
+    am_hal_gpio_pinconfig(PinName(D25), g_AM_HAL_GPIO_DISABLE);
+}
+
 bool ISBDCallback() {
     if ((millis() / 250) % 2 == 1)
         digitalWrite(LED_WHITE, HIGH);
@@ -43,23 +68,37 @@ static void configureGnssEnPin() {
     delay(1);
 }
 
-static void switchToGPS() {
-    DebugPrintln(F("[RF] Switch -> GPS (Iridium OFF first, then GPS ON)"));
-    digitalWrite(IRIDIUM_PWR_EN, LOW);
-    digitalWrite(IRIDIUM_SLEEP, LOW);
-    delay(250);
+static void antennaToGPS() {
+    DebugPrintln(F("[RF] Antenna -> GPS"));
     configureGnssEnPin();
     digitalWrite(GNSS_EN, LOW);
     delay(750);
 }
 
-static void switchToIridium() {
-    DebugPrintln(F("[RF] Switch -> Iridium (GPS OFF first, then Iridium ON)"));
+static void antennaToIridium() {
+    DebugPrintln(F("[RF] Antenna -> Iridium"));
     configureGnssEnPin();
     digitalWrite(GNSS_EN, HIGH);
     delay(250);
-    digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(250);
+}
+
+// ============================================================================
+// MODEM POWER CONTROL
+// SparkFun reference sequence:
+//   Power-on:  charge supercaps -> iridiumPwrEN HIGH -> delay(1s) -> modem.begin()
+//   Power-off: modem.sleep() -> endSerialPort -> iridiumSleep LOW ->
+//              iridiumPwrEN LOW -> superCapChgEN LOW -> Serial1.end()
+// ============================================================================
+static void modemPowerDown() {
+    DebugPrintln(F("Iridium: Powering down modem..."));
+    modemPtr->sleep();
+    modemPtr->endSerialPort();
+    digitalWrite(IRIDIUM_SLEEP, LOW);
+    delay(1);
+    digitalWrite(IRIDIUM_PWR_EN, LOW);
+    delay(1);
+    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    IRIDIUM_SERIAL.end();
 }
 
 // ============================================================================
@@ -115,9 +154,9 @@ void IridiumManager_configure(IridiumSBD* modem) {
     pinMode(SUPERCAP_PGOOD, INPUT);
     pinMode(IRIDIUM_RI, INPUT);
     pinMode(IRIDIUM_NA, INPUT);
-    IRIDIUM_SERIAL.begin(IRIDIUM_BAUD);
     modemPtr->setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
     modemPtr->adjustSendReceiveTimeout(180);
+    modemPtr->endSerialPort();
     modemConfigured = true;
 }
 
@@ -136,14 +175,17 @@ bool IridiumManager_init(IridiumSBD* modem) {
     DebugPrintln(F("Iridium: Initialization starting"));
     DebugPrintln(F("================================"));
 
-    switchToIridium();
+    antennaToIridium();
 
     if (!chargeSupercaps()) {
-        switchToGPS();
+        antennaToGPS();
         return false;
     }
 
-    IRIDIUM_SERIAL.begin(IRIDIUM_BAUD);
+    DebugPrintln(F("Iridium: Enabling 9603N power..."));
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(1000);
+
     modemPtr->setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
     modemPtr->adjustSendReceiveTimeout(180);
 
@@ -153,9 +195,8 @@ bool IridiumManager_init(IridiumSBD* modem) {
     if (err != ISBD_SUCCESS) {
         DebugPrint(F("Iridium: Begin failed: error "));
         DebugPrintln(err);
-        modemPtr->sleep();
-        digitalWrite(SUPERCAP_CHG_EN, LOW);
-        switchToGPS();
+        modemPowerDown();
+        antennaToGPS();
         modemReady = false;
         return false;
     }
@@ -164,9 +205,8 @@ bool IridiumManager_init(IridiumSBD* modem) {
     DebugPrintln(F("Iridium: Initialized successfully"));
     DebugPrintln(F("================================"));
 
-    modemPtr->sleep();
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
-    switchToGPS();
+    modemPowerDown();
+    antennaToGPS();
 
     modemReady = true;
     return true;
@@ -215,21 +255,24 @@ static bool iridiumSendText(const char* message) {
         return false;
     }
 
-    switchToIridium();
+    antennaToIridium();
 
     if (!chargeSupercaps()) {
-        switchToGPS();
+        antennaToGPS();
         return false;
     }
 
-    DebugPrintln(F("Iridium: Waking modem..."));
+    DebugPrintln(F("Iridium: Enabling 9603N power..."));
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(1000);
+
+    DebugPrintln(F("Iridium: Starting modem..."));
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
-        DebugPrint(F("Iridium: Wake failed, error="));
+        DebugPrint(F("Iridium: Begin failed, error="));
         DebugPrintln(err);
-        modemPtr->sleep();
-        digitalWrite(SUPERCAP_CHG_EN, LOW);
-        switchToGPS();
+        modemPowerDown();
+        antennaToGPS();
         return false;
     }
     modemReady = true;
@@ -262,9 +305,8 @@ static bool iridiumSendText(const char* message) {
         if (attempt < MAX_IRIDIUM_RETRY) delay(3000);
     }
 
-    modemPtr->sleep();
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
-    switchToGPS();
+    modemPowerDown();
+    antennaToGPS();
 
     return success;
 }
@@ -335,17 +377,19 @@ bool IridiumManager_sendBinary(uint8_t* data, size_t length) {
     float vbat = getBusVoltage();
     if (vbat < VBAT_LOW) return false;
 
-    switchToIridium();
+    antennaToIridium();
     if (!chargeSupercaps()) {
-        switchToGPS();
+        antennaToGPS();
         return false;
     }
 
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(1000);
+
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
-        modemPtr->sleep();
-        digitalWrite(SUPERCAP_CHG_EN, LOW);
-        switchToGPS();
+        modemPowerDown();
+        antennaToGPS();
         return false;
     }
 
@@ -353,9 +397,8 @@ bool IridiumManager_sendBinary(uint8_t* data, size_t length) {
     bool success = (err == ISBD_SUCCESS);
     if (success) modemPtr->clearBuffers(ISBD_CLEAR_MO);
 
-    modemPtr->sleep();
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
-    switchToGPS();
+    modemPowerDown();
+    antennaToGPS();
 
     return success;
 }
@@ -363,17 +406,19 @@ bool IridiumManager_sendBinary(uint8_t* data, size_t length) {
 bool IridiumManager_checkMessages(char* buffer, size_t* bufferSize) {
     if (modemPtr == nullptr || !modemConfigured) return false;
 
-    switchToIridium();
+    antennaToIridium();
     if (!chargeSupercaps()) {
-        switchToGPS();
+        antennaToGPS();
         return false;
     }
 
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(1000);
+
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
-        modemPtr->sleep();
-        digitalWrite(SUPERCAP_CHG_EN, LOW);
-        switchToGPS();
+        modemPowerDown();
+        antennaToGPS();
         return false;
     }
 
@@ -383,9 +428,8 @@ bool IridiumManager_checkMessages(char* buffer, size_t* bufferSize) {
     bool success = (err == ISBD_SUCCESS && rxBufferSize > 0);
     if (success) *bufferSize = rxBufferSize;
 
-    modemPtr->sleep();
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
-    switchToGPS();
+    modemPowerDown();
+    antennaToGPS();
 
     return success;
 }
@@ -423,20 +467,23 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
     size_t txLen = DorisProtocol_serializeReport(report, txBuf, sizeof(txBuf));
     if (txLen == 0) return false;
 
-    switchToIridium();
+    antennaToIridium();
     if (!chargeSupercaps()) {
-        switchToGPS();
+        antennaToGPS();
         return false;
     }
 
-    DebugPrintln(F("Iridium: Waking modem..."));
+    DebugPrintln(F("Iridium: Enabling 9603N power..."));
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(1000);
+
+    DebugPrintln(F("Iridium: Starting modem..."));
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
-        DebugPrint(F("Iridium: Wake failed, error="));
+        DebugPrint(F("Iridium: Begin failed, error="));
         DebugPrintln(err);
-        modemPtr->sleep();
-        digitalWrite(SUPERCAP_CHG_EN, LOW);
-        switchToGPS();
+        modemPowerDown();
+        antennaToGPS();
         return false;
     }
     modemReady = true;
@@ -491,9 +538,8 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
         DebugPrintln(F(" attempts failed"));
     }
 
-    modemPtr->sleep();
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
-    switchToGPS();
+    modemPowerDown();
+    antennaToGPS();
 
     return sendOk;
 }
@@ -503,17 +549,19 @@ bool IridiumManager_checkMT(uint8_t* mtMsgId,
                               DorisCommand* mtCommand) {
     if (modemPtr == nullptr || !modemConfigured) return false;
 
-    switchToIridium();
+    antennaToIridium();
     if (!chargeSupercaps()) {
-        switchToGPS();
+        antennaToGPS();
         return false;
     }
 
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(1000);
+
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
-        modemPtr->sleep();
-        digitalWrite(SUPERCAP_CHG_EN, LOW);
-        switchToGPS();
+        modemPowerDown();
+        antennaToGPS();
         return false;
     }
 
@@ -526,9 +574,8 @@ bool IridiumManager_checkMT(uint8_t* mtMsgId,
         gotMessage = parseMTResponse(rxBuf, rxLen, mtMsgId, mtConfig, mtCommand);
     }
 
-    modemPtr->sleep();
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
-    switchToGPS();
+    modemPowerDown();
+    antennaToGPS();
 
     return gotMessage;
 }
@@ -536,26 +583,27 @@ bool IridiumManager_checkMT(uint8_t* mtMsgId,
 int IridiumManager_getSignalQuality() {
     if (modemPtr == nullptr || !modemConfigured) return -1;
 
-    switchToIridium();
+    antennaToIridium();
     if (!chargeSupercaps()) {
-        switchToGPS();
+        antennaToGPS();
         return -1;
     }
 
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(1000);
+
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
-        modemPtr->sleep();
-        digitalWrite(SUPERCAP_CHG_EN, LOW);
-        switchToGPS();
+        modemPowerDown();
+        antennaToGPS();
         return -1;
     }
 
     int signalQuality;
     err = modemPtr->getSignalQuality(signalQuality);
 
-    modemPtr->sleep();
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
-    switchToGPS();
+    modemPowerDown();
+    antennaToGPS();
 
     return (err == ISBD_SUCCESS) ? signalQuality : -1;
 }
@@ -563,20 +611,16 @@ int IridiumManager_getSignalQuality() {
 void IridiumManager_sleep() {
     if (modemPtr == nullptr) return;
     DebugPrintln(F("Iridium: Powering down..."));
-    modemPtr->sleep();
-    digitalWrite(IRIDIUM_SLEEP, LOW);
-    delay(100);
-    digitalWrite(IRIDIUM_PWR_EN, LOW);
-    delay(100);
-    digitalWrite(SUPERCAP_CHG_EN, LOW);
+    modemPowerDown();
     DebugPrintln(F("Iridium: Power down complete"));
 }
 
 void IridiumManager_wake() {
-    switchToIridium();
+    antennaToIridium();
     digitalWrite(SUPERCAP_CHG_EN, HIGH);
     delay(100);
-    digitalWrite(IRIDIUM_SLEEP, HIGH);
+    digitalWrite(IRIDIUM_PWR_EN, HIGH);
+    delay(1000);
 }
 
 bool IridiumManager_isReady() {

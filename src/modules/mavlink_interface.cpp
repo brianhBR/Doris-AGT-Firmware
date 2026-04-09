@@ -101,6 +101,7 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
     );
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     MAVLINK_SERIAL.write(buf, len);
+    MAVLINK_SERIAL.flush();
 
     // GPS_INPUT always sent so AP_GPS_MAV driver stays healthy (avoids
     // 4-second timeout that triggers "GPS1 not healthy").  ArduPilot uses
@@ -268,11 +269,12 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
 
     mavlink_message_t* msg = (mavlink_message_t*)msgPtr;
 
+    MissionData_update_heartbeat();
+
     switch (msg->msgid) {
         case MAVLINK_MSG_ID_HEARTBEAT: {
             mavlink_heartbeat_t hb;
             mavlink_msg_heartbeat_decode(msg, &hb);
-            MissionData_update_heartbeat();
             MissionData_update_autopilot_state(hb.system_status);
             break;
         }
@@ -374,6 +376,18 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
                     msg->sysid, msg->compid);
                 uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
                 MAVLINK_SERIAL.write(buf, ackLen);
+            }
+            else if (cmd.command == MAVLINK_CMD_REBOOT) {
+                mavlink_message_t ack;
+                uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+                mavlink_msg_command_ack_pack(systemId, componentId, &ack,
+                    cmd.command, MAV_RESULT_ACCEPTED, 0, 0,
+                    msg->sysid, msg->compid);
+                uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
+                MAVLINK_SERIAL.write(buf, ackLen);
+                MAVLINK_SERIAL.flush();
+                delay(100);
+                NVIC_SystemReset();
             }
             break;
         }
