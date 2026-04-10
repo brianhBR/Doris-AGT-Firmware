@@ -16,7 +16,12 @@
 #define NOP8  NOP4; NOP4
 #define NOP10 NOP8; NOP2
 
-static uint8_t ledBuffer[NEOPIXEL_COUNT * BYTES_PER_LED];
+// +1 dummy pixel at the start of the buffer absorbs instruction-cache
+// cold-start glitches when sent through the SAME bit-bang loop as
+// real data.  Pattern functions address pixels 0..(NEOPIXEL_COUNT-1)
+// which map to buffer offsets BYTES_PER_LED..(TOTAL_LEDS*BYTES_PER_LED-1).
+#define TOTAL_LEDS (NEOPIXEL_COUNT + 1)
+static uint8_t ledBuffer[TOTAL_LEDS * BYTES_PER_LED];
 static uint8_t brightness = NEOPIXEL_BRIGHTNESS;
 static unsigned long lastRefresh = 0;
 
@@ -33,7 +38,7 @@ static unsigned long luaLastCmdTime = 0;
 // ============================================================================
 static void ws_setPixelRaw(uint16_t n, uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
     if (n >= NEOPIXEL_COUNT) return;
-    uint16_t offset = n * BYTES_PER_LED;
+    uint16_t offset = (n + 1) * BYTES_PER_LED;  // +1 skips dummy pixel at index 0
     // SK6812 uses GRBW order (same as WS2812B for RGB channels)
     ledBuffer[offset]     = ((uint16_t)g * brightness) >> 8;
     ledBuffer[offset + 1] = ((uint16_t)r * brightness) >> 8;
@@ -45,15 +50,21 @@ static void ws_setPixelRaw(uint16_t n, uint8_t r, uint8_t g, uint8_t b, uint8_t 
 }
 
 static void ws_show() {
+    // Dummy pixel (bytes 0..3) is always zero and never written by
+    // pattern code.  Sending it through the SAME while-loop as real
+    // data means the instruction cache is fully warm by the time pixel
+    // 0's data (bytes 4..7) is clocked out.  This eliminates the
+    // cache cold-start timing stretch that made the first LED latch a
+    // spurious green bit.
+    ledBuffer[0] = 0; ledBuffer[1] = 0;
+    ledBuffer[2] = 0; ledBuffer[3] = 0;
+
     uint8_t* ptr = ledBuffer;
-    uint16_t numBytes = NEOPIXEL_COUNT * BYTES_PER_LED;
+    uint16_t numBytes = TOTAL_LEDS * BYTES_PER_LED;
 
     uint32_t savedPrimask = __get_PRIMASK();
     __disable_irq();
 
-    // Do NOT reset here — an 80μs LOW latch would display any noise
-    // that accumulated on the data line since the last frame.  The
-    // end-of-frame reset (after ws_show) is the only latch we need.
     am_hal_gpio_output_clear(NEOPIXEL_PIN);
 
     // SK6812 timing at 48 MHz (1 NOP ≈ 20.8 ns):
@@ -61,15 +72,6 @@ static void ws_show() {
     //   T1L 450-750 ns  → 20 NOPs + loop overhead ≈ 600 ns
     //   T0H 150-450 ns  → 10 NOPs ≈ 208 ns
     //   T0L 750-1050 ns → 35 NOPs + loop overhead ≈ 910 ns
-
-    // Send one dummy pixel (all zero bits) to absorb first-pixel
-    // signal glitches. The first physical LED latches this as black.
-    for (uint8_t dummy = 0; dummy < (8 * BYTES_PER_LED); dummy++) {
-        am_hal_gpio_output_set(NEOPIXEL_PIN);
-        NOP10;
-        am_hal_gpio_output_clear(NEOPIXEL_PIN);
-        NOP10; NOP10; NOP10; NOP5;
-    }
 
     while (numBytes--) {
         uint8_t b = *ptr++;
@@ -176,7 +178,7 @@ static void blinkPattern(uint16_t periodMs, uint16_t onMs, bool useWhiteLED = fa
     if (phase < onMs) {
         if (fullBright) {
             for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
-                uint16_t off = i * BYTES_PER_LED;
+                uint16_t off = (i + 1) * BYTES_PER_LED;
                 if (useWhiteLED) {
                     ledBuffer[off] = 0; ledBuffer[off+1] = 0;
                     ledBuffer[off+2] = 0; ledBuffer[off+3] = 255;
@@ -254,12 +256,22 @@ static void updateLuaPattern() {
 // PUBLIC API
 // ============================================================================
 void NeoPixelController_init() {
-    pinMode(NEOPIXEL_PIN, OUTPUT);
-    digitalWrite(NEOPIXEL_PIN, LOW);
+    // Configure GPIO with strong 12mA push-pull drive and no pull-up.
+    // The default 2mA drive can produce soft edges that the first LED
+    // on the chain misreads, causing a phantom green.
+    am_hal_gpio_pincfg_t cfg = {0};
+    cfg.uFuncSel       = 3;  // GPIO
+    cfg.eDriveStrength  = AM_HAL_GPIO_PIN_DRIVESTRENGTH_12MA;
+    cfg.eGPOutcfg       = AM_HAL_GPIO_PIN_OUTCFG_PUSHPULL;
+    cfg.ePullup         = AM_HAL_GPIO_PIN_PULLUP_NONE;
+    cfg.eGPInput        = AM_HAL_GPIO_PIN_INPUT_NONE;
+    am_hal_gpio_pinconfig(NEOPIXEL_PIN, cfg);
+    am_hal_gpio_output_clear(NEOPIXEL_PIN);
+
     memset(ledBuffer, 0, sizeof(ledBuffer));
     ws_show();
     currentMode = LED_MODE_STANDBY;
-    DebugPrintln(F("NeoPixel: SK6805 RGBW custom driver initialized"));
+    DebugPrintln(F("NeoPixel: SK6812 RGBW driver initialized (12mA drive)"));
 }
 
 void NeoPixelController_update() {
@@ -292,11 +304,6 @@ void NeoPixelController_update() {
             blinkPattern(RECOVERY_STROBE_PERIOD_MS, RECOVERY_STROBE_ON_MS, true, 0xFFFFFF, true);
             break;
     }
-
-    // LED 0 is sacrificial: the first pixel on the data line picks up
-    // glitches from ADC/GPIO activity. Force it dark so it never
-    // shows a false color to the user.
-    ledBuffer[0] = 0; ledBuffer[1] = 0; ledBuffer[2] = 0; ledBuffer[3] = 0;
 
     ws_show();
 }
