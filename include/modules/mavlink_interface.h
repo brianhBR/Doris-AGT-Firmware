@@ -7,7 +7,7 @@
 void MAVLinkInterface_init();
 
 // Send GPS position to autopilot
-void MAVLinkInterface_sendGPS(GPSData* gpsData);
+void MAVLinkInterface_sendGPS(GPSData* gpsData, uint64_t rtcTimeUsec);
 
 // Send heartbeat
 void MAVLinkInterface_sendHeartbeat();

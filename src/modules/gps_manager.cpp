@@ -18,6 +18,7 @@ static unsigned long lastFixAttempt = 0;
 static unsigned long powerOnTime = 0;   // Track when GPS was powered on for TTFF
 static bool ttffLogged = false;         // Only log TTFF once per power cycle
 static bool configSavedToBBR = false;   // Track whether we've saved config to BBR
+static bool pvtReceived = false;        // True after first UBX-NAV-PVT parsed
 
 // Toggle SCL manually to free a stuck I2C bus (SDA held low by slave).
 static void i2cBusRecovery() {
@@ -82,6 +83,12 @@ static bool initI2CAndGPS(bool fullConfig) {
             gpsPtr->enableGNSS(true, SFE_UBLOX_GNSS_ID_GPS);
             gpsPtr->enableGNSS(true, SFE_UBLOX_GNSS_ID_GLONASS);
 
+            // Enable NAV-PVT output BEFORE saving so it's included in BBR.
+            // enableGNSS() triggers a delayed receiver restart on the M8;
+            // if setAutoPVT runs after saveConfiguration, the NAV-PVT
+            // output rate is RAM-only and lost when the restart occurs.
+            gpsPtr->setAutoPVT(true);
+
             if (gpsPtr->saveConfiguration()) {
                 configSavedToBBR = true;
                 DebugPrintln(F("GPS: Config saved to BBR (warm starts enabled)"));
@@ -96,7 +103,9 @@ static bool initI2CAndGPS(bool fullConfig) {
         DebugPrintln(F("GPS: Light reinit (BBR config retained)"));
     }
 
-    // autoPVT is a library-side flag, must be set every time
+    // Re-enable in RAM for BBR-retained and light-init paths (BBR
+    // already has it from the first-boot save above, but the library's
+    // internal flag still needs to be set each session).
     gpsPtr->setAutoPVT(true);
 
     powerOnTime = millis();
@@ -187,6 +196,9 @@ static uint8_t  ubxClass = 0;
 static uint8_t  ubxId = 0;
 static uint8_t  ubxCkA = 0, ubxCkB = 0;
 
+// Forward-declared for processPVT() — defined near GPSManager_update()
+static unsigned long lastPVTTime = 0;
+
 static void ubxReset() {
     ubxState = 0;
     ubxPayloadIdx = 0;
@@ -207,6 +219,8 @@ static uint16_t ubxU16(uint16_t off) {
 }
 
 static void processPVT() {
+    pvtReceived = true;
+    lastPVTTime = millis();
     // UBX-NAV-PVT payload offsets (u-blox M8 protocol spec)
     currentGPSData.year      = ubxU16(4);
     currentGPSData.month     = ubxBuf[6];
@@ -337,26 +351,76 @@ static void ubxParseByte(uint8_t b) {
     }
 }
 
+static uint8_t i2cFailCount = 0;
+static uint8_t dataReadFailCount = 0;
+static bool    watchdogFired = false;
+
+#define PVT_WATCHDOG_MS      5000
+#define I2C_FAIL_RECOVERY    10
+#define UBX_READ_CHUNK       32     // bytes per loop (up from 16)
+
+static void gpsFullReinit() {
+    MAVLinkInterface_sendStatusText(4, "GPS: PVT watchdog reinit");
+    ubxReset();
+    i2cBusRecovery();
+
+    TwoWire& wire = getAGTWire();
+    wire.begin();
+    delay(50);
+    wire.setClock(100000);
+
+    if (gpsPtr->begin(wire)) {
+        gpsPtr->setAutoPVT(true);
+    }
+    lastPVTTime = millis();
+    watchdogFired = true;
+}
+
 void GPSManager_update() {
     if (gpsPtr == nullptr) return;
+
+    unsigned long now = millis();
+
+    // PVT watchdog: runs UNCONDITIONALLY regardless of I2C state.
+    // If no PVT has been parsed in PVT_WATCHDOG_MS, the GPS I2C
+    // pipeline is broken — do a full re-init (bus recovery + begin +
+    // setAutoPVT) to restart it.
+    if (lastPVTTime > 0 && (now - lastPVTTime) > PVT_WATCHDOG_MS) {
+        gpsFullReinit();
+        return;
+    }
 
     TwoWire& wire = getAGTWire();
 
     // Read available byte count (2 bytes from register 0xFD)
     wire.beginTransmission(UBX_I2C_ADDR);
     wire.write(0xFD);
-    if (wire.endTransmission(false) != 0) return;
+    if (wire.endTransmission(false) != 0) {
+        if (++i2cFailCount >= I2C_FAIL_RECOVERY) {
+            i2cFailCount = 0;
+            i2cBusRecovery();
+            wire.begin();
+            delay(10);
+            wire.setClock(100000);
+        }
+        return;
+    }
+    i2cFailCount = 0;
+
     uint8_t got = wire.requestFrom((uint8_t)UBX_I2C_ADDR, (uint8_t)2);
     if (got < 2) return;
     uint16_t avail = ((uint16_t)wire.read() << 8) | wire.read();
-
     if (avail == 0 || avail == 0xFFFF) return;
 
-    // Read a small chunk — keeps I2C blocking under ~1ms at 400kHz
-    uint8_t toRead = (avail > UBX_MAX_PER_LOOP) ? UBX_MAX_PER_LOOP : (uint8_t)avail;
+    uint8_t toRead = (avail > UBX_READ_CHUNK) ? UBX_READ_CHUNK : (uint8_t)avail;
     wire.beginTransmission(UBX_I2C_ADDR);
     wire.write(0xFF);
-    if (wire.endTransmission(false) != 0) return;
+    if (wire.endTransmission(false) != 0) {
+        dataReadFailCount++;
+        return;
+    }
+    dataReadFailCount = 0;
+
     got = wire.requestFrom((uint8_t)UBX_I2C_ADDR, toRead);
     for (uint8_t i = 0; i < got; i++) {
         ubxParseByte(wire.read());
@@ -369,6 +433,10 @@ bool GPSManager_hasFix() {
 
 GPSData GPSManager_getData() {
     return currentGPSData;
+}
+
+bool GPSManager_hasPVT() {
+    return pvtReceived;
 }
 
 void GPSManager_getDataString(char* buffer, size_t bufferSize) {

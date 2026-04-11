@@ -194,9 +194,9 @@ void loop() {
 
     if (sysConfig.enableMAVLink &&
         (now - lastMAVLinkUpdate >= sysConfig.mavlinkInterval)) {
-        GPSData gpsData = GPSManager_getData();
-        MAVLinkInterface_sendGPS(&gpsData);
         uint64_t rtcUsec = getRTCUnixUsec();
+        GPSData gpsData = GPSManager_getData();
+        MAVLinkInterface_sendGPS(&gpsData, rtcUsec);
         if (rtcUsec != 0) {
             MAVLinkInterface_sendSystemTime(rtcUsec);
         }
@@ -306,12 +306,18 @@ void updateLEDState() {
         return;
     }
 
-    // Pre-dive: ready when GPS + mission loaded, error if something broke
-    bool gps   = GPSManager_hasFix();
-    bool pi    = MissionData_isPiConnected();
-    // Ready via either: explicit MAVLink command, or Lua script past CONFIG (state >= 0)
-    bool ready = MissionData_isMissionReady() ||
-                 (MissionData_hasDorisState() && MissionData_getDorisState() >= 0);
+    int dorisState = MissionData_getDorisState();
+
+    // MISSION_START (0+): Lua passed pre-arm checks and armed.
+    // Stay green until the Lua script reports DESCENT and we enter DIVING.
+    if (MissionData_hasDorisState() && dorisState >= 0) {
+        NeoPixelController_setMode(LED_MODE_READY);
+        return;
+    }
+
+    // CONFIG (-1) or no Lua state yet: show pre-arm status
+    bool gps = GPSManager_hasFix();
+    bool pi  = MissionData_isPiConnected();
 
     MissionData md;
     MissionData_get(&md);
@@ -324,7 +330,7 @@ void updateLEDState() {
 
     if (failsafe) {
         NeoPixelController_setMode(LED_MODE_ERROR);
-    } else if (ready && gps) {
+    } else if (pi && gps) {
         NeoPixelController_setMode(LED_MODE_READY);
     } else {
         NeoPixelController_setMode(LED_MODE_STANDBY);

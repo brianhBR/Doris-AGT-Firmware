@@ -55,7 +55,7 @@ static void calendarToGPSTime(uint16_t year, uint8_t month, uint8_t day,
                  (uint32_t)minute * 60UL + second) * 1000UL;
 }
 
-void MAVLinkInterface_sendGPS(GPSData* gpsData) {
+void MAVLinkInterface_sendGPS(GPSData* gpsData, uint64_t rtcTimeUsec) {
     if (!initialized || !MAVLINK_SERIAL) return;
 
     mavlink_message_t msg;
@@ -69,7 +69,20 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
     uint16_t vel = (uint16_t)(gpsData->speed * 100);    // cm/s
     uint16_t cog = (uint16_t)(gpsData->course * 100);   // cdeg
     uint8_t satsVisible = gpsData->satellites;
-    uint64_t timeUsec = millis() * 1000ULL;
+
+    // Use RTC-based Unix time if available, fall back to boot time
+    uint64_t timeUsec = (rtcTimeUsec != 0) ? rtcTimeUsec : (millis() * 1000ULL);
+
+    // Clamp accuracy fields: u-blox returns 0xFFFFFFFF when no fix,
+    // which overflows to absurd values. Cap at 9999m (9,999,000 mm).
+    const uint32_t ACC_MAX_MM = 9999000UL;
+    uint32_t h_acc = (gpsData->h_acc_mm > ACC_MAX_MM) ? ACC_MAX_MM : gpsData->h_acc_mm;
+    uint32_t v_acc = (gpsData->v_acc_mm > ACC_MAX_MM) ? ACC_MAX_MM : gpsData->v_acc_mm;
+    uint32_t s_acc = (gpsData->s_acc_mm > ACC_MAX_MM) ? ACC_MAX_MM : gpsData->s_acc_mm;
+
+    // eph/epv: cap at UINT16_MAX (65535 = "unknown" in MAVLink)
+    if (eph > 9999) eph = UINT16_MAX;
+    if (epv > 9999) epv = UINT16_MAX;
 
     // Map u-blox fixType for ArduPilot: 0=NO_GPS means "not connected" in
     // ArduPilot, but u-blox 0 just means "no fix yet." Use 1 (NO_FIX) instead
@@ -93,15 +106,14 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
         cog,
         satsVisible,
         gpsData->alt_ellipsoid,     // alt_ellipsoid (mm)
-        gpsData->h_acc_mm,          // h_acc (mm)
-        gpsData->v_acc_mm,          // v_acc (mm)
-        gpsData->s_acc_mm,          // vel_acc (mm/s)
+        h_acc,                      // h_acc (mm), clamped
+        v_acc,                      // v_acc (mm), clamped
+        s_acc,                      // vel_acc (mm/s), clamped
         0,                          // hdg_acc
         0                           // yaw
     );
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     MAVLINK_SERIAL.write(buf, len);
-    MAVLINK_SERIAL.flush();
 
     // GPS_INPUT always sent so AP_GPS_MAV driver stays healthy (avoids
     // 4-second timeout that triggers "GPS1 not healthy").  ArduPilot uses
@@ -118,9 +130,9 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData) {
         uint16_t ignoreFlags = GPS_INPUT_IGNORE_FLAG_VDOP |
                                GPS_INPUT_IGNORE_FLAG_VEL_VERT;
 
-        float horizAcc = gpsData->h_acc_mm / 1000.0f;  // mm → m
-        float vertAcc  = gpsData->v_acc_mm / 1000.0f;
-        float speedAcc = gpsData->s_acc_mm / 1000.0f;
+        float horizAcc = h_acc / 1000.0f;  // mm → m, clamped
+        float vertAcc  = v_acc / 1000.0f;
+        float speedAcc = s_acc / 1000.0f;
 
         mavlink_msg_gps_input_pack(
             systemId,

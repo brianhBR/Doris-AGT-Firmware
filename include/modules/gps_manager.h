@@ -44,6 +44,9 @@ bool GPSManager_hasFix();
 // Get current GPS data
 GPSData GPSManager_getData();
 
+// True once the GPS module has delivered at least one PVT solution
+bool GPSManager_hasPVT();
+
 // Get GPS data as formatted string
 void GPSManager_getDataString(char* buffer, size_t bufferSize);
 
