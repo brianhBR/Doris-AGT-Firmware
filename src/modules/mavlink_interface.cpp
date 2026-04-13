@@ -287,7 +287,7 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         case MAVLINK_MSG_ID_HEARTBEAT: {
             mavlink_heartbeat_t hb;
             mavlink_msg_heartbeat_decode(msg, &hb);
-            MissionData_update_autopilot_state(hb.system_status);
+            MissionData_update_autopilot_state(hb.system_status, hb.base_mode);
             break;
         }
 

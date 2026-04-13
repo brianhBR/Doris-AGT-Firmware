@@ -17,6 +17,7 @@ struct MissionData {
 
     // Autopilot health (from MAVLink HEARTBEAT + SYS_STATUS)
     uint8_t  autopilot_state;       // MAV_STATE from heartbeat (0 = not yet received)
+    bool     armed;                 // MAV_MODE_FLAG_SAFETY_ARMED from heartbeat base_mode
     uint32_t sensor_enabled;        // SYS_STATUS onboard_control_sensors_enabled
     uint32_t sensor_health;         // SYS_STATUS onboard_control_sensors_health
 
@@ -33,8 +34,9 @@ void MissionData_update_heartbeat(void);
 void MissionData_update_voltage(float voltage);
 void MissionData_update_autopilot_voltage(float voltage);
 void MissionData_set_leak(bool leak);
-void MissionData_update_autopilot_state(uint8_t mav_state);
+void MissionData_update_autopilot_state(uint8_t mav_state, uint8_t base_mode);
 void MissionData_update_sensor_health(uint32_t enabled, uint32_t health);
+bool MissionData_isArmed(void);
 void MissionData_get(MissionData* out);
 
 // True if autopilot is in CRITICAL or EMERGENCY state

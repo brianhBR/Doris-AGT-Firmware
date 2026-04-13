@@ -15,6 +15,7 @@ void MissionData_init(void) {
     data.last_heartbeat_ms = 0;
     data.heartbeat_valid = false;
     data.autopilot_state = 0;
+    data.armed = false;
     data.sensor_enabled = 0;
     data.sensor_health = 0;
     data.doris_state = -1;
@@ -50,8 +51,13 @@ void MissionData_set_leak(bool leak) {
     data.leak_detected = leak;
 }
 
-void MissionData_update_autopilot_state(uint8_t mav_state) {
+void MissionData_update_autopilot_state(uint8_t mav_state, uint8_t base_mode) {
     data.autopilot_state = mav_state;
+    data.armed = (base_mode & 0x80) != 0;  // MAV_MODE_FLAG_SAFETY_ARMED = 128
+}
+
+bool MissionData_isArmed(void) {
+    return data.armed;
 }
 
 void MissionData_update_sensor_health(uint32_t enabled, uint32_t health) {

@@ -334,3 +334,13 @@ void NeoPixelController_clear() {
     memset(ledBuffer, 0, sizeof(ledBuffer));
     ws_show();
 }
+
+void NeoPixelController_setSolidWhite() {
+    for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
+        uint16_t off = (i + 1) * BYTES_PER_LED;
+        ledBuffer[off] = 0; ledBuffer[off+1] = 0;
+        ledBuffer[off+2] = 0; ledBuffer[off+3] = 255;
+    }
+    ws_show();
+    currentMode = LED_MODE_RECOVERY;
+}

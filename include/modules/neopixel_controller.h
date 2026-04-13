@@ -45,4 +45,9 @@ bool NeoPixelController_isLuaActive();
 void NeoPixelController_setBrightness(uint8_t brightness);
 void NeoPixelController_clear();
 
+// Set all LEDs to solid full-brightness white and latch immediately.
+// Used before blocking operations (e.g. Iridium send) so the LEDs
+// remain lit while the main loop is frozen.
+void NeoPixelController_setSolidWhite();
+
 #endif // NEOPIXEL_CONTROLLER_H

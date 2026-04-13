@@ -33,7 +33,7 @@
 #include "modules/config_manager.h"
 #include "modules/state_machine.h"
 #include "modules/mission_data.h"
-#include "modules/doris_protocol.h"
+// #include "modules/doris_protocol.h"  // binary protocol — not currently used
 
 #include "mavlink_platform.h"
 #include <common/mavlink.h>
@@ -57,11 +57,8 @@ void loadConfiguration();
 void updateLEDState();
 void processSerialInput();
 void processCommand(const String& cmd);
-void checkFailsafe();
 void checkStateTransitions();
 void set_leak_from_serial(const String& arg);
-void buildDorisReport(DorisReport* report);
-void handleMTMessage(uint8_t msgId, const DorisConfig* config, const DorisCommand* command);
 
 static uint64_t getRTCUnixUsec() {
     myRTC.getTime();
@@ -147,9 +144,6 @@ void loop() {
     }
 
     checkStateTransitions();
-    if (StateMachine_getState() == STATE_DIVING) {
-        checkFailsafe();
-    }
 
     if (sysConfig.enableMAVLink) {
         MAVLinkInterface_sendHeartbeat();
@@ -164,22 +158,20 @@ void loop() {
         DebugPrintln(F("==================================="));
         MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test starting");
 
-        DorisReport report;
-        buildDorisReport(&report);
+        if (sysConfig.enableNeoPixels) {
+            NeoPixelController_setSolidWhite();
+        }
 
-        uint8_t mtMsgId = 0;
-        DorisConfig mtConfig = {};
-        DorisCommand mtCommand = {};
+        GPSData gpsData = GPSManager_getData();
+        MissionData mission;
+        MissionData_get(&mission);
 
-        if (IridiumManager_sendDorisReport(&report, &mtMsgId, &mtConfig, &mtCommand)) {
+        if (IridiumManager_sendMissionReport(&gpsData, &mission)) {
             lastIridiumSend = millis();
             DebugPrintln(F("==================================="));
             DebugPrintln(F("  IRIDIUM TEST: PASSED"));
             DebugPrintln(F("==================================="));
             MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test PASSED");
-            if (mtMsgId != 0) {
-                handleMTMessage(mtMsgId, &mtConfig, &mtCommand);
-            }
         } else {
             lastIridiumSend = millis();
             DebugPrintln(F("==================================="));
@@ -215,22 +207,20 @@ void loop() {
         }
     }
 
-    // Iridium: binary Doris report (allowed in PRE_DIVE and RECOVERY only)
+    // Iridium: text position report (RECOVERY only)
     if (sysConfig.enableIridium && modemPtr && StateMachine_canTransmitIridium() &&
         (now - lastIridiumSend >= sysConfig.iridiumInterval)) {
         if (GPSManager_hasFix()) {
-            DorisReport report;
-            buildDorisReport(&report);
-
-            uint8_t mtMsgId = 0;
-            DorisConfig mtConfig = {};
-            DorisCommand mtCommand = {};
-
-            bool sent = IridiumManager_sendDorisReport(&report, &mtMsgId, &mtConfig, &mtCommand);
-            lastIridiumSend = millis();
-            if (sent && mtMsgId != 0) {
-                handleMTMessage(mtMsgId, &mtConfig, &mtCommand);
+            if (sysConfig.enableNeoPixels) {
+                NeoPixelController_setSolidWhite();
             }
+
+            GPSData gpsData = GPSManager_getData();
+            MissionData mission;
+            MissionData_get(&mission);
+
+            IridiumManager_sendMissionReport(&gpsData, &mission);
+            lastIridiumSend = millis();
 
             DebugPrintln(F("GPS: Re-initializing after Iridium send..."));
             delay(2000);
@@ -306,18 +296,9 @@ void updateLEDState() {
         return;
     }
 
-    int dorisState = MissionData_getDorisState();
-
-    // MISSION_START (0+): Lua passed pre-arm checks and armed.
-    // Stay green until the Lua script reports DESCENT and we enter DIVING.
-    if (MissionData_hasDorisState() && dorisState >= 0) {
-        NeoPixelController_setMode(LED_MODE_READY);
-        return;
-    }
-
-    // CONFIG (-1) or no Lua state yet: show pre-arm status
-    bool gps = GPSManager_hasFix();
-    bool pi  = MissionData_isPiConnected();
+    bool gps   = GPSManager_hasFix();
+    bool pi    = MissionData_isPiConnected();
+    bool armed = MissionData_isArmed();
 
     MissionData md;
     MissionData_get(&md);
@@ -330,7 +311,7 @@ void updateLEDState() {
 
     if (failsafe) {
         NeoPixelController_setMode(LED_MODE_ERROR);
-    } else if (pi && gps) {
+    } else if (armed && gps) {
         NeoPixelController_setMode(LED_MODE_READY);
     } else {
         NeoPixelController_setMode(LED_MODE_STANDBY);
@@ -354,6 +335,7 @@ void checkStateTransitions() {
     // Follow autopilot: RECOVERY
     if (dorisState >= 4 && StateMachine_getState() != STATE_RECOVERY) {
         StateMachine_enterRecovery();
+        lastIridiumSend = 0;
     }
 
     // Independent surface detection: ASCENT + shallow + GPS → RECOVERY
@@ -364,30 +346,8 @@ void checkStateTransitions() {
         bool gpsFix = GPSManager_hasFix();
         if (shallow && gpsFix) {
             StateMachine_enterRecovery();
+            lastIridiumSend = 0;
         }
-    }
-}
-
-void checkFailsafe() {
-    MissionData md;
-    MissionData_get(&md);
-    unsigned long now = millis();
-    unsigned long timeInDive = StateMachine_getTimeInState() * 1000UL;
-
-    if (md.voltage_from_autopilot &&
-        md.battery_voltage > 0 && md.battery_voltage < BATTERY_CRITICAL_VOLTAGE) {
-        StateMachine_triggerFailsafe(FAILSAFE_LOW_VOLTAGE);
-        return;
-    }
-    if (md.leak_detected) {
-        StateMachine_triggerFailsafe(FAILSAFE_LEAK);
-        return;
-    }
-    if (md.heartbeat_valid &&
-        timeInDive > DIVE_HEARTBEAT_GRACE_MS &&
-        (now - md.last_heartbeat_ms) > FAILSAFE_HEARTBEAT_TIMEOUT_MS) {
-        StateMachine_triggerFailsafe(FAILSAFE_NO_HEARTBEAT);
-        return;
     }
 }
 
@@ -470,7 +430,7 @@ void processCommand(const String& cmd) {
         return;
     }
     if (cmd == "release_now") {
-        StateMachine_triggerFailsafe(FAILSAFE_MANUAL);
+        DebugPrintln(F("Release is handled by autopilot"));
         return;
     }
     if (cmd == "iridium_test") {
@@ -515,158 +475,5 @@ void set_leak_from_serial(const String& arg) {
     DebugPrintln(v ? F("SET") : F("CLEAR"));
 }
 
-// ============================================================================
-// DORIS BINARY PROTOCOL HELPERS
-// ============================================================================
 
-static float iridiumGetBusVoltage() {
-    pinMode(BUS_VOLTAGE_MON_EN, OUTPUT);
-    digitalWrite(BUS_VOLTAGE_MON_EN, HIGH);
-    delay(10);
-    int rawValue = analogRead(BUS_VOLTAGE_PIN);
-    float voltage = (rawValue / 16384.0) * 2.0 * 3.0;
-    digitalWrite(BUS_VOLTAGE_MON_EN, LOW);
-    return voltage;
-}
 
-void buildDorisReport(DorisReport* report) {
-    memset(report, 0, sizeof(DorisReport));
-
-    GPSData gps = GPSManager_getData();
-    MissionData mission;
-    MissionData_get(&mission);
-
-    // Map AGT state to Doris protocol state
-    SystemState st = StateMachine_getState();
-    StateMachineStatus smStatus = StateMachine_getStatus();
-    switch (st) {
-        case STATE_PRE_DIVE:  report->mission_state = DORIS_STATE_PRE_DIVE; break;
-        case STATE_DIVING:    report->mission_state = DORIS_STATE_DIVING;   break;
-        case STATE_RECOVERY:  report->mission_state = DORIS_STATE_RECOVERY; break;
-    }
-    if (smStatus.lastFailsafeSource != FAILSAFE_NONE) {
-        report->mission_state = DORIS_STATE_FAILSAFE;
-    }
-
-    // GPS
-    report->gps_fix_type = gps.fixType;
-    report->satellites   = gps.satellites;
-    report->latitude     = (float)gps.latitude;
-    report->longitude    = (float)gps.longitude;
-    report->altitude     = (int16_t)gps.altitude;
-    report->speed        = (uint16_t)(gps.speed * 100.0f);
-    report->course       = (uint16_t)(gps.course * 100.0f);
-    report->hdop         = (uint16_t)(gps.hdop * 100.0f);
-
-    // Mission
-    report->depth        = (uint16_t)(mission.depth_m * 10.0f);
-    report->max_depth    = (uint16_t)(mission.max_depth_m * 10.0f);
-    report->leak_detected = mission.leak_detected ? 1 : 0;
-
-    // Failsafe flags
-    report->failsafe_flags = 0;
-    if (mission.voltage_from_autopilot && mission.battery_voltage > 0) {
-        if (mission.battery_voltage < BATTERY_CRITICAL_VOLTAGE)
-            report->failsafe_flags |= DORIS_FAILSAFE_CRITICAL_VOLTAGE;
-        else if (mission.battery_voltage < BATTERY_LOW_VOLTAGE)
-            report->failsafe_flags |= DORIS_FAILSAFE_LOW_VOLTAGE;
-    }
-    if (mission.leak_detected)
-        report->failsafe_flags |= DORIS_FAILSAFE_LEAK;
-    if (mission.heartbeat_valid &&
-        (millis() - mission.last_heartbeat_ms) > FAILSAFE_HEARTBEAT_TIMEOUT_MS)
-        report->failsafe_flags |= DORIS_FAILSAFE_NO_HEARTBEAT;
-    if (smStatus.lastFailsafeSource == FAILSAFE_MANUAL)
-        report->failsafe_flags |= DORIS_FAILSAFE_MANUAL;
-
-    // Power (battery voltage from MAVLink autopilot, no PSM)
-    report->battery_voltage = (uint16_t)(mission.battery_voltage * 1000.0f);
-    report->battery_current = 0;
-    report->bus_voltage     = (uint16_t)(iridiumGetBusVoltage() * 1000.0f);
-
-    // Time
-    report->uptime_s = (uint32_t)(millis() / 1000UL);
-    uint64_t rtcUsec = getRTCUnixUsec();
-    report->time_unix = (uint32_t)(rtcUsec / 1000000ULL);
-
-    report->reserved = 0;
-}
-
-void handleMTMessage(uint8_t msgId, const DorisConfig* config, const DorisCommand* command) {
-    DebugPrint(F("MT: Received message ID "));
-    DebugPrintln(msgId);
-
-    if (msgId == DORIS_MSG_ID_CONFIG && config != nullptr) {
-        if (config->iridium_interval_s > 0) {
-            uint32_t newInterval = (uint32_t)config->iridium_interval_s * 1000UL;
-            DebugPrint(F("MT: Setting Iridium interval to "));
-            DebugPrint(config->iridium_interval_s);
-            DebugPrintln(F("s"));
-            ConfigManager_setIridiumInterval(newInterval);
-        }
-        if (config->led_mode != DORIS_LED_NO_CHANGE) {
-            DebugPrint(F("MT: LED mode -> "));
-            DebugPrintln(config->led_mode);
-            switch (config->led_mode) {
-                case DORIS_LED_OFF:
-                    sysConfig.enableNeoPixels = false;
-                    break;
-                case DORIS_LED_NORMAL:
-                    sysConfig.enableNeoPixels = true;
-                    break;
-                case DORIS_LED_STROBE:
-                    sysConfig.enableNeoPixels = true;
-                    break;
-                default:
-                    break;
-            }
-        }
-        if (config->neopixel_brightness > 0) {
-            DebugPrint(F("MT: NeoPixel brightness -> "));
-            DebugPrintln(config->neopixel_brightness);
-            NeoPixelController_setBrightness(config->neopixel_brightness);
-        }
-        if (config->power_save_voltage_mv > 0) {
-            float newV = config->power_save_voltage_mv / 1000.0f;
-            DebugPrint(F("MT: Power save voltage -> "));
-            DebugPrintln(newV, 2);
-            ConfigManager_setPowerSaveVoltage(newV);
-        }
-        ConfigManager_save(&sysConfig);
-    }
-
-    if (msgId == DORIS_MSG_ID_COMMAND && command != nullptr) {
-        DebugPrint(F("MT: Command "));
-        DebugPrintln(command->command);
-        switch (command->command) {
-            case DORIS_CMD_SEND_REPORT:
-                DebugPrintln(F("MT: Forcing immediate report on next cycle"));
-                lastIridiumSend = 0;
-                break;
-            case DORIS_CMD_RELEASE:
-                DebugPrintln(F("MT: Remote release triggered!"));
-                StateMachine_triggerFailsafe(FAILSAFE_MANUAL);
-                break;
-            case DORIS_CMD_RESET_STATE:
-                DebugPrintln(F("MT: Resetting state machine"));
-                StateMachine_reset();
-                break;
-            case DORIS_CMD_REBOOT:
-                DebugPrintln(F("MT: Rebooting..."));
-                delay(500);
-                NVIC_SystemReset();
-                break;
-            case DORIS_CMD_ENABLE_IRIDIUM:
-                sysConfig.enableIridium = true;
-                ConfigManager_save(&sysConfig);
-                break;
-            case DORIS_CMD_DISABLE_IRIDIUM:
-                sysConfig.enableIridium = false;
-                ConfigManager_save(&sysConfig);
-                break;
-            default:
-                DebugPrintln(F("MT: Unknown command"));
-                break;
-        }
-    }
-}
