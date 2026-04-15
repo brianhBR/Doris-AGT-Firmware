@@ -302,57 +302,17 @@ void updateLEDState() {
         return;
     }
 
-    // PRE_DIVE LED logic using PREARM named float from Lua with debounce.
-    // White (STANDBY) = no heartbeat, or prearm in progress (GPS acquiring)
-    // Green (READY)   = prearm >= 3 (all checks passed)
-    // Red   (ERROR)   = heartbeat present but prearm == 0 (waiting/failing)
-    static uint8_t lastPreDiveMode = 0xFF;
-    static unsigned long lastPreDiveModeChangeMs = 0;
-    const unsigned long LED_DEBOUNCE_MS = 2000;
-
-    uint8_t desiredMode;
-    int prearm = MissionData_getPrearmStatus();
-
-    if (!MissionData_hasHadHeartbeat()) {
-        desiredMode = LED_MODE_STANDBY;
-    } else if (prearm >= 3) {
-        desiredMode = LED_MODE_READY;
-    } else if (prearm >= 1) {
-        desiredMode = LED_MODE_STANDBY;
+    // PRE_DIVE: Green = armed (ready to deploy), Red = not armed (do not deploy)
+    if (MissionData_isArmed()) {
+        NeoPixelController_setMode(LED_MODE_READY);
     } else {
-        desiredMode = LED_MODE_ERROR;
-    }
-
-    unsigned long now_led = millis();
-    if (desiredMode != lastPreDiveMode) {
-        if (lastPreDiveMode == 0xFF) {
-            lastPreDiveMode = desiredMode;
-            lastPreDiveModeChangeMs = now_led;
-            NeoPixelController_setMode(desiredMode);
-        } else if (now_led - lastPreDiveModeChangeMs >= LED_DEBOUNCE_MS) {
-            lastPreDiveMode = desiredMode;
-            lastPreDiveModeChangeMs = now_led;
-            NeoPixelController_setMode(desiredMode);
-        }
-    } else {
-        lastPreDiveModeChangeMs = now_led;
+        NeoPixelController_setMode(LED_MODE_ERROR);
     }
 }
 
 void checkStateTransitions() {
-    static unsigned long divingEnteredMs = 0;
-    static unsigned long piDisconnectedMs = 0;
-    static SystemState prevState = STATE_PRE_DIVE;
-
     int dorisState = MissionData_getDorisState();
     SystemState currentState = StateMachine_getState();
-
-    // Reset tracking variables when leaving DIVING
-    if (prevState == STATE_DIVING && currentState != STATE_DIVING) {
-        divingEnteredMs = 0;
-        piDisconnectedMs = 0;
-    }
-    prevState = currentState;
 
     // Follow autopilot: CONFIG/MISSION_START → PRE_DIVE
     // But NOT if currently DIVING — a dorisState<=0 during a dive is a
@@ -366,8 +326,6 @@ void checkStateTransitions() {
     if (dorisState >= 1 && dorisState <= 3 &&
         currentState == STATE_PRE_DIVE) {
         StateMachine_enterDiving();
-        divingEnteredMs = millis();
-        piDisconnectedMs = 0;
     }
 
     // Follow autopilot: RECOVERY
@@ -377,7 +335,7 @@ void checkStateTransitions() {
     }
 
     // Independent surface detection: ASCENT + shallow + GPS → RECOVERY
-    if (StateMachine_getState() == STATE_DIVING && dorisState >= 3) {
+    if (currentState == STATE_DIVING && dorisState >= 3) {
         MissionData md;
         MissionData_get(&md);
         bool shallow = md.depth_valid && md.depth_m < RECOVERY_DEPTH_THRESHOLD_M;
@@ -385,29 +343,6 @@ void checkStateTransitions() {
         if (shallow && gpsFix) {
             StateMachine_enterRecovery();
             lastIridiumSend = 0;
-        }
-    }
-
-    // Heartbeat-loss failsafe: independent backup while DIVING.
-    // If the Pi/ArduPilot dies underwater, the AGT triggers the drop weight release.
-    if (StateMachine_getState() == STATE_DIVING) {
-        unsigned long now = millis();
-
-        if (divingEnteredMs == 0) {
-            divingEnteredMs = now;
-        }
-
-        if ((now - divingEnteredMs) < DIVE_HEARTBEAT_GRACE_MS) {
-            // Still within grace period after entering DIVING — skip check
-        } else if (MissionData_isPiConnected()) {
-            piDisconnectedMs = 0;
-        } else {
-            if (piDisconnectedMs == 0) {
-                piDisconnectedMs = now;
-            }
-            if ((now - piDisconnectedMs) >= FAILSAFE_HEARTBEAT_TIMEOUT_MS) {
-                StateMachine_triggerFailsafe(FAILSAFE_NO_HEARTBEAT);
-            }
         }
     }
 }

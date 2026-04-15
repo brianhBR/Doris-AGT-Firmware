@@ -113,14 +113,6 @@ static bool chargeSupercaps() {
     bool pgoodReceived = false;
     while (!pgoodReceived && (millis() - startTime < SUPERCAP_CHARGE_TIMEOUT_MS)) {
         pgoodReceived = (digitalRead(SUPERCAP_PGOOD) == HIGH);
-        float vbat = getBusVoltage();
-        if (vbat < VBAT_LOW) {
-            DebugPrint(F("Iridium: Battery too low ("));
-            DebugPrint(vbat, 2);
-            DebugPrintln(F("V) - aborting"));
-            digitalWrite(SUPERCAP_CHG_EN, LOW);
-            return false;
-        }
         delay(100);
     }
 
@@ -133,12 +125,6 @@ static bool chargeSupercaps() {
     DebugPrintln(F("Iridium: PGOOD, top-up..."));
     unsigned long topupStart = millis();
     while ((millis() - topupStart) < SUPERCAP_TOPUP_MS) {
-        float vbat = getBusVoltage();
-        if (vbat < VBAT_LOW) {
-            DebugPrintln(F("Iridium: Battery low during top-up - aborting"));
-            digitalWrite(SUPERCAP_CHG_EN, LOW);
-            return false;
-        }
         delay(100);
     }
 
@@ -248,12 +234,9 @@ static bool iridiumSendText(const char* message) {
     }
 
     float vbat = getBusVoltage();
-    if (vbat < VBAT_LOW) {
-        DebugPrint(F("Iridium: Battery too low ("));
-        DebugPrint(vbat, 2);
-        DebugPrintln(F("V)"));
-        return false;
-    }
+    DebugPrint(F("Iridium: Bus voltage = "));
+    DebugPrint(vbat, 2);
+    DebugPrintln(F("V"));
 
     antennaToIridium();
 
@@ -374,9 +357,6 @@ bool IridiumManager_sendBinary(uint8_t* data, size_t length) {
     if (modemPtr == nullptr || !modemConfigured) return false;
     if (length > 340) return false;
 
-    float vbat = getBusVoltage();
-    if (vbat < VBAT_LOW) return false;
-
     antennaToIridium();
     if (!chargeSupercaps()) {
         antennaToGPS();
@@ -452,14 +432,6 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
                                      DorisCommand* mtCommand) {
     if (modemPtr == nullptr || !modemConfigured || report == nullptr) {
         DebugPrintln(F("Iridium: Not configured"));
-        return false;
-    }
-
-    float vbat = getBusVoltage();
-    if (vbat < VBAT_LOW) {
-        DebugPrint(F("Iridium: Battery too low ("));
-        DebugPrint(vbat, 2);
-        DebugPrintln(F("V)"));
         return false;
     }
 
