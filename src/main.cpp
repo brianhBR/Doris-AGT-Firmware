@@ -87,7 +87,7 @@ void setup() {
     DebugPrintln(F("==========================================="));
     DebugPrintln(F("  Doris AGT — Safety Monitor & Comms Relay"));
     DebugPrintln(F("==========================================="));
-    myRTC.setTime(0, 0, 0, 0, 1, 1, 2025);
+    myRTC.setTime(0, 0, 0, 0, 1, 1, 2026);
 
     loadConfiguration();
     MissionData_init();
@@ -166,7 +166,13 @@ void loop() {
         MissionData mission;
         MissionData_get(&mission);
 
-        if (IridiumManager_sendMissionReport(&gpsData, &mission)) {
+        char testMsg[160];
+        snprintf(testMsg, sizeof(testMsg),
+            "TEST,LAT:%.6f,LON:%.6f,ALT:%.1f,SAT:%d,FIX:%d",
+            gpsData.latitude, gpsData.longitude, gpsData.altitude,
+            gpsData.satellites, gpsData.fixType);
+
+        if (IridiumManager_sendMessage(testMsg)) {
             lastIridiumSend = millis();
             DebugPrintln(F("==================================="));
             DebugPrintln(F("  IRIDIUM TEST: PASSED"));
@@ -296,25 +302,40 @@ void updateLEDState() {
         return;
     }
 
-    bool gps   = GPSManager_hasFix();
-    bool pi    = MissionData_isPiConnected();
-    bool armed = MissionData_isArmed();
+    // PRE_DIVE LED logic using PREARM named float from Lua with debounce.
+    // White (STANDBY) = no heartbeat, or prearm in progress (GPS acquiring)
+    // Green (READY)   = prearm >= 3 (all checks passed)
+    // Red   (ERROR)   = heartbeat present but prearm == 0 (waiting/failing)
+    static uint8_t lastPreDiveMode = 0xFF;
+    static unsigned long lastPreDiveModeChangeMs = 0;
+    const unsigned long LED_DEBOUNCE_MS = 2000;
 
-    MissionData md;
-    MissionData_get(&md);
-    bool failsafe = md.leak_detected ||
-                    (md.voltage_from_autopilot && md.battery_voltage > 0 &&
-                     md.battery_voltage < BATTERY_LOW_VOLTAGE) ||
-                    (!pi && MissionData_hasHadHeartbeat()) ||
-                    MissionData_isAutopilotFailsafe() ||
-                    MissionData_hasUnhealthySensors();
+    uint8_t desiredMode;
+    int prearm = MissionData_getPrearmStatus();
 
-    if (failsafe) {
-        NeoPixelController_setMode(LED_MODE_ERROR);
-    } else if (armed && gps) {
-        NeoPixelController_setMode(LED_MODE_READY);
+    if (!MissionData_hasHadHeartbeat()) {
+        desiredMode = LED_MODE_STANDBY;
+    } else if (prearm >= 3) {
+        desiredMode = LED_MODE_READY;
+    } else if (prearm >= 1) {
+        desiredMode = LED_MODE_STANDBY;
     } else {
-        NeoPixelController_setMode(LED_MODE_STANDBY);
+        desiredMode = LED_MODE_ERROR;
+    }
+
+    unsigned long now_led = millis();
+    if (desiredMode != lastPreDiveMode) {
+        if (lastPreDiveMode == 0xFF) {
+            lastPreDiveMode = desiredMode;
+            lastPreDiveModeChangeMs = now_led;
+            NeoPixelController_setMode(desiredMode);
+        } else if (now_led - lastPreDiveModeChangeMs >= LED_DEBOUNCE_MS) {
+            lastPreDiveMode = desiredMode;
+            lastPreDiveModeChangeMs = now_led;
+            NeoPixelController_setMode(desiredMode);
+        }
+    } else {
+        lastPreDiveModeChangeMs = now_led;
     }
 }
 

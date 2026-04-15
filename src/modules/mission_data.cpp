@@ -21,6 +21,7 @@ void MissionData_init(void) {
     data.doris_state = -1;
     data.doris_state_ms = 0;
     data.doris_state_valid = false;
+    data.prearm_status = -1;
     missionReady = false;
 }
 
@@ -109,4 +110,12 @@ int MissionData_getDorisState(void) {
 
 bool MissionData_hasDorisState(void) {
     return data.doris_state_valid;
+}
+
+void MissionData_update_prearm_status(int status) {
+    data.prearm_status = status;
+}
+
+int MissionData_getPrearmStatus(void) {
+    return data.prearm_status;
 }

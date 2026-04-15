@@ -333,6 +333,8 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
             mavlink_msg_named_value_float_decode(msg, &nv);
             if (strncmp(nv.name, "STATE", 5) == 0) {
                 MissionData_update_doris_state((int)nv.value);
+            } else if (strncmp(nv.name, "PREARM", 6) == 0) {
+                MissionData_update_prearm_status((int)nv.value);
             }
             break;
         }

@@ -26,6 +26,10 @@ struct MissionData {
     int      doris_state;
     unsigned long doris_state_ms;   // millis() when last received
     bool     doris_state_valid;     // true once we've received at least one update
+
+    // Lua prearm status from NAMED_VALUE_FLOAT "PREARM"
+    // -1=unknown, 0=waiting, 1=GPS_OK, 2=GPS+batt ok, 3=all checks passed
+    int      prearm_status;
 };
 
 void MissionData_init(void);
@@ -59,5 +63,9 @@ bool MissionData_isMissionReady(void);
 void MissionData_update_doris_state(int state);
 int  MissionData_getDorisState(void);
 bool MissionData_hasDorisState(void);
+
+// Lua prearm status from NAMED_VALUE_FLOAT "PREARM"
+void MissionData_update_prearm_status(int status);
+int  MissionData_getPrearmStatus(void);
 
 #endif // MISSION_DATA_H
