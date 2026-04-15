@@ -340,21 +340,38 @@ void updateLEDState() {
 }
 
 void checkStateTransitions() {
+    static unsigned long divingEnteredMs = 0;
+    static unsigned long piDisconnectedMs = 0;
+    static SystemState prevState = STATE_PRE_DIVE;
+
     int dorisState = MissionData_getDorisState();
+    SystemState currentState = StateMachine_getState();
+
+    // Reset tracking variables when leaving DIVING
+    if (prevState == STATE_DIVING && currentState != STATE_DIVING) {
+        divingEnteredMs = 0;
+        piDisconnectedMs = 0;
+    }
+    prevState = currentState;
 
     // Follow autopilot: CONFIG/MISSION_START → PRE_DIVE
-    if (dorisState <= 0 && StateMachine_getState() != STATE_PRE_DIVE) {
+    // But NOT if currently DIVING — a dorisState<=0 during a dive is a
+    // parameter glitch and must not reset the state machine.
+    if (dorisState <= 0 && currentState != STATE_PRE_DIVE &&
+        currentState != STATE_DIVING) {
         StateMachine_reset();
     }
 
     // Follow autopilot: DESCENT/ON_BOTTOM/ASCENT → DIVING
     if (dorisState >= 1 && dorisState <= 3 &&
-        StateMachine_getState() == STATE_PRE_DIVE) {
+        currentState == STATE_PRE_DIVE) {
         StateMachine_enterDiving();
+        divingEnteredMs = millis();
+        piDisconnectedMs = 0;
     }
 
     // Follow autopilot: RECOVERY
-    if (dorisState >= 4 && StateMachine_getState() != STATE_RECOVERY) {
+    if (dorisState >= 4 && currentState != STATE_RECOVERY) {
         StateMachine_enterRecovery();
         lastIridiumSend = 0;
     }
@@ -368,6 +385,29 @@ void checkStateTransitions() {
         if (shallow && gpsFix) {
             StateMachine_enterRecovery();
             lastIridiumSend = 0;
+        }
+    }
+
+    // Heartbeat-loss failsafe: independent backup while DIVING.
+    // If the Pi/ArduPilot dies underwater, the AGT triggers the drop weight release.
+    if (StateMachine_getState() == STATE_DIVING) {
+        unsigned long now = millis();
+
+        if (divingEnteredMs == 0) {
+            divingEnteredMs = now;
+        }
+
+        if ((now - divingEnteredMs) < DIVE_HEARTBEAT_GRACE_MS) {
+            // Still within grace period after entering DIVING — skip check
+        } else if (MissionData_isPiConnected()) {
+            piDisconnectedMs = 0;
+        } else {
+            if (piDisconnectedMs == 0) {
+                piDisconnectedMs = now;
+            }
+            if ((now - piDisconnectedMs) >= FAILSAFE_HEARTBEAT_TIMEOUT_MS) {
+                StateMachine_triggerFailsafe(FAILSAFE_NO_HEARTBEAT);
+            }
         }
     }
 }
