@@ -59,6 +59,12 @@ build/
 # Temporary files
 nul
 lib/meshtastic/temp_protos/
+tmp_cmd.json
+
+# Media files
+*.mp4
+*.avi
+*.mov
 
 # Documentation/reference files
 agt_schematic.pdf
