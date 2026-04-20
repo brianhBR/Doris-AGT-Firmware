@@ -25,8 +25,28 @@ jobs:
       - name: Build main firmware
         run: pio run -e SparkFun_RedBoard_Artemis_ATP
 
+      - name: Build no-relays firmware
+        run: pio run -e no-relays
+
       - name: Build selftest firmware
         run: pio run -e selftest
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: doris-agt-firmware-${{ github.sha }}
+          path: |
+            build/doris-agt.bin
+            build/doris-agt-no-relays.bin
+            build/doris-agt-selftest.bin
+            .pio/build/SparkFun_RedBoard_Artemis_ATP/program.exe
+            .pio/build/SparkFun_RedBoard_Artemis_ATP/program.map
+            .pio/build/no-relays/program.exe
+            .pio/build/no-relays/program.map
+            .pio/build/selftest/program.exe
+            .pio/build/selftest/program.map
+          if-no-files-found: error
+          retention-days: 30
 
   test:
     name: Native unit tests
