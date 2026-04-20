@@ -17,8 +17,8 @@
 #define NOP10 NOP8; NOP2
 
 // +1 dummy pixel at the start of the buffer absorbs instruction-cache
-// cold-start glitches when sent through the SAME bit-bang loop as
-// real data.  Pattern functions address pixels 0..(NEOPIXEL_COUNT-1)
+// cold-start glitches that cause the first real LED to latch a spurious
+// green bit.  Pattern functions address pixels 0..(NEOPIXEL_COUNT-1)
 // which map to buffer offsets BYTES_PER_LED..(TOTAL_LEDS*BYTES_PER_LED-1).
 #define TOTAL_LEDS (NEOPIXEL_COUNT + 1)
 static uint8_t ledBuffer[TOTAL_LEDS * BYTES_PER_LED];
@@ -26,6 +26,8 @@ static uint8_t brightness = NEOPIXEL_BRIGHTNESS;
 static unsigned long lastRefresh = 0;
 
 static LEDMode currentMode = LED_MODE_STANDBY;
+static bool lastBlinkOn = false;    // tracks on/off state to detect transitions
+static bool forceRefresh = true;    // forces a ws_show on mode change
 
 // Lua command state
 static uint8_t  luaPattern     = LUA_PATTERN_OFF;
@@ -39,7 +41,6 @@ static unsigned long luaLastCmdTime = 0;
 static void ws_setPixelRaw(uint16_t n, uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
     if (n >= NEOPIXEL_COUNT) return;
     uint16_t offset = (n + 1) * BYTES_PER_LED;  // +1 skips dummy pixel at index 0
-    // SK6812 uses GRBW order (same as WS2812B for RGB channels)
     ledBuffer[offset]     = ((uint16_t)g * brightness) >> 8;
     ledBuffer[offset + 1] = ((uint16_t)r * brightness) >> 8;
     ledBuffer[offset + 2] = ((uint16_t)b * brightness) >> 8;
@@ -50,12 +51,6 @@ static void ws_setPixelRaw(uint16_t n, uint8_t r, uint8_t g, uint8_t b, uint8_t 
 }
 
 static void ws_show() {
-    // Dummy pixel (bytes 0..3) is always zero and never written by
-    // pattern code.  Sending it through the SAME while-loop as real
-    // data means the instruction cache is fully warm by the time pixel
-    // 0's data (bytes 4..7) is clocked out.  This eliminates the
-    // cache cold-start timing stretch that made the first LED latch a
-    // spurious green bit.
     ledBuffer[0] = 0; ledBuffer[1] = 0;
     ledBuffer[2] = 0; ledBuffer[3] = 0;
 
@@ -172,10 +167,12 @@ static void pulsePattern(uint32_t color, uint16_t periodMs, bool useWhiteLED = f
 
 // Blink: on for onMs, off for remainder of periodMs.
 // fullBright bypasses the global brightness cap (for recovery beacon).
-static void blinkPattern(uint16_t periodMs, uint16_t onMs, bool useWhiteLED = false,
+// Returns true if LEDs are in the "on" phase.
+static bool blinkPattern(uint16_t periodMs, uint16_t onMs, bool useWhiteLED = false,
                          uint32_t color = 0xFFFFFF, bool fullBright = false) {
     unsigned long phase = millis() % (unsigned long)periodMs;
-    if (phase < onMs) {
+    bool on = (phase < onMs);
+    if (on) {
         if (fullBright) {
             for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
                 uint16_t off = (i + 1) * BYTES_PER_LED;
@@ -201,6 +198,7 @@ static void blinkPattern(uint16_t periodMs, uint16_t onMs, bool useWhiteLED = fa
     } else {
         setAllOff();
     }
+    return on;
 }
 
 // Rainbow sweep
@@ -279,17 +277,20 @@ void NeoPixelController_update() {
     if (now - lastRefresh < 20) return;
     lastRefresh = now;
 
+    bool blinkOn = false;
+    bool needsShow = forceRefresh;
+
     switch (currentMode) {
         case LED_MODE_STANDBY:
-            blinkPattern(2000, 1000, true);             // 1s on / 1s off white
+            blinkOn = blinkPattern(2000, 1000, true);
             break;
 
         case LED_MODE_READY:
-            blinkPattern(1500, 750, false, 0x00FF00);   // 0.75s on / 0.75s off green
+            blinkOn = blinkPattern(1500, 750, false, 0x00FF00);
             break;
 
         case LED_MODE_ERROR:
-            blinkPattern(800, 400, false, 0xFF0000);    // 0.4s on / 0.4s off red
+            blinkOn = blinkPattern(800, 400, false, 0xFF0000);
             break;
 
         case LED_MODE_DIVING:
@@ -298,17 +299,25 @@ void NeoPixelController_update() {
 
         case LED_MODE_LUA:
             updateLuaPattern();
+            needsShow = true;
             break;
 
         case LED_MODE_RECOVERY:
-            blinkPattern(RECOVERY_STROBE_PERIOD_MS, RECOVERY_STROBE_ON_MS, true, 0xFFFFFF, true);
+            blinkOn = blinkPattern(RECOVERY_STROBE_PERIOD_MS, RECOVERY_STROBE_ON_MS, true, 0xFFFFFF, true);
             break;
     }
 
-    ws_show();
+    if (blinkOn != lastBlinkOn) needsShow = true;
+    lastBlinkOn = blinkOn;
+
+    if (needsShow) {
+        ws_show();
+        forceRefresh = false;
+    }
 }
 
 void NeoPixelController_setMode(LEDMode mode) {
+    if (mode != currentMode) forceRefresh = true;
     currentMode = mode;
 }
 

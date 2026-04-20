@@ -119,9 +119,18 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData, uint64_t rtcTimeUsec) {
     // 4-second timeout that triggers "GPS1 not healthy").  ArduPilot uses
     // fixType to decide whether the position is usable.
     {
+        // GPS time-of-week / week number: only emit if the u-blox calendar
+        // looks plausible. Before time-solution convergence the module
+        // reports stale dates (e.g. year=2000) that are >=1980 but still
+        // nonsense — don't propagate that to the autopilot.
         uint16_t gpsWeek = 0;
         uint32_t gpsTowMs = 0;
-        if (gpsData->year >= 1980) {
+        bool gpsDateOk = gpsData->year >= 2025 && gpsData->year <= 2099 &&
+                         gpsData->month >= 1 && gpsData->month <= 12 &&
+                         gpsData->day >= 1 && gpsData->day <= 31 &&
+                         gpsData->hour <= 23 && gpsData->minute <= 59 &&
+                         gpsData->second <= 59;
+        if (gpsDateOk) {
             calendarToGPSTime(gpsData->year, gpsData->month, gpsData->day,
                               gpsData->hour, gpsData->minute, gpsData->second,
                               &gpsWeek, &gpsTowMs);
@@ -281,10 +290,12 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
 
     mavlink_message_t* msg = (mavlink_message_t*)msgPtr;
 
-    MissionData_update_heartbeat();
-
     switch (msg->msgid) {
         case MAVLINK_MSG_ID_HEARTBEAT: {
+            // Only trust heartbeats from the autopilot (component 1).
+            // Ignores companion computers, GCS, and our own echo.
+            if (msg->compid != 1) break;
+            MissionData_update_heartbeat();
             mavlink_heartbeat_t hb;
             mavlink_msg_heartbeat_decode(msg, &hb);
             MissionData_update_autopilot_state(hb.system_status, hb.base_mode);

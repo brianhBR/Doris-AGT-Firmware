@@ -141,7 +141,7 @@
 // ============================================================================
 // MAVLINK CONFIGURATION
 // ============================================================================
-#define MAVLINK_SYSTEM_ID        1      // Must match autopilot (same vehicle)
+#define MAVLINK_SYSTEM_ID        1      // Same vehicle as autopilot
 #define MAVLINK_COMPONENT_ID     191    // MAV_COMP_ID_ONBOARD_COMPUTER
 #define MAVLINK_HEARTBEAT_MS     1000
 

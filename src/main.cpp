@@ -60,14 +60,28 @@ void processCommand(const String& cmd);
 void checkStateTransitions();
 void set_leak_from_serial(const String& arg);
 
+// True once the Apollo3 RTC has been set from a valid GPS time solution.
+// The RTC on this board is not coin-cell backed across power-down, so its
+// contents after boot are whatever the registers happened to hold. Treating
+// that as authoritative would poison SYSTEM_TIME / GPS_INPUT on MAVLink and
+// back-date ArduSub's clock and logs.
+static bool rtcSyncedFromGPS = false;
+
+// Firmware release year. Any RTC or GPS year earlier than this is, by
+// definition, not a valid time-of-day and must be rejected.
+static constexpr uint16_t RTC_MIN_VALID_YEAR = 2025;
+static constexpr uint16_t RTC_MAX_VALID_YEAR = 2099;
+
 static uint64_t getRTCUnixUsec() {
+    if (!rtcSyncedFromGPS) return 0;
     myRTC.getTime();
     uint16_t y = myRTC.year;
     if (y < 100) y += 2000;
-    if (y < 1970 || y > 2099) return 0;
+    if (y < RTC_MIN_VALID_YEAR || y > RTC_MAX_VALID_YEAR) return 0;
     uint8_t mo = myRTC.month, d = myRTC.dayOfMonth;
     uint8_t h = myRTC.hour, mi = myRTC.minute, s = myRTC.seconds;
     if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+    if (h > 23 || mi > 59 || s > 59) return 0;
     uint32_t days = (y - 1970) * 365UL + (y - 1969) / 4 - (y - 1901) / 100 + (y - 1601) / 400;
     static const uint16_t daysToMonth[] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
     days += daysToMonth[mo - 1] + (d - 1);
@@ -87,7 +101,11 @@ void setup() {
     DebugPrintln(F("==========================================="));
     DebugPrintln(F("  Doris AGT — Safety Monitor & Comms Relay"));
     DebugPrintln(F("==========================================="));
-    myRTC.setTime(0, 0, 0, 0, 1, 1, 2026);
+    // Intentionally NOT pre-loading the RTC with a placeholder date here.
+    // Any non-zero stamp would be published over MAVLink (GPS_RAW_INT,
+    // GPS_INPUT, SYSTEM_TIME) before GPS has a fix, and ArduSub (with
+    // BRD_RTC_TYPES=2) would adopt it as truth. getRTCUnixUsec() is gated
+    // by rtcSyncedFromGPS and returns 0 until the GPS supplies real time.
 
     loadConfiguration();
     MissionData_init();
@@ -282,10 +300,21 @@ void loadConfiguration() {
 }
 
 void updateLEDState() {
-    // Sync RTC whenever we have a GPS fix
+    // Sync RTC whenever we have a GPS fix AND the u-blox time solution is
+    // sane. u-blox can report a 2D/3D fixType before its internal clock has
+    // fully converged, so validate the calendar fields before writing them
+    // into the RTC — otherwise we'd pollute the RTC (and MAVLink) with
+    // partial/garbage time that looks superficially valid.
     if (GPSManager_hasFix()) {
         GPSData g = GPSManager_getData();
-        myRTC.setTime(g.hour, g.minute, g.second, 0, g.day, g.month, g.year);
+        bool dateOk = g.year >= RTC_MIN_VALID_YEAR && g.year <= RTC_MAX_VALID_YEAR &&
+                      g.month >= 1 && g.month <= 12 &&
+                      g.day >= 1 && g.day <= 31;
+        bool timeOk = g.hour <= 23 && g.minute <= 59 && g.second <= 59;
+        if (dateOk && timeOk) {
+            myRTC.setTime(g.hour, g.minute, g.second, 0, g.day, g.month, g.year);
+            rtcSyncedFromGPS = true;
+        }
     }
 
     if (StateMachine_getState() == STATE_RECOVERY) {
