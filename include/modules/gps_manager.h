@@ -26,7 +26,15 @@ struct GPSData {
     uint8_t hour;
     uint8_t minute;
     uint8_t second;
-    bool valid;
+    bool valid;               // true: fixType>=2 AND sats>=GPS_MIN_SATS (usable position)
+    // u-blox UBX-NAV-PVT "valid" flags (byte 11). These are asserted by the
+    // module from its BBR-backed internal RTC as soon as date/time are
+    // known, which can happen seconds before a position fix on warm start.
+    // Use these (NOT `valid` above) to gate wall-clock operations like
+    // seeding the MCU RTC.
+    bool date_valid;          // bit 0: validDate
+    bool time_valid;          // bit 1: validTime
+    bool time_fully_resolved; // bit 2: fullyResolved (UTC leap-sec resolved)
 };
 
 // Initialize GPS module
@@ -46,6 +54,12 @@ GPSData GPSManager_getData();
 
 // True once the GPS module has delivered at least one PVT solution
 bool GPSManager_hasPVT();
+
+// True iff the most recent UBX-NAV-PVT has both validDate and validTime
+// flags set. This can be true BEFORE GPSManager_hasFix() on warm start
+// because u-blox seeds date/time from its coin-cell-backed internal RTC
+// before satellites are (re)acquired.
+bool GPSManager_hasValidTime();
 
 // Get GPS data as formatted string
 void GPSManager_getDataString(char* buffer, size_t bufferSize);

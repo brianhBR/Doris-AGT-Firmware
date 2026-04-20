@@ -108,8 +108,12 @@ static bool initI2CAndGPS(bool fullConfig) {
     // internal flag still needs to be set each session).
     gpsPtr->setAutoPVT(true);
 
-    powerOnTime = millis();
-    ttffLogged = false;
+    // NOTE: powerOnTime / ttffLogged are anchored at the GNSS_EN->LOW
+    // transition in the callers (GPSManager_init / GPSManager_reinit),
+    // NOT here. If we latched the anchor at this point we'd skip the
+    // first ~2-5s of u-blox-on time (boot + I2C setup + config save),
+    // which would bias reported TTFF artificially low and could mask a
+    // cold start as a warm one.
 
     return true;
 }
@@ -129,6 +133,11 @@ bool GPSManager_init(SFE_UBLOX_GNSS* gps) {
     pin_config(PinName(GNSS_EN), pinCfg);
     delay(1);
     digitalWrite(GNSS_EN, LOW);
+    // Anchor TTFF measurement at the actual V_MAIN-to-module edge so hot
+    // vs warm vs cold classification reflects u-blox wall time, not
+    // post-I2C-config time.
+    powerOnTime = millis();
+    ttffLogged = false;
     delay(2000);
 
     if (!initI2CAndGPS(true)) {
@@ -157,6 +166,9 @@ bool GPSManager_reinit() {
     pin_config(PinName(GNSS_EN), pinCfg);
     delay(1);
     digitalWrite(GNSS_EN, LOW);
+    // Anchor TTFF at the V_MAIN edge (see GPSManager_init for rationale).
+    powerOnTime = millis();
+    ttffLogged = false;
     delay(1000);  // Shorter delay — GPS doesn't need full cold-start ramp
 
     // BBR retains config from initial setup; skip full reconfiguration
@@ -199,6 +211,16 @@ static uint8_t  ubxCkA = 0, ubxCkB = 0;
 // Forward-declared for processPVT() — defined near GPSManager_update()
 static unsigned long lastPVTTime = 0;
 
+// Coin-cell (V_BCKP / ML414H) health captured at first-ever PVT after
+// GPSManager_init. If validDate && validTime are set on the very first
+// PVT, the u-blox internal RTC rode through the last power-off on coin
+// cell alone — the cell is healthy. If they're clear, the cell was
+// depleted (or absent) and the module is doing a cold start.
+static bool     bootDiagDone        = false; // one-shot flag
+static bool     bootBBRTimeRetained = false; // latched at first PVT
+static bool     bootBBREphemFast    = false; // latched true if TTFF < 5s (hot)
+static uint32_t bootFirstFixTTFF_ms = 0;     // latched at first valid fix
+
 static void ubxReset() {
     ubxState = 0;
     ubxPayloadIdx = 0;
@@ -228,6 +250,14 @@ static void processPVT() {
     currentGPSData.hour      = ubxBuf[8];
     currentGPSData.minute    = ubxBuf[9];
     currentGPSData.second    = ubxBuf[10];
+    // Byte 11: "valid" bitfield.
+    //   bit 0 = validDate, bit 1 = validTime, bit 2 = fullyResolved.
+    // On warm start (BBR retained via V_BCKP coin cell) the module asserts
+    // validDate/validTime from its internal RTC well before a position fix.
+    const uint8_t validFlags = ubxBuf[11];
+    currentGPSData.date_valid          = (validFlags & 0x01) != 0;
+    currentGPSData.time_valid          = (validFlags & 0x02) != 0;
+    currentGPSData.time_fully_resolved = (validFlags & 0x04) != 0;
     currentGPSData.fixType   = ubxBuf[20];
     currentGPSData.satellites = ubxBuf[23];
     currentGPSData.longitude = ubxI32(24) / 10000000.0;
@@ -246,6 +276,28 @@ static void processPVT() {
 
     unsigned long now = millis();
 
+    // One-shot coin-cell verdict on the very first PVT after GPSManager_init.
+    // `validDate && validTime` on the first PVT means the u-blox's internal
+    // RTC rode through the last power-off on V_BCKP alone — proof that the
+    // ML414H coin cell is retaining charge. If they're clear, either the
+    // cell has never been charged long enough, or it's failed.
+    if (!bootDiagDone) {
+        bootDiagDone        = true;
+        bootBBRTimeRetained = currentGPSData.date_valid && currentGPSData.time_valid;
+        char bootMsg[50];
+        if (bootBBRTimeRetained) {
+            snprintf(bootMsg, sizeof(bootMsg),
+                     "GPS: Coin cell OK, BBR time %04u-%02u-%02u",
+                     currentGPSData.year, currentGPSData.month, currentGPSData.day);
+            MAVLinkInterface_sendStatusText(6, bootMsg);
+        } else {
+            snprintf(bootMsg, sizeof(bootMsg),
+                     "GPS: Coin cell DEPLETED, BBR time lost (cold)");
+            MAVLinkInterface_sendStatusText(4, bootMsg);
+        }
+        DebugPrintln(bootMsg);
+    }
+
     if (currentGPSData.fixType >= 2 && currentGPSData.satellites >= GPS_MIN_SATS) {
         currentGPSData.valid = true;
         lastFixAttempt = now;
@@ -255,6 +307,8 @@ static void processPVT() {
             unsigned long ttff = now - powerOnTime;
             const char* startType = (ttff < 5000) ? "hot" :
                                     (ttff < 35000) ? "warm" : "cold";
+            bootFirstFixTTFF_ms = (uint32_t)ttff;
+            bootBBREphemFast    = (ttff < 5000); // hot start => BBR had ephemeris
             char ttffMsg[50];
             snprintf(ttffMsg, sizeof(ttffMsg), "GPS: TTFF=%lus (%s start) sats=%u",
                      ttff / 1000, startType, currentGPSData.satellites);
@@ -439,6 +493,12 @@ bool GPSManager_hasPVT() {
     return pvtReceived;
 }
 
+bool GPSManager_hasValidTime() {
+    return pvtReceived &&
+           currentGPSData.date_valid &&
+           currentGPSData.time_valid;
+}
+
 void GPSManager_getDataString(char* buffer, size_t bufferSize) {
     if (!currentGPSData.valid) {
         snprintf(buffer, bufferSize, "NO FIX");
@@ -481,6 +541,10 @@ void GPSManager_wake() {
     pin_config(PinName(GNSS_EN), pinCfg);
     delay(1);
     digitalWrite(GNSS_EN, LOW);
+    // Anchor TTFF at the V_MAIN edge, BEFORE module boot + I2C setup, so
+    // hot/warm/cold classification reflects wall time at the module.
+    powerOnTime = millis();
+    ttffLogged = false;
     delay(500);
 
     if (gpsPtr != nullptr) {
@@ -492,8 +556,6 @@ void GPSManager_wake() {
         }
         gpsPtr->setAutoPVT(true);
 
-        powerOnTime = millis();
-        ttffLogged = false;
         DebugPrintln(F("GPS: Wake (expecting hot/warm start from BBR)"));
     }
 }
@@ -510,6 +572,31 @@ void GPSManager_printDiagnostics() {
     lastDiagTime = now;
 
     char msg[50];
+
+    // Coin-cell / V_BCKP health summary — derived from boot-time state:
+    //  * boot BBR time retained  -> coin cell held the u-blox RTC alive
+    //  * first fix TTFF < 5s     -> coin cell held the ephemeris too
+    //  * BBR config saved        -> we wrote CFG to BBR (survives w/ cell)
+    // With all three true, the cell is in good shape. If BBR time was
+    // lost, the cell is depleted or absent — expect a cold start every
+    // power-up until it's been charged for many hours on main power.
+    if (bootDiagDone) {
+        const char* verdict;
+        if (bootBBRTimeRetained && bootBBREphemFast) {
+            verdict = "HEALTHY";
+        } else if (bootBBRTimeRetained) {
+            verdict = "weak";   // time survived, ephemeris did not
+        } else {
+            verdict = "DEPLETED";
+        }
+        snprintf(msg, sizeof(msg), "GPS: Coin cell %s (time=%s ttff=%lus)",
+                 verdict,
+                 bootBBRTimeRetained ? "kept" : "lost",
+                 (unsigned long)(bootFirstFixTTFF_ms / 1000));
+        MAVLinkInterface_sendStatusText(6, msg);
+    } else {
+        MAVLinkInterface_sendStatusText(4, "GPS: Coin cell unknown (no PVT yet)");
+    }
 
     if (gpsPtr->getNAVSTATUS()) {
         auto &s = gpsPtr->packetUBXNAVSTATUS->data;

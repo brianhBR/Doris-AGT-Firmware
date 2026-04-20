@@ -119,13 +119,15 @@ void MAVLinkInterface_sendGPS(GPSData* gpsData, uint64_t rtcTimeUsec) {
     // 4-second timeout that triggers "GPS1 not healthy").  ArduPilot uses
     // fixType to decide whether the position is usable.
     {
-        // GPS time-of-week / week number: only emit if the u-blox calendar
-        // looks plausible. Before time-solution convergence the module
-        // reports stale dates (e.g. year=2000) that are >=1980 but still
-        // nonsense — don't propagate that to the autopilot.
+        // GPS time-of-week / week number: only emit if u-blox itself says
+        // the date/time are valid, AND the calendar passes a sanity check.
+        // The valid flags come from the module's BBR-backed RTC (or a fresh
+        // fix) and are the authoritative signal that calendar fields are
+        // usable; the range check is defence-in-depth against bitflips.
         uint16_t gpsWeek = 0;
         uint32_t gpsTowMs = 0;
-        bool gpsDateOk = gpsData->year >= 2025 && gpsData->year <= 2099 &&
+        bool gpsDateOk = gpsData->date_valid && gpsData->time_valid &&
+                         gpsData->year >= 2025 && gpsData->year <= 2099 &&
                          gpsData->month >= 1 && gpsData->month <= 12 &&
                          gpsData->day >= 1 && gpsData->day <= 31 &&
                          gpsData->hour <= 23 && gpsData->minute <= 59 &&

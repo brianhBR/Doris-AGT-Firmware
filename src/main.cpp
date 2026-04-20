@@ -72,6 +72,35 @@ static bool rtcSyncedFromGPS = false;
 static constexpr uint16_t RTC_MIN_VALID_YEAR = 2025;
 static constexpr uint16_t RTC_MAX_VALID_YEAR = 2099;
 
+// Seed the Apollo3 RTC from the u-blox ZOE-M8Q as soon as the module
+// reports validDate && validTime. This is the payoff from keeping the
+// V_BCKP coin cell charged: on warm start the u-blox has a real UTC
+// time from its battery-backed internal RTC within ~1s of power-on,
+// long before a position fix lands. Without this, MAVLink wall-clock
+// time would stay at millis()-based boot time for 30-60+ seconds per
+// deployment, and SYSTEM_TIME wouldn't be sent at all until a fix.
+static void syncRTCFromGPSIfValid() {
+    if (!GPSManager_hasValidTime()) return;
+    GPSData g = GPSManager_getData();
+    bool dateOk = g.year >= RTC_MIN_VALID_YEAR && g.year <= RTC_MAX_VALID_YEAR &&
+                  g.month >= 1 && g.month <= 12 &&
+                  g.day >= 1 && g.day <= 31;
+    bool timeOk = g.hour <= 23 && g.minute <= 59 && g.second <= 59;
+    if (!dateOk || !timeOk) return;
+    myRTC.setTime(g.hour, g.minute, g.second, 0, g.day, g.month, g.year);
+    if (!rtcSyncedFromGPS) {
+        rtcSyncedFromGPS = true;
+        const char* src = g.time_fully_resolved ? "resolved" :
+                          GPSManager_hasFix()   ? "fix"      :
+                                                  "BBR";
+        char msg[50];
+        snprintf(msg, sizeof(msg), "RTC: Synced from GPS (%s) %04u-%02u-%02u",
+                 src, g.year, g.month, g.day);
+        DebugPrintln(msg);
+        MAVLinkInterface_sendStatusText(6, msg);
+    }
+}
+
 static uint64_t getRTCUnixUsec() {
     if (!rtcSyncedFromGPS) return 0;
     myRTC.getTime();
@@ -154,6 +183,12 @@ void loop() {
 
     StateMachine_update();
     GPSManager_update();
+
+    // Keep the MCU RTC disciplined from the u-blox BBR-backed clock. Runs
+    // every loop (cheap — idempotent if already synced and time hasn't
+    // advanced past the second). Placed here, outside the NeoPixel-gated
+    // updateLEDState(), so RTC discipline works on headless builds too.
+    syncRTCFromGPSIfValid();
 
     processSerialInput();
 
@@ -300,22 +335,9 @@ void loadConfiguration() {
 }
 
 void updateLEDState() {
-    // Sync RTC whenever we have a GPS fix AND the u-blox time solution is
-    // sane. u-blox can report a 2D/3D fixType before its internal clock has
-    // fully converged, so validate the calendar fields before writing them
-    // into the RTC — otherwise we'd pollute the RTC (and MAVLink) with
-    // partial/garbage time that looks superficially valid.
-    if (GPSManager_hasFix()) {
-        GPSData g = GPSManager_getData();
-        bool dateOk = g.year >= RTC_MIN_VALID_YEAR && g.year <= RTC_MAX_VALID_YEAR &&
-                      g.month >= 1 && g.month <= 12 &&
-                      g.day >= 1 && g.day <= 31;
-        bool timeOk = g.hour <= 23 && g.minute <= 59 && g.second <= 59;
-        if (dateOk && timeOk) {
-            myRTC.setTime(g.hour, g.minute, g.second, 0, g.day, g.month, g.year);
-            rtcSyncedFromGPS = true;
-        }
-    }
+    // RTC discipline from GPS now lives in syncRTCFromGPSIfValid(), called
+    // unconditionally from loop() so it works on headless (no-NeoPixel)
+    // builds too.
 
     if (StateMachine_getState() == STATE_RECOVERY) {
         NeoPixelController_setMode(LED_MODE_RECOVERY);
