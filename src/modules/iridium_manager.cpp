@@ -202,23 +202,24 @@ bool IridiumManager_init(IridiumSBD* modem) {
 // Helper: format float as integer.fraction for Apollo3 (no %f in snprintf)
 // ============================================================================
 static int appendFloat(char* buf, int pos, int maxLen, double val, int decimals) {
-    long intPart = (long)val;
-    double fracVal = val - intPart;
-    if (fracVal < 0) fracVal = -fracVal;
-
-    long fracPart = 0;
+    bool negative = (val < 0.0);
+    double absVal = negative ? -val : val;
+    long intPart = (long)absVal;
+    double fracVal = absVal - intPart;
     long multiplier = 1;
     for (int i = 0; i < decimals; i++) multiplier *= 10;
-    fracPart = (long)(fracVal * multiplier + 0.5);
-    if (fracPart >= multiplier) { fracPart = 0; intPart += (val >= 0) ? 1 : -1; }
-
-    int written;
-    if (decimals == 6)
-        written = snprintf(buf + pos, maxLen - pos, "%ld.%06ld", intPart, fracPart);
-    else if (decimals == 2)
-        written = snprintf(buf + pos, maxLen - pos, "%ld.%02ld", intPart, fracPart);
-    else
-        written = snprintf(buf + pos, maxLen - pos, "%ld.%01ld", intPart, fracPart);
+    long fracPart = (long)(fracVal * multiplier + 0.5);
+    if (fracPart >= multiplier) { fracPart = 0; intPart++; }
+    // Apollo3 newlib-nano doesn't zero-pad %0Nld; extract digits manually
+    char fracStr[8];
+    long fp = fracPart;
+    for (int j = decimals - 1; j >= 0; j--) {
+        fracStr[j] = '0' + (int)(fp % 10);
+        fp /= 10;
+    }
+    fracStr[decimals] = '\0';
+    int written = snprintf(buf + pos, maxLen - pos, "%s%ld.%s",
+                           negative ? "-" : "", intPart, fracStr);
     return (written > 0) ? pos + written : pos;
 }
 
