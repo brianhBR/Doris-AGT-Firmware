@@ -505,18 +505,35 @@ void GPSManager_getDataString(char* buffer, size_t bufferSize) {
         return;
     }
 
-    // Apollo3 snprintf lacks %f support; format manually
-    long latInt = (long)currentGPSData.latitude;
-    long latFrac = abs((long)((currentGPSData.latitude - latInt) * 1000000));
-    long lonInt = (long)currentGPSData.longitude;
-    long lonFrac = abs((long)((currentGPSData.longitude - lonInt) * 1000000));
+    // Apollo3 snprintf lacks %f and doesn't zero-pad %0Nld; format manually
+    bool latNeg = (currentGPSData.latitude < 0.0);
+    double absLat = latNeg ? -currentGPSData.latitude : currentGPSData.latitude;
+    long latInt = (long)absLat;
+    long latFrac = (long)((absLat - latInt) * 1000000 + 0.5);
+    if (latFrac >= 1000000) { latFrac = 0; latInt++; }
+
+    bool lonNeg = (currentGPSData.longitude < 0.0);
+    double absLon = lonNeg ? -currentGPSData.longitude : currentGPSData.longitude;
+    long lonInt = (long)absLon;
+    long lonFrac = (long)((absLon - lonInt) * 1000000 + 0.5);
+    if (lonFrac >= 1000000) { lonFrac = 0; lonInt++; }
+
     long altInt = (long)currentGPSData.altitude;
     long spdInt = (long)(currentGPSData.speed * 10);
 
+    char latFracStr[8], lonFracStr[8];
+    long lf = latFrac;
+    for (int j = 5; j >= 0; j--) { latFracStr[j] = '0' + (int)(lf % 10); lf /= 10; }
+    latFracStr[6] = '\0';
+    long nf = lonFrac;
+    for (int j = 5; j >= 0; j--) { lonFracStr[j] = '0' + (int)(nf % 10); nf /= 10; }
+    lonFracStr[6] = '\0';
+
     snprintf(buffer, bufferSize,
-             "%ld.%06ld,%ld.%06ld,%ld,%ld.%01ld,%d",
-             latInt, latFrac, lonInt, lonFrac, altInt,
-             spdInt / 10, abs(spdInt % 10),
+             "%s%ld.%s,%s%ld.%s,%ld,%ld.%01ld,%d",
+             latNeg ? "-" : "", latInt, latFracStr,
+             lonNeg ? "-" : "", lonInt, lonFracStr,
+             altInt, spdInt / 10, abs(spdInt % 10),
              currentGPSData.satellites);
 }
 
