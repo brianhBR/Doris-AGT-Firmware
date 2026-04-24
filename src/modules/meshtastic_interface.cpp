@@ -57,7 +57,12 @@ static void format_lat(double lat, char* buf, size_t len) {
     int minInt = (int)minFloat;
     long minFrac = (long)((minFloat - minInt) * 10000 + 0.5);
     if (minFrac >= 10000) { minFrac -= 10000; minInt++; }
-    snprintf(buf, len, "%02d%02d.%04ld,%c", deg, minInt, minFrac, ns);
+    // Apollo3 newlib-nano doesn't zero-pad %04ld; extract digits manually
+    char fracStr[6];
+    long mf = minFrac;
+    for (int j = 3; j >= 0; j--) { fracStr[j] = '0' + (int)(mf % 10); mf /= 10; }
+    fracStr[4] = '\0';
+    snprintf(buf, len, "%02d%02d.%s,%c", deg, minInt, fracStr, ns);
 }
 
 // Format longitude as dddmm.mmmm,E/W (NMEA format, no %f)
@@ -69,7 +74,12 @@ static void format_lon(double lon, char* buf, size_t len) {
     int minInt = (int)minFloat;
     long minFrac = (long)((minFloat - minInt) * 10000 + 0.5);
     if (minFrac >= 10000) { minFrac -= 10000; minInt++; }
-    snprintf(buf, len, "%03d%02d.%04ld,%c", deg, minInt, minFrac, ew);
+    // Apollo3 newlib-nano doesn't zero-pad %04ld; extract digits manually
+    char fracStr[6];
+    long mf = minFrac;
+    for (int j = 3; j >= 0; j--) { fracStr[j] = '0' + (int)(mf % 10); mf /= 10; }
+    fracStr[4] = '\0';
+    snprintf(buf, len, "%03d%02d.%s,%c", deg, minInt, fracStr, ew);
 }
 
 // Append a float as "int.frac" into buf at position pos (no %f)
