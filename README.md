@@ -3,10 +3,10 @@
 **Oceanographic Drop Camera — Subordinate Safety Monitor & Comms Relay**
 
 Firmware for the SparkFun Artemis Global Tracker (AGT) used on the Doris deep-sea
-drop-camera platform. The AGT does **not** run the dive — that is the job of the
-ArduSub Lua dive script on the Navigator/Pi. The AGT provides GPS, Iridium and
-Meshtastic comms, status LEDs, and safety failsafes (voltage / leak / heartbeat
-loss) that fire the electrolytic release relay if the autopilot stops responding.
+drop-camera platform. The AGT does **not** run the dive and does **not**
+autonomously fire the release — that is the job of the ArduSub Lua dive script
+on the Navigator/Pi. The AGT provides GPS to the autopilot, Iridium and
+Meshtastic comms, status LEDs, and a remotely-commandable release relay.
 
 ## Mission Profile
 
@@ -28,7 +28,7 @@ drive the dive.
 | State      | Trigger                                                                | AGT behavior                                                          |
 |------------|------------------------------------------------------------------------|-----------------------------------------------------------------------|
 | `PRE_DIVE` | Boot / `reset` command / Lua state ≤ 0 (`CONFIG` / `MISSION_START`)     | GPS to MAVLink + NMEA, Iridium test on demand, armed/not-armed LEDs   |
-| `DIVING`   | Lua state 1–3 (`DESCENT` / `ON_BOTTOM` / `ASCENT`), or depth > 2 m     | LEDs off (or Lua-commanded), failsafes armed, no Iridium TX           |
+| `DIVING`   | Lua state 1–3 (`DESCENT` / `ON_BOTTOM` / `ASCENT`), or depth > 2 m     | LEDs off (or Lua-commanded), no Iridium TX                            |
 | `RECOVERY` | Lua state 4, or independently when ascending + shallow + GPS fix       | White strobe, Iridium reports resume, Relay 1 cuts nonessential power |
 
 State transitions are driven by `NAMED_VALUE_FLOAT "STATE"` from the Lua script
@@ -36,19 +36,22 @@ State transitions are driven by `NAMED_VALUE_FLOAT "STATE"` from the Lua script
 `4=RECOVERY`), with an independent depth+GPS surface detector as a backup so the
 AGT can transition to `RECOVERY` even if the Lua script has crashed.
 
-### Failsafes (DIVING only)
+### Release relay
 
-If any of these trigger while diving, the AGT fires the release relay
-(`RELEASE_RELAY_DURATION_SEC`, default 1500 s for electrolytic release) and
-forces a transition to `RECOVERY`:
+The AGT does **not** autonomously fire the release. The dive profile and any
+ballast release decisions are owned by the ArduSub Lua script. The AGT exposes
+the release relay (Relay 2, `RELEASE_RELAY_DURATION_SEC` = 1500 s default for
+electrolytic release) only as a remotely-commandable hardware output:
 
-- `LOW_VOLTAGE` — autopilot battery voltage below critical threshold
-- `LEAK` — leak detected (via MAVLink `SYS_STATUS` or local sensor)
-- `NO_HEARTBEAT` — no MAVLink heartbeat from autopilot for
-  `FAILSAFE_HEARTBEAT_TIMEOUT_MS` (120 s), with a 90 s grace window after
-  entering `DIVING`
-- `MANUAL` — operator-triggered (currently disabled in code; release is owned
-  by the autopilot)
+- The `release_now` serial command is a no-op and prints
+  `"Release is handled by autopilot"`.
+- A `DORIS_CMD_RELEASE` command can be delivered via Iridium MT (cloud → device)
+  to drive the relay; this is the only path that actually energises Relay 2 from
+  the AGT side.
+- The `StateMachine_triggerFailsafe()` hook and `MissionData` voltage / leak /
+  heartbeat fields exist for monitoring and reporting (and are wired into the
+  Doris telemetry bitfield) but are not bound to any autonomous relay action in
+  the current firmware.
 
 ### Comms
 
@@ -104,7 +107,8 @@ pattern.
   Wired through **NC**: coil OFF = devices powered (safe default through MCU
   resets). Coil energizes only in `RECOVERY` to cut power.
 - **Relay 2 — Electrolytic release** (GPIO35) — wired through **NO**, active
-  HIGH. Fired by failsafe; default duration 1500 s.
+  HIGH. Default duration 1500 s. Driven only by an Iridium MT
+  `DORIS_CMD_RELEASE` command; not triggered autonomously by the AGT.
 
 ### Battery
 4S LiPo or equivalent marine battery, sized for seafloor recording + multi-day
@@ -187,7 +191,7 @@ gps_diag              GPS BBR / backup-battery diagnostics
 iridium_test          Queue a one-off Iridium test transmission
 reset                 Force state machine back to PRE_DIVE
 reboot                Soft reboot the AGT
-release_now           No-op — release is owned by the autopilot
+release_now           No-op — release is owned by the autopilot (logs that fact)
 set_leak <0|1>        Force the leak flag (failsafe testing)
 mesh_test             Send a text message over Meshtastic
 mesh_test_gps         Send hardcoded NMEA over Meshtastic (link test)
