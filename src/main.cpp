@@ -202,45 +202,48 @@ void loop() {
         MAVLinkInterface_sendHeartbeat();
     }
 
-    // Manual Iridium test: triggered via MAVLink command or serial
+    // Manual Iridium test: triggered via MAVLink command or serial.
+    // Uses the same payload + sender as the RECOVERY-mode periodic report so
+    // the test exercises the exact code path that runs in the field. The
+    // Apollo3 newlib-nano printf used to produce a broken "%f" payload here.
     if (iridiumTestRequested && sysConfig.enableIridium && modemPtr) {
         iridiumTestRequested = false;
 
-        DebugPrintln(F("==================================="));
-        DebugPrintln(F("  IRIDIUM TEST: Starting"));
-        DebugPrintln(F("==================================="));
-        MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test starting");
-
-        if (sysConfig.enableNeoPixels) {
-            NeoPixelController_setSolidWhite();
-        }
-
-        GPSData gpsData = GPSManager_getData();
-        MissionData mission;
-        MissionData_get(&mission);
-
-        char testMsg[160];
-        snprintf(testMsg, sizeof(testMsg),
-            "TEST,LAT:%.6f,LON:%.6f,ALT:%.1f,SAT:%d,FIX:%d",
-            gpsData.latitude, gpsData.longitude, gpsData.altitude,
-            gpsData.satellites, gpsData.fixType);
-
-        if (IridiumManager_sendMessage(testMsg)) {
-            lastIridiumSend = millis();
-            DebugPrintln(F("==================================="));
-            DebugPrintln(F("  IRIDIUM TEST: PASSED"));
-            DebugPrintln(F("==================================="));
-            MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test PASSED");
+        if (!GPSManager_hasFix()) {
+            DebugPrintln(F("IRIDIUM TEST: skipped — no GPS fix"));
+            MAVLinkInterface_sendStatusText(4, "IRIDIUM: Test skipped (no GPS fix)");
         } else {
-            lastIridiumSend = millis();
             DebugPrintln(F("==================================="));
-            DebugPrintln(F("  IRIDIUM TEST: FAILED"));
+            DebugPrintln(F("  IRIDIUM TEST: Starting"));
             DebugPrintln(F("==================================="));
-            MAVLinkInterface_sendStatusText(3, "IRIDIUM: Test FAILED");
-        }
+            MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test starting");
 
-        delay(2000);
-        GPSManager_reinit();
+            if (sysConfig.enableNeoPixels) {
+                NeoPixelController_setSolidWhite();
+            }
+
+            GPSData gpsData = GPSManager_getData();
+            MissionData mission;
+            MissionData_get(&mission);
+
+            bool ok = IridiumManager_sendMissionReport(&gpsData, &mission);
+            lastIridiumSend = millis();
+
+            if (ok) {
+                DebugPrintln(F("==================================="));
+                DebugPrintln(F("  IRIDIUM TEST: PASSED"));
+                DebugPrintln(F("==================================="));
+                MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test PASSED");
+            } else {
+                DebugPrintln(F("==================================="));
+                DebugPrintln(F("  IRIDIUM TEST: FAILED"));
+                DebugPrintln(F("==================================="));
+                MAVLinkInterface_sendStatusText(3, "IRIDIUM: Test FAILED");
+            }
+
+            delay(2000);
+            GPSManager_reinit();
+        }
     }
 
     if (sysConfig.enableMAVLink &&
