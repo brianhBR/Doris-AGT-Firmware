@@ -19,6 +19,11 @@ static unsigned long powerOnTime = 0;   // Track when GPS was powered on for TTF
 static bool ttffLogged = false;         // Only log TTFF once per power cycle
 static bool configSavedToBBR = false;   // Track whether we've saved config to BBR
 static bool pvtReceived = false;        // True after first UBX-NAV-PVT parsed
+// Last millis() a UBX-NAV-PVT was successfully parsed. Drives the PVT
+// watchdog in GPSManager_update() and is reset by GPSManager_reinit() so
+// the watchdog doesn't trip on the stale value left over from a multi-
+// minute Iridium TX during which GPSManager_update() never ran.
+static unsigned long lastPVTTime = 0;
 
 // Toggle SCL manually to free a stuck I2C bus (SDA held low by slave).
 static void i2cBusRecovery() {
@@ -103,6 +108,13 @@ static bool initI2CAndGPS(bool fullConfig) {
         DebugPrintln(F("GPS: Light reinit (BBR config retained)"));
     }
 
+    // Belt-and-suspenders: explicitly assert UBX output on the I2C port
+    // in RAM. Cheap (one CFG-PRT message, does NOT touch enableGNSS so
+    // ephemeris is preserved). Covers the case where BBR reload after a
+    // GNSS_EN power cycle didn't fully apply — without this, the receiver
+    // is up on I2C but emits no NAV-PVT, and the PVT watchdog spins.
+    gpsPtr->setI2COutput(COM_TYPE_UBX);
+
     // Re-enable in RAM for BBR-retained and light-init paths (BBR
     // already has it from the first-boot save above, but the library's
     // internal flag still needs to be set each session).
@@ -169,7 +181,12 @@ bool GPSManager_reinit() {
     // Anchor TTFF at the V_MAIN edge (see GPSManager_init for rationale).
     powerOnTime = millis();
     ttffLogged = false;
-    delay(1000);  // Shorter delay — GPS doesn't need full cold-start ramp
+    // ZOE-M8Q takes ~1.5-2 s to fully boot and reload BBR config. Anything
+    // shorter races the receiver's RAM-config load: begin() may succeed
+    // (basic UBX handshake works) but setAutoPVT()'s CFG-MSG can be lost,
+    // leaving NAV-PVT output disabled in RAM. Symptom: PVT watchdog
+    // reinit fires repeatedly after every long Iridium TX.
+    delay(2000);
 
     // BBR retains config from initial setup; skip full reconfiguration
     bool useLightInit = configSavedToBBR;
@@ -181,6 +198,13 @@ bool GPSManager_reinit() {
             return false;
         }
     }
+
+    // Reset the PVT watchdog clock now that we've just brought the
+    // receiver back up. Without this, GPSManager_update() trips the
+    // watchdog on the very next call because lastPVTTime is still
+    // anchored to whenever the *last* PVT before the Iridium TX arrived
+    // (minutes ago — the main loop was blocked during the SBD session).
+    lastPVTTime = millis();
 
     DebugPrintln(F("GPS: Re-init OK"));
     return true;
@@ -207,9 +231,6 @@ static uint16_t ubxPayloadLen = 0;
 static uint8_t  ubxClass = 0;
 static uint8_t  ubxId = 0;
 static uint8_t  ubxCkA = 0, ubxCkB = 0;
-
-// Forward-declared for processPVT() — defined near GPSManager_update()
-static unsigned long lastPVTTime = 0;
 
 // Coin-cell (V_BCKP / ML414H) health captured at first-ever PVT after
 // GPSManager_init. If validDate && validTime are set on the very first
