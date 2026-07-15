@@ -37,4 +37,16 @@ void MAVLinkInterface_sendVersion();
 // GPS diagnostics. Triggered on demand via MAVLINK_CMD_AGT_DEBUG.
 void MAVLinkInterface_sendDebug();
 
+// Service the MAVLink/USB link during a long blocking operation. Drains (and
+// discards) inbound bytes so the UART RX buffer can't overflow and wedge the
+// receiver, and emits a throttled heartbeat. Commands are intentionally NOT
+// dispatched here (see note in the .cpp). Call this frequently (<~50 ms apart)
+// from any code that blocks the main loop, e.g. the Iridium SBD path.
+void MAVLinkInterface_serviceLink();
+
+// Blocking delay of `ms` milliseconds that keeps the link serviced throughout
+// (calls MAVLinkInterface_serviceLink() every few ms). Use in place of delay()
+// inside long Iridium/GPS operations.
+void MAVLinkInterface_serviceDelay(unsigned long ms);
+
 #endif // MAVLINK_INTERFACE_H

@@ -311,6 +311,36 @@ void MAVLinkInterface_sendDebug() {
     GPSManager_printDiagnostics();      // GPS BBR / antenna / coin-cell health
 }
 
+void MAVLinkInterface_serviceLink() {
+    if (!initialized || !MAVLINK_SERIAL) return;
+
+    // Drain and discard inbound bytes. During a long Iridium session the main
+    // loop is blocked for tens of seconds to minutes; without this the UART RX
+    // buffer overflows and the receiver wedges, so afterwards the AGT keeps
+    // transmitting (heartbeats) but never sees inbound COMMAND_LONGs again.
+    //
+    // We deliberately do NOT dispatch commands here: the GPS is powered down
+    // and the shared antenna is switched to Iridium during these ops, so
+    // running a handler like AGT_DEBUG (which does blocking GPS I2C) could
+    // stall or corrupt the in-progress SBD session. Commands resume normally
+    // as soon as the blocking operation returns control to the main loop.
+    while (MAVLINK_SERIAL.available()) {
+        (void)MAVLINK_SERIAL.read();
+    }
+
+    // Keep heartbeats flowing so the GCS / MAVLink router doesn't drop the
+    // AGT's route during the session.
+    MAVLinkInterface_sendHeartbeat();
+}
+
+void MAVLinkInterface_serviceDelay(unsigned long ms) {
+    unsigned long start = millis();
+    do {
+        MAVLinkInterface_serviceLink();
+        delay(5);
+    } while (millis() - start < ms);
+}
+
 void MAVLinkInterface_handleMessage(void* msgPtr) {
     if (!initialized || !msgPtr) return;
 

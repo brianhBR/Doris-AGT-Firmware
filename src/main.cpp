@@ -254,7 +254,7 @@ void loop() {
                 MAVLinkInterface_sendStatusText(3, "IRIDIUM: Test FAILED");
             }
 
-            delay(2000);
+            MAVLinkInterface_serviceDelay(2000);
             GPSManager_reinit();
         }
     }
@@ -298,7 +298,7 @@ void loop() {
             lastIridiumSend = millis();
 
             DebugPrintln(F("GPS: Re-initializing after Iridium send..."));
-            delay(2000);
+            MAVLinkInterface_serviceDelay(2000);
             GPSManager_reinit();
         }
     }

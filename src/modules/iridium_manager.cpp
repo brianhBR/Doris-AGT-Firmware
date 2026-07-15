@@ -1,5 +1,6 @@
 #include "modules/iridium_manager.h"
 #include "modules/doris_protocol.h"
+#include "modules/mavlink_interface.h"
 #include "config.h"
 #include <Arduino.h>
 
@@ -70,6 +71,11 @@ bool ISBDCallback() {
         digitalWrite(LED_WHITE, HIGH);
     else
         digitalWrite(LED_WHITE, LOW);
+    // The IridiumSBD library calls this repeatedly while it blocks (modem
+    // startup, signal poll, SBDIX). Service the MAVLink/USB link so its RX
+    // buffer can't overflow during the session (which would wedge command
+    // handling afterwards) and the GCS keeps seeing heartbeats.
+    MAVLinkInterface_serviceLink();
     return true;
 }
 
@@ -100,14 +106,14 @@ static void antennaToGPS() {
     DebugPrintln(F("[RF] Antenna -> GPS"));
     configureGnssEnPin();
     digitalWrite(GNSS_EN, LOW);
-    delay(750);
+    MAVLinkInterface_serviceDelay(750);
 }
 
 static void antennaToIridium() {
     DebugPrintln(F("[RF] Antenna -> Iridium"));
     configureGnssEnPin();
     digitalWrite(GNSS_EN, HIGH);
-    delay(250);
+    MAVLinkInterface_serviceDelay(250);
 }
 
 // ============================================================================
@@ -135,13 +141,13 @@ static void modemPowerDown() {
 static bool chargeSupercaps() {
     DebugPrintln(F("Iridium: Charging supercaps..."));
     digitalWrite(SUPERCAP_CHG_EN, HIGH);
-    delay(INITIAL_CHARGE_DELAY_MS);
+    MAVLinkInterface_serviceDelay(INITIAL_CHARGE_DELAY_MS);
 
     unsigned long startTime = millis();
     bool pgoodReceived = false;
     while (!pgoodReceived && (millis() - startTime < SUPERCAP_CHARGE_TIMEOUT_MS)) {
         pgoodReceived = (digitalRead(SUPERCAP_PGOOD) == HIGH);
-        delay(100);
+        MAVLinkInterface_serviceDelay(100);
     }
 
     if (!pgoodReceived) {
@@ -153,7 +159,7 @@ static bool chargeSupercaps() {
     DebugPrintln(F("Iridium: PGOOD, top-up..."));
     unsigned long topupStart = millis();
     while ((millis() - topupStart) < SUPERCAP_TOPUP_MS) {
-        delay(100);
+        MAVLinkInterface_serviceDelay(100);
     }
 
     DebugPrintln(F("Iridium: Supercap charging complete"));
@@ -198,7 +204,7 @@ bool IridiumManager_init(IridiumSBD* modem) {
 
     DebugPrintln(F("Iridium: Enabling 9603N power..."));
     digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);
+    MAVLinkInterface_serviceDelay(1000);
 
     modemPtr->setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
     modemPtr->adjustSendReceiveTimeout(180);
@@ -278,7 +284,7 @@ static bool iridiumSendText(const char* message) {
 
     DebugPrintln(F("Iridium: Enabling 9603N power..."));
     digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);
+    MAVLinkInterface_serviceDelay(1000);
 
     DebugPrintln(F("Iridium: Starting modem..."));
     int err = modemPtr->begin();
@@ -317,7 +323,7 @@ static bool iridiumSendText(const char* message) {
 
         DebugPrint(F("Iridium: Attempt failed, error "));
         DebugPrintln(err);
-        if (attempt < MAX_IRIDIUM_RETRY) delay(3000);
+        if (attempt < MAX_IRIDIUM_RETRY) MAVLinkInterface_serviceDelay(3000);
     }
 
     modemPowerDown();
@@ -396,7 +402,7 @@ bool IridiumManager_sendBinary(uint8_t* data, size_t length) {
     }
 
     digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);
+    MAVLinkInterface_serviceDelay(1000);
 
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
@@ -427,7 +433,7 @@ bool IridiumManager_checkMessages(char* buffer, size_t* bufferSize) {
     }
 
     digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);
+    MAVLinkInterface_serviceDelay(1000);
 
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
@@ -483,7 +489,7 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
 
     DebugPrintln(F("Iridium: Enabling 9603N power..."));
     digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);
+    MAVLinkInterface_serviceDelay(1000);
 
     DebugPrintln(F("Iridium: Starting modem..."));
     int err = modemPtr->begin();
@@ -528,7 +534,7 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
 
         DebugPrint(F("Iridium: Attempt failed, error "));
         DebugPrintln(err);
-        if (attempt < MAX_IRIDIUM_RETRY) delay(3000);
+        if (attempt < MAX_IRIDIUM_RETRY) MAVLinkInterface_serviceDelay(3000);
     }
 
     if (sendOk) {
@@ -565,7 +571,7 @@ bool IridiumManager_checkMT(uint8_t* mtMsgId,
     }
 
     digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);
+    MAVLinkInterface_serviceDelay(1000);
 
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
@@ -601,7 +607,7 @@ int IridiumManager_getSignalQuality() {
     }
 
     digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);
+    MAVLinkInterface_serviceDelay(1000);
 
     int err = modemPtr->begin();
     if (err != ISBD_SUCCESS) {
@@ -633,7 +639,7 @@ void IridiumManager_wake() {
     digitalWrite(SUPERCAP_CHG_EN, HIGH);
     delay(100);
     digitalWrite(IRIDIUM_PWR_EN, HIGH);
-    delay(1000);
+    MAVLinkInterface_serviceDelay(1000);
 }
 
 bool IridiumManager_isReady() {

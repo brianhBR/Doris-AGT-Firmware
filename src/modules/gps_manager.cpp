@@ -186,13 +186,15 @@ bool GPSManager_reinit() {
     // (basic UBX handshake works) but setAutoPVT()'s CFG-MSG can be lost,
     // leaving NAV-PVT output disabled in RAM. Symptom: PVT watchdog
     // reinit fires repeatedly after every long Iridium TX.
-    delay(2000);
+    // Serviced wait: keep the MAVLink RX drained so it can't overflow/wedge
+    // while we let the ZOE-M8Q reload its BBR config.
+    MAVLinkInterface_serviceDelay(2000);
 
     // BBR retains config from initial setup; skip full reconfiguration
     bool useLightInit = configSavedToBBR;
     if (!initI2CAndGPS(!useLightInit)) {
         DebugPrintln(F("GPS: Re-init FAILED, retrying with full config..."));
-        delay(1000);
+        MAVLinkInterface_serviceDelay(1000);
         if (!initI2CAndGPS(true)) {
             DebugPrintln(F("GPS: Re-init FAILED"));
             return false;
