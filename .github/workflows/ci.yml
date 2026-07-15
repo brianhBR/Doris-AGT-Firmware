@@ -39,12 +39,9 @@ jobs:
             build/doris-agt.bin
             build/doris-agt-no-relays.bin
             build/doris-agt-selftest.bin
-            .pio/build/SparkFun_RedBoard_Artemis_ATP/firmware.elf
-            .pio/build/SparkFun_RedBoard_Artemis_ATP/firmware.map
-            .pio/build/no-relays/firmware.elf
-            .pio/build/no-relays/firmware.map
-            .pio/build/selftest/firmware.elf
-            .pio/build/selftest/firmware.map
+            build/doris-agt.elf
+            build/doris-agt-no-relays.elf
+            build/doris-agt-selftest.elf
           if-no-files-found: error
           retention-days: 30
 
