@@ -222,10 +222,12 @@ Status ────────────► NeoPixels
 
 ## Iridium Messages
 
-Position reports include mission statistics:
+Mission position reports use a compact positional CSV that fits one Iridium
+credit (<=50 bytes). Fields, in order: `lat,lon,sats,voltage,leak,max_depth_m`
 ```
-LAT:37.422408,LON:-122.084108,ALT:15.2,SPD:2.5,SAT:12,BATT:12.45V
+10.902673,-57.671802,4,16.49,0,42.6
 ```
+When no mission data is available the report is truncated to `lat,lon,sats,voltage`.
 
 When in RECOVERY after failsafe, reports also include depth and failsafe source information.
 

@@ -355,26 +355,22 @@ bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
     if (!gpsData->valid) return false;
     float vbat = getBusVoltage();
 
+    // Positional CSV to fit one Iridium credit (<=50 bytes). ALT dropped
+    // (no value at sea level). Field order: LAT,LON,SAT,V[,LEAK,MAXD]
     char message[340];
     int pos = 0;
-    pos += snprintf(message + pos, sizeof(message) - pos, "LAT:");
     pos = appendFloat(message, pos, sizeof(message), gpsData->latitude, 6);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",LON:");
+    pos += snprintf(message + pos, sizeof(message) - pos, ",");
     pos = appendFloat(message, pos, sizeof(message), gpsData->longitude, 6);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",ALT:");
-    pos = appendFloat(message, pos, sizeof(message), gpsData->altitude, 1);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",SAT:%d", gpsData->satellites);
+    pos += snprintf(message + pos, sizeof(message) - pos, ",%d,", gpsData->satellites);
 
     if (mission) {
         float v = mission->battery_voltage > 0 ? mission->battery_voltage : vbat;
-        pos += snprintf(message + pos, sizeof(message) - pos, ",V:");
         pos = appendFloat(message, pos, sizeof(message), v, 2);
-        pos += snprintf(message + pos, sizeof(message) - pos, ",LEAK:%d,MAXD:",
+        pos += snprintf(message + pos, sizeof(message) - pos, ",%d,",
                         mission->leak_detected ? 1 : 0);
         pos = appendFloat(message, pos, sizeof(message), mission->max_depth_m, 1);
-        snprintf(message + pos, sizeof(message) - pos, "m");
     } else {
-        pos += snprintf(message + pos, sizeof(message) - pos, ",V:");
         pos = appendFloat(message, pos, sizeof(message), vbat, 2);
     }
 
