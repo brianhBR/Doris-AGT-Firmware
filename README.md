@@ -176,7 +176,18 @@ pio test -e native
 pio device monitor -b 57600
 ```
 
-CI publishes both the default and `no-relays` `.bin` artifacts on each push.
+CI builds the default, `no-relays`, and `selftest` images and publishes their
+`.bin` files as workflow artifacts on every push. Pushing a version tag
+(`vX.Y.Z`) additionally cuts a **GitHub Release** with the default and
+`no-relays` `.bin` files attached (named `doris-agt-vX.Y.Z.bin` /
+`doris-agt-no-relays-vX.Y.Z.bin`). The tag is embedded as `FIRMWARE_VERSION`
+and reported over MAVLink.
+
+```bash
+# Cut a release: tag and push
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## Serial Commands
 
