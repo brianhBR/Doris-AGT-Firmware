@@ -158,6 +158,7 @@ void setup() {
 
     if (sysConfig.enableMAVLink) {
         MAVLinkInterface_init();
+        MAVLinkInterface_sendVersion();
     }
 
     if (sysConfig.enableNeoPixels) {
@@ -173,6 +174,18 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
+
+    // Re-announce the firmware version a few times early on. A telemetry logger
+    // (BlueOS / GCS) that connects a second or two after boot would otherwise
+    // miss the single STATUSTEXT sent in setup(). Cheap and self-limiting.
+    static uint8_t versionAnnounceCount = 0;
+    static unsigned long lastVersionAnnounce = 0;
+    if (sysConfig.enableMAVLink && versionAnnounceCount < 3 &&
+        (now - lastVersionAnnounce >= 3000)) {
+        MAVLinkInterface_sendVersion();
+        lastVersionAnnounce = now;
+        versionAnnounceCount++;
+    }
 
     // LEDs first: animation must stay smooth regardless of blocking I/O below.
     // Uses state/data from the previous iteration — perfectly fine for display.
@@ -448,6 +461,7 @@ void processSerialInput() {
 void processCommand(const String& cmd) {
     if (cmd == "help") {
         DebugPrintln(F("--- Commands ---"));
+        DebugPrintln(F("version           Print firmware version"));
         DebugPrintln(F("status / gps      State and GPS"));
         DebugPrintln(F("gps_diag          GPS BBR/backup battery diagnostics"));
         DebugPrintln(F("release_now       Trigger release relay (failsafe)"));
@@ -457,6 +471,12 @@ void processCommand(const String& cmd) {
         DebugPrintln(F("set_leak <0|1>    Set leak flag for testing"));
         DebugPrintln(F("config / save / set_* / enable_* / disable_*"));
         DebugPrintln(F("mesh_test / mesh_test_gps / mesh_send <text>"));
+        return;
+    }
+
+    if (cmd == "version") {
+        DebugPrint(F("Doris AGT ")); DebugPrintln(F(FIRMWARE_VERSION));
+        if (sysConfig.enableMAVLink) MAVLinkInterface_sendVersion();
         return;
     }
 

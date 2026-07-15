@@ -28,4 +28,8 @@ void MAVLinkInterface_sendSystemTime(uint64_t time_unix_usec);
 // severity: 0=EMERGENCY..6=INFO..7=DEBUG
 void MAVLinkInterface_sendStatusText(uint8_t severity, const char* text);
 
+// Send the firmware version (FIRMWARE_VERSION) as a STATUSTEXT so it lands in
+// the MAVLink telemetry logs. Called at boot and on MAVLINK_CMD_VERSION.
+void MAVLinkInterface_sendVersion();
+
 #endif // MAVLINK_INTERFACE_H

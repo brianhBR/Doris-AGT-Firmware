@@ -287,6 +287,12 @@ void MAVLinkInterface_sendStatusText(uint8_t severity, const char* text) {
     MAVLINK_SERIAL.write(buf, len);
 }
 
+void MAVLinkInterface_sendVersion() {
+    char msg[50];
+    snprintf(msg, sizeof(msg), "Doris AGT %s", FIRMWARE_VERSION);
+    MAVLinkInterface_sendStatusText(6, msg);  // severity 6 = INFO
+}
+
 void MAVLinkInterface_handleMessage(void* msgPtr) {
     if (!initialized || !msgPtr) return;
 
@@ -395,6 +401,17 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
             }
             else if (cmd.command == MAVLINK_CMD_IRIDIUM_TEST) {
                 iridiumTestRequested = true;
+
+                mavlink_message_t ack;
+                uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+                mavlink_msg_command_ack_pack(systemId, componentId, &ack,
+                    cmd.command, MAV_RESULT_ACCEPTED, 0, 0,
+                    msg->sysid, msg->compid);
+                uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
+                MAVLINK_SERIAL.write(buf, ackLen);
+            }
+            else if (cmd.command == MAVLINK_CMD_VERSION) {
+                MAVLinkInterface_sendVersion();
 
                 mavlink_message_t ack;
                 uint8_t buf[MAVLINK_MAX_PACKET_LEN];

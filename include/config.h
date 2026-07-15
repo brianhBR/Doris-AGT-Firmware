@@ -1,6 +1,13 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+// Firmware version, injected at build time from `git describe` by git_version.py
+// (e.g. "v0.1.0" or "v0.1.0-3-gabc1234-dirty"). Fallback keeps non-PlatformIO
+// or IDE-index builds compiling.
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "dev"
+#endif
+
 // Suppress all Serial.print debug text so ASCII doesn't corrupt MAVLink framing.
 // Comment out this line to re-enable debug output for direct-serial debugging.
 #define SUPPRESS_DEBUG_TEXT
@@ -94,6 +101,7 @@
 #define MAVLINK_CMD_GPS_DIAG       31012  // MAV_CMD_USER_3
 #define MAVLINK_CMD_IRIDIUM_TEST   31013  // MAV_CMD_USER_4
 #define MAVLINK_CMD_REBOOT         31014  // MAV_CMD_USER_5
+#define MAVLINK_CMD_VERSION        31015  // MAV_CMD_USER_6 (report firmware version)
 
 // ============================================================================
 // BATTERY MONITORING & FAILSAFE
