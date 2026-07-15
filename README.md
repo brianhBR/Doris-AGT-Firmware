@@ -57,7 +57,7 @@ electrolytic release) only as a remotely-commandable hardware output:
 
 - **MAVLink (USB, 57600 baud)** — `GPS_INPUT` to ArduSub for navigation,
   `SYSTEM_TIME` once the RTC has been synced from a valid GPS fix, periodic
-  heartbeats. Component ID 191 (`MAV_COMP_ID_ONBOARD_COMPUTER`).
+  heartbeats. Component ID 192 (`MAV_COMP_ID_ONBOARD_COMPUTER2`).
 - **Iridium 9603N** — Doris binary SBD telemetry (SolarSurfer2-compatible
   framing) plus MT command support. Transmits only in `RECOVERY` (or on
   demand via `iridium_test`).

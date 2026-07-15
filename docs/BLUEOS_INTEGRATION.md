@@ -301,7 +301,7 @@ The AGT sends MAVLink messages to the Navigator containing GPS data, battery sta
 
 1. **HEARTBEAT** (ID 0)
    - System ID: 1
-   - Component ID: 191 (MAV_COMP_ID_ONBOARD_COMPUTER)
+   - Component ID: 192 (MAV_COMP_ID_ONBOARD_COMPUTER2)
    - Sent every 1 second
 
 2. **GPS_RAW_INT** (ID 24)

@@ -127,7 +127,7 @@ save
 
 # Connect Navigator to AGT via USB
 # Use MAVProxy or Mission Planner to verify GPS data
-# System ID: 1, Component ID: 191
+# System ID: 1, Component ID: 192
 ```
 
 ### NeoPixel Test

@@ -39,7 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Uses SoftwareSerial instead of hardware UART0
   - RAK4603 connected via J10 Qwiic connector (not SPI header)
 - USB serial baud changed from 115200 to 57600 (shared debug + MAVLink)
-- MAVLink component ID changed from MAV_COMP_ID_GPS to MAV_COMP_ID_ONBOARD_COMPUTER (191)
+- MAVLink component ID changed from MAV_COMP_ID_GPS to MAV_COMP_ID_ONBOARD_COMPUTER2 (192, avoids BlueOS/MAVLink server conflict on 191)
 - MAVLink type changed from GPS to MAV_TYPE_ONBOARD_CONTROLLER
 - PSM disabled by default (MbedOS mutex issues with analog reads)
 - Default Meshtastic interval changed from 30s to 3s

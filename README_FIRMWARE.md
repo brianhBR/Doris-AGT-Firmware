@@ -235,7 +235,7 @@ The AGT sends the following MAVLink messages to the Navigator:
 
 1. **HEARTBEAT** - Every 1 second
    - System ID: 1
-   - Component ID: 191 (MAV_COMP_ID_ONBOARD_COMPUTER)
+   - Component ID: 192 (MAV_COMP_ID_ONBOARD_COMPUTER2)
 
 2. **GPS_RAW_INT** - At configured interval (default 1 Hz)
    - Position, altitude, speed, course
@@ -282,7 +282,7 @@ The AGT receives and processes:
 - Verify USB connection to Navigator
 - Baud rate: 57600
 - Use MAVLink inspector to verify messages
-- Check system/component IDs (sysid=1, compid=191)
+- Check system/component IDs (sysid=1, compid=192)
 
 ### NeoPixels Not Working
 - Verify data pin (GPIO32)

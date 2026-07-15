@@ -150,7 +150,7 @@
 // MAVLINK CONFIGURATION
 // ============================================================================
 #define MAVLINK_SYSTEM_ID        1      // Same vehicle as autopilot
-#define MAVLINK_COMPONENT_ID     191    // MAV_COMP_ID_ONBOARD_COMPUTER
+#define MAVLINK_COMPONENT_ID     192    // MAV_COMP_ID_ONBOARD_COMPUTER2 (192 avoids BlueOS/MAVLink server conflict on 191)
 #define MAVLINK_HEARTBEAT_MS     1000
 
 // ============================================================================
