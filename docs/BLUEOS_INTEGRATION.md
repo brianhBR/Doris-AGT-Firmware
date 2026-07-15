@@ -127,7 +127,7 @@ save
 #### GPS Information
 ```
 gps                                # Show GPS position or satellite count
-gps_diag                           # GPS BBR/backup battery diagnostics
+debug                              # Firmware version, RockBLOCK IMEI, GPS diagnostics
 ```
 
 #### Meshtastic Testing

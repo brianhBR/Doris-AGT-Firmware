@@ -463,7 +463,7 @@ void processCommand(const String& cmd) {
         DebugPrintln(F("--- Commands ---"));
         DebugPrintln(F("version           Print firmware version"));
         DebugPrintln(F("status / gps      State and GPS"));
-        DebugPrintln(F("gps_diag          GPS BBR/backup battery diagnostics"));
+        DebugPrintln(F("debug             Version, IMEI, and GPS diagnostics"));
         DebugPrintln(F("release_now       Trigger release relay (failsafe)"));
         DebugPrintln(F("reset             Back to PRE_DIVE"));
         DebugPrintln(F("iridium_test      Send Iridium test message"));
@@ -495,7 +495,14 @@ void processCommand(const String& cmd) {
         }
         return;
     }
-    if (cmd == "gps_diag") {
+    if (cmd == "debug") {
+        DebugPrint(F("Doris AGT ")); DebugPrintln(F(FIRMWARE_VERSION));
+        char imei[16];
+        if (IridiumManager_getIMEI(imei, sizeof(imei))) {
+            DebugPrint(F("IMEI: ")); DebugPrintln(imei);
+        } else {
+            DebugPrintln(F("IMEI: unknown (Iridium not powered yet)"));
+        }
         GPSManager_printDiagnostics();
         return;
     }

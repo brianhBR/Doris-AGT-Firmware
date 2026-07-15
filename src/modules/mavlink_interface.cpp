@@ -6,6 +6,10 @@
 
 extern bool iridiumTestRequested;
 
+// Provided by iridium_manager. Returns false until the modem has been powered
+// up at least once (IMEI is read and cached on first modem session).
+bool IridiumManager_getIMEI(char* buf, size_t len);
+
 // Platform glue for MAVLink (maps MAVLink UART helpers to our Serial)
 #include "mavlink_platform.h"
 
@@ -291,6 +295,20 @@ void MAVLinkInterface_sendVersion() {
     char msg[50];
     snprintf(msg, sizeof(msg), "Doris AGT %s", FIRMWARE_VERSION);
     MAVLinkInterface_sendStatusText(6, msg);  // severity 6 = INFO
+
+    // Report the RockBLOCK IMEI on its own line if known. Kept separate from the
+    // version string so a long dev-build version tag can't truncate the IMEI
+    // (STATUSTEXT text is capped at 50 chars).
+    char imei[16];
+    if (IridiumManager_getIMEI(imei, sizeof(imei))) {
+        snprintf(msg, sizeof(msg), "Doris AGT IMEI:%s", imei);
+        MAVLinkInterface_sendStatusText(6, msg);
+    }
+}
+
+void MAVLinkInterface_sendDebug() {
+    MAVLinkInterface_sendVersion();     // firmware version + IMEI
+    GPSManager_printDiagnostics();      // GPS BBR / antenna / coin-cell health
 }
 
 void MAVLinkInterface_handleMessage(void* msgPtr) {
@@ -388,8 +406,8 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
                 uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
                 MAVLINK_SERIAL.write(buf, ackLen);
             }
-            else if (cmd.command == MAVLINK_CMD_GPS_DIAG) {
-                GPSManager_printDiagnostics();
+            else if (cmd.command == MAVLINK_CMD_AGT_DEBUG) {
+                MAVLinkInterface_sendDebug();
 
                 mavlink_message_t ack;
                 uint8_t buf[MAVLINK_MAX_PACKET_LEN];
@@ -401,17 +419,6 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
             }
             else if (cmd.command == MAVLINK_CMD_IRIDIUM_TEST) {
                 iridiumTestRequested = true;
-
-                mavlink_message_t ack;
-                uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-                mavlink_msg_command_ack_pack(systemId, componentId, &ack,
-                    cmd.command, MAV_RESULT_ACCEPTED, 0, 0,
-                    msg->sysid, msg->compid);
-                uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
-                MAVLINK_SERIAL.write(buf, ackLen);
-            }
-            else if (cmd.command == MAVLINK_CMD_VERSION) {
-                MAVLinkInterface_sendVersion();
 
                 mavlink_message_t ack;
                 uint8_t buf[MAVLINK_MAX_PACKET_LEN];

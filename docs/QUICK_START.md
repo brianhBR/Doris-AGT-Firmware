@@ -91,7 +91,7 @@ save
 2. Watch serial monitor for: `GPS: Fix - Lat: XX.XXXXXX Lon: XX.XXXXXX Sats: X`
 3. Should acquire fix within 2-3 minutes
 4. Use `gps` command to check status
-5. Use `gps_diag` for backup battery and BBR diagnostics
+5. Use `debug` for firmware version, RockBLOCK IMEI, and backup battery / BBR diagnostics
 
 ### Iridium Test
 ```
@@ -206,7 +206,7 @@ reset
 | Issue | Quick Check |
 |-------|-------------|
 | No serial output | Check USB cable, driver, baud rate (57600) |
-| GPS not locking | Check antenna, sky view, wait 3 minutes, `gps_diag` |
+| GPS not locking | Check antenna, sky view, wait 3 minutes, `debug` |
 | Iridium fails | Check supercap charged, signal quality >= 2, must be in SELF_TEST or RECOVERY |
 | Meshtastic no position | Check D39→RAK J10 RX wiring, `mesh_test_gps`, baud 9600 |
 | No NeoPixels | Check GPIO32 connection, external 5V power supply |

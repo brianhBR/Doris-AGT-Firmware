@@ -228,7 +228,7 @@ help                      # Show all commands
 start_self_test           # PRE_MISSION → SELF_TEST
 status                    # Print current state, time, failsafe info
 gps                       # Show GPS position or satellite count
-gps_diag                  # GPS BBR/backup battery diagnostics
+debug                     # Version, IMEI, GPS BBR/backup battery diagnostics
 release_now               # Trigger failsafe (fires release relay → RECOVERY)
 reset                     # Return to PRE_MISSION
 set_leak <0|1>            # Set/clear leak flag for testing

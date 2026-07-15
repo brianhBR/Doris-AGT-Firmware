@@ -264,7 +264,7 @@ save
 **Testing Checklist:**
 ```
 gps                     # Check GPS fix
-gps_diag                # Check GPS backup battery
+debug                   # Version, IMEI, GPS backup battery
 mesh_test_gps           # Send test NMEA to Meshtastic
 status                  # Check state machine
 start_self_test         # Enter self-test
@@ -287,7 +287,7 @@ status                    # Print state info
 ### GPS
 ```
 gps                       # Show position or satellite count
-gps_diag                  # BBR/backup battery diagnostics
+debug                     # Version, IMEI, BBR/backup battery diagnostics
 ```
 
 ### Meshtastic

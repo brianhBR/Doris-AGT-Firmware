@@ -107,7 +107,7 @@ Connect to the AGT via USB serial (57600 baud) and use these commands:
 | `start_self_test` | Begin self-test sequence | `start_self_test` |
 | `status` | Show state machine status | `status` |
 | `gps` | Show GPS position or satellite count | `gps` |
-| `gps_diag` | GPS BBR/backup battery diagnostics | `gps_diag` |
+| `debug` | Firmware version, RockBLOCK IMEI, and GPS diagnostics | `debug` |
 | `release_now` | Trigger failsafe (fire release relay) | `release_now` |
 | `set_leak <0\|1>` | Set/clear leak flag for testing | `set_leak 1` |
 | `set_iridium_interval <seconds>` | Set Iridium reporting interval | `set_iridium_interval 600` |
@@ -263,7 +263,7 @@ The AGT receives and processes:
 - Ensure clear view of sky
 - Wait 2-3 minutes for cold start
 - Use `gps` command to check satellite count
-- Use `gps_diag` to check BBR/backup battery status
+- Use `debug` to check BBR/backup battery status (also prints version + IMEI)
 
 ### Iridium Transmission Failures
 - Verify supercapacitor is charged (PGOOD LED)

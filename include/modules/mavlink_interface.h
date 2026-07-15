@@ -29,7 +29,12 @@ void MAVLinkInterface_sendSystemTime(uint64_t time_unix_usec);
 void MAVLinkInterface_sendStatusText(uint8_t severity, const char* text);
 
 // Send the firmware version (FIRMWARE_VERSION) as a STATUSTEXT so it lands in
-// the MAVLink telemetry logs. Called at boot and on MAVLINK_CMD_VERSION.
+// the MAVLink telemetry logs. Also emits the RockBLOCK IMEI on a second line
+// once it has been cached. Called at boot and by MAVLinkInterface_sendDebug().
 void MAVLinkInterface_sendVersion();
+
+// Dump AGT debug info as STATUSTEXT: firmware version, RockBLOCK IMEI, and the
+// GPS diagnostics. Triggered on demand via MAVLINK_CMD_AGT_DEBUG.
+void MAVLinkInterface_sendDebug();
 
 #endif // MAVLINK_INTERFACE_H

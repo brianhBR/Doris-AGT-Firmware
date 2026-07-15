@@ -98,10 +98,12 @@
 // MAVLink user command IDs for Lua → AGT control
 #define MAVLINK_CMD_LED_CONTROL    31010  // MAV_CMD_USER_1
 #define MAVLINK_CMD_MISSION_STATUS 31011  // MAV_CMD_USER_2
-#define MAVLINK_CMD_GPS_DIAG       31012  // MAV_CMD_USER_3
+#define MAVLINK_CMD_AGT_DEBUG      31012  // MAV_CMD_USER_3 (dump firmware version, RockBLOCK IMEI, GPS diagnostics)
 #define MAVLINK_CMD_IRIDIUM_TEST   31013  // MAV_CMD_USER_4
 #define MAVLINK_CMD_REBOOT         31014  // MAV_CMD_USER_5
-#define MAVLINK_CMD_VERSION        31015  // MAV_CMD_USER_6 (report firmware version)
+// NOTE: MAVLink only defines MAV_CMD_USER_1..5. There is no USER_6, so the
+// former VERSION command (31015) was unsupported; version/IMEI now report via
+// MAVLINK_CMD_AGT_DEBUG above.
 
 // ============================================================================
 // BATTERY MONITORING & FAILSAFE

@@ -7,6 +7,34 @@ static IridiumSBD* modemPtr = nullptr;
 static bool modemConfigured = false;
 static bool modemReady = false;
 
+// RockBLOCK IMEI (15 digits + NUL). Read once from the modem the first time it
+// is powered up, then cached so the firmware-version report can include it
+// without a dedicated (expensive) modem power cycle.
+static char cachedIMEI[16] = {0};
+static bool imeiCached = false;
+
+// Read and cache the IMEI. Must only be called while the modem is powered on
+// and begin() has succeeded. No-op once cached, so it is cheap to call after
+// every modem session.
+static void cacheIMEI() {
+    if (imeiCached || modemPtr == nullptr) return;
+    char buf[16] = {0};
+    if (modemPtr->getIMEI(buf, sizeof(buf)) == ISBD_SUCCESS && buf[0] != '\0') {
+        strncpy(cachedIMEI, buf, sizeof(cachedIMEI) - 1);
+        cachedIMEI[sizeof(cachedIMEI) - 1] = '\0';
+        imeiCached = true;
+        DebugPrint(F("Iridium: IMEI "));
+        DebugPrintln(cachedIMEI);
+    }
+}
+
+bool IridiumManager_getIMEI(char* buf, size_t len) {
+    if (!imeiCached || buf == nullptr || len == 0) return false;
+    strncpy(buf, cachedIMEI, len - 1);
+    buf[len - 1] = '\0';
+    return true;
+}
+
 #define SUPERCAP_CHARGE_TIMEOUT_MS  120000
 #define SUPERCAP_TOPUP_MS           10000
 #define INITIAL_CHARGE_DELAY_MS     2000
@@ -191,6 +219,8 @@ bool IridiumManager_init(IridiumSBD* modem) {
     DebugPrintln(F("Iridium: Initialized successfully"));
     DebugPrintln(F("================================"));
 
+    cacheIMEI();
+
     modemPowerDown();
     antennaToGPS();
 
@@ -260,6 +290,7 @@ static bool iridiumSendText(const char* message) {
         return false;
     }
     modemReady = true;
+    cacheIMEI();
 
     int csq = -1;
     err = modemPtr->getSignalQuality(csq);
@@ -374,6 +405,8 @@ bool IridiumManager_sendBinary(uint8_t* data, size_t length) {
         return false;
     }
 
+    cacheIMEI();
+
     err = modemPtr->sendSBDBinary(data, length);
     bool success = (err == ISBD_SUCCESS);
     if (success) modemPtr->clearBuffers(ISBD_CLEAR_MO);
@@ -402,6 +435,8 @@ bool IridiumManager_checkMessages(char* buffer, size_t* bufferSize) {
         antennaToGPS();
         return false;
     }
+
+    cacheIMEI();
 
     size_t rxBufferSize = *bufferSize;
     err = modemPtr->sendReceiveSBDText(nullptr, (uint8_t*)buffer, rxBufferSize);
@@ -460,6 +495,7 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
         return false;
     }
     modemReady = true;
+    cacheIMEI();
 
     int csq = -1;
     err = modemPtr->getSignalQuality(csq);
@@ -538,6 +574,8 @@ bool IridiumManager_checkMT(uint8_t* mtMsgId,
         return false;
     }
 
+    cacheIMEI();
+
     uint8_t rxBuf[270];
     size_t rxLen = sizeof(rxBuf);
     err = modemPtr->sendReceiveSBDBinary(nullptr, 0, rxBuf, rxLen);
@@ -571,6 +609,8 @@ int IridiumManager_getSignalQuality() {
         antennaToGPS();
         return -1;
     }
+
+    cacheIMEI();
 
     int signalQuality;
     err = modemPtr->getSignalQuality(signalQuality);

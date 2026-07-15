@@ -72,7 +72,7 @@ electrolytic release) only as a remotely-commandable hardware output:
 |------------|-------------------|------------------------------------------|
 | 31010      | `LED_CONTROL`     | Lua-commanded LED pattern / colour       |
 | 31011      | `MISSION_STATUS`  | Mission ready / status updates           |
-| 31012      | `GPS_DIAG`        | Trigger GPS BBR / backup-battery dump    |
+| 31012      | `AGT_DEBUG`       | Dump firmware version, RockBLOCK IMEI, GPS diag |
 | 31013      | `IRIDIUM_TEST`    | Send a one-off Iridium test message      |
 | 31014      | `REBOOT`          | Soft reboot the AGT                      |
 
@@ -198,7 +198,7 @@ work whenever the MAVLink parser is idle.
 help                  Show available commands
 status                Print state machine + failsafe status
 gps                   Print last GPS fix
-gps_diag              GPS BBR / backup-battery diagnostics
+debug                 Firmware version, RockBLOCK IMEI, and GPS diagnostics
 iridium_test          Queue a one-off Iridium test transmission
 reset                 Force state machine back to PRE_DIVE
 reboot                Soft reboot the AGT

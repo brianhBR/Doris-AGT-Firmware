@@ -41,6 +41,11 @@ bool IridiumManager_checkMT(uint8_t* mtMsgId,
 // Get signal quality (0-5)
 int IridiumManager_getSignalQuality();
 
+// Copy the cached RockBLOCK IMEI (15 digits) into buf. The IMEI is read and
+// cached the first time the modem is powered up for any session (send/test),
+// so this returns false until the modem has been awake at least once.
+bool IridiumManager_getIMEI(char* buf, size_t len);
+
 // Power management
 void IridiumManager_sleep();
 void IridiumManager_wake();

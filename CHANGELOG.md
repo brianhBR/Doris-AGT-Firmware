@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- `AGT_DEBUG` MAVLink command (`MAV_CMD_USER_3`, 31012) that dumps firmware
+  version, RockBLOCK IMEI, and GPS diagnostics as STATUSTEXT
+- RockBLOCK IMEI reported over MAVLink; cached on first Iridium modem power-up
 - GPS enable pin configured as open-drain for proper MOSFET gate control
 - GPS backup battery charging enabled for faster fixes
 - Proper SparkFun AGT example procedures for GPS initialization
@@ -27,10 +30,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - RAK4603 uses AGT as external GPS source
 - SoftwareSerial library for Apollo3 (third serial channel)
 - Self-test PlatformIO environment (`pio run -e selftest`)
-- Serial commands: `start_self_test`, `gps_diag`, `set_leak`, `mesh_test`, `mesh_test_gps`, `mesh_send`
+- Serial commands: `start_self_test`, `debug`, `set_leak`, `mesh_test`, `mesh_test_gps`, `mesh_send`
 - Recovery strobe LED pattern for visual location aid
 
 ### Changed
+- Replaced the unsupported `VERSION` command (`MAV_CMD_USER_6`, 31015 — MAVLink only defines USER_1..5) by folding version/IMEI reporting into `AGT_DEBUG`
+- Serial `gps_diag` command renamed to `debug` (now also prints version + IMEI)
 - State machine redesigned from 4 states (PREDEPLOYMENT/MISSION/RECOVERY/EMERGENCY) to 4 new states (PRE_MISSION/SELF_TEST/MISSION/RECOVERY)
 - GPS sleep/wake functions now use proper open-drain pin configuration
 - Updated to match SparkFun hardware design specifications
