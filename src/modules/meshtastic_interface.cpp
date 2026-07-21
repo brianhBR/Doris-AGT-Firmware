@@ -48,6 +48,15 @@ static void nmea_checksum(const char* sentence, char* outHex) {
     snprintf(outHex, 4, "%02X", (unsigned)cs);
 }
 
+// Apollo3 newlib-nano ignores the '0' zero-pad flag in snprintf (e.g. %02d,
+// %02u, %04ld all print without leading zeros). NMEA is a fixed-width format:
+// a dropped leading zero shifts the ddmm boundary or the hhmmss field and
+// corrupts the whole coordinate/time. Build fixed-width fields by hand.
+static void padUint(char* out, unsigned long val, int digits) {
+    out[digits] = '\0';
+    for (int j = digits - 1; j >= 0; j--) { out[j] = (char)('0' + (int)(val % 10)); val /= 10; }
+}
+
 // Format latitude as ddmm.mmmm,N/S (NMEA format, no %f)
 static void format_lat(double lat, char* buf, size_t len) {
     char ns = (lat >= 0) ? 'N' : 'S';
@@ -57,12 +66,12 @@ static void format_lat(double lat, char* buf, size_t len) {
     int minInt = (int)minFloat;
     long minFrac = (long)((minFloat - minInt) * 10000 + 0.5);
     if (minFrac >= 10000) { minFrac -= 10000; minInt++; }
-    // Apollo3 newlib-nano doesn't zero-pad %04ld; extract digits manually
-    char fracStr[6];
-    long mf = minFrac;
-    for (int j = 3; j >= 0; j--) { fracStr[j] = '0' + (int)(mf % 10); mf /= 10; }
-    fracStr[4] = '\0';
-    snprintf(buf, len, "%02d%02d.%s,%c", deg, minInt, fracStr, ns);
+    if (minInt >= 60) { minInt -= 60; deg++; }
+    char degStr[3], minStr[3], fracStr[5];
+    padUint(degStr, (unsigned long)deg, 2);
+    padUint(minStr, (unsigned long)minInt, 2);
+    padUint(fracStr, (unsigned long)minFrac, 4);
+    snprintf(buf, len, "%s%s.%s,%c", degStr, minStr, fracStr, ns);
 }
 
 // Format longitude as dddmm.mmmm,E/W (NMEA format, no %f)
@@ -74,12 +83,12 @@ static void format_lon(double lon, char* buf, size_t len) {
     int minInt = (int)minFloat;
     long minFrac = (long)((minFloat - minInt) * 10000 + 0.5);
     if (minFrac >= 10000) { minFrac -= 10000; minInt++; }
-    // Apollo3 newlib-nano doesn't zero-pad %04ld; extract digits manually
-    char fracStr[6];
-    long mf = minFrac;
-    for (int j = 3; j >= 0; j--) { fracStr[j] = '0' + (int)(mf % 10); mf /= 10; }
-    fracStr[4] = '\0';
-    snprintf(buf, len, "%03d%02d.%s,%c", deg, minInt, fracStr, ew);
+    if (minInt >= 60) { minInt -= 60; deg++; }
+    char degStr[4], minStr[3], fracStr[5];
+    padUint(degStr, (unsigned long)deg, 3);
+    padUint(minStr, (unsigned long)minInt, 2);
+    padUint(fracStr, (unsigned long)minFrac, 4);
+    snprintf(buf, len, "%s%s.%s,%c", degStr, minStr, fracStr, ew);
 }
 
 // Append a float as "int.frac" into buf at position pos (no %f)
@@ -137,11 +146,24 @@ bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
     if (yr >= 100) yr -= 2000;
     uint8_t mo = gpsData->month, d = gpsData->day;
 
+    // Fixed-width, zero-padded time/date/sat fields (see padUint note above).
+    // A dropped leading zero here malforms the NMEA time/date, which
+    // Meshtastic rejects and falls back to the Unix epoch (1969/1970).
+    char hhmmss[7];
+    padUint(hhmmss, h, 2);
+    padUint(hhmmss + 2, m, 2);
+    padUint(hhmmss + 4, s, 2);
+    char satStr[3];
+    padUint(satStr, gpsData->satellites, 2);
+    char ddmmyy[7];
+    padUint(ddmmyy, d, 2);
+    padUint(ddmmyy + 2, mo, 2);
+    padUint(ddmmyy + 4, (unsigned long)(yr % 100), 2);
+
     // $GPGGA — Apollo3 snprintf lacks %f, build with integer math
     char gga[128];
-    int pos = snprintf(gga, sizeof(gga), "GPGGA,%02u%02u%02u.00,%s,%s,1,%02u,",
-                       (unsigned)h, (unsigned)m, (unsigned)s,
-                       latStr, lonStr, (unsigned)gpsData->satellites);
+    int pos = snprintf(gga, sizeof(gga), "GPGGA,%s.00,%s,%s,1,%s,",
+                       hhmmss, latStr, lonStr, satStr);
     pos = appendFixedPoint(gga, pos, sizeof(gga), gpsData->hdop, 1);
     pos += snprintf(gga + pos, sizeof(gga) - pos, ",");
     pos = appendFixedPoint(gga, pos, sizeof(gga), gpsData->altitude, 1);
@@ -151,14 +173,12 @@ bool MeshtasticInterface_sendPosition(GPSData* gpsData) {
     // $GPRMC
     float speedKnots = gpsData->speed * 0.539957f;
     char rmc[128];
-    pos = snprintf(rmc, sizeof(rmc), "GPRMC,%02u%02u%02u.00,A,%s,%s,",
-                   (unsigned)h, (unsigned)m, (unsigned)s,
-                   latStr, lonStr);
+    pos = snprintf(rmc, sizeof(rmc), "GPRMC,%s.00,A,%s,%s,",
+                   hhmmss, latStr, lonStr);
     pos = appendFixedPoint(rmc, pos, sizeof(rmc), speedKnots, 1);
     pos += snprintf(rmc + pos, sizeof(rmc) - pos, ",");
     pos = appendFixedPoint(rmc, pos, sizeof(rmc), gpsData->course, 1);
-    snprintf(rmc + pos, sizeof(rmc) - pos, ",%02u%02u%02u,,,A",
-             (unsigned)d, (unsigned)mo, (unsigned)(yr % 100));
+    snprintf(rmc + pos, sizeof(rmc) - pos, ",%s,,,A", ddmmyy);
     send_nmea_line(rmc);
     return true;
 }
