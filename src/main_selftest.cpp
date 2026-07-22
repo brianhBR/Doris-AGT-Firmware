@@ -208,6 +208,14 @@ static void meshSendLine(const char* body) {
     delay(10);
 }
 
+// Apollo3 newlib-nano ignores the '0' zero-pad flag in snprintf, which
+// silently drops leading zeros from fixed-width NMEA fields (ddmm.mmmm,
+// hhmmss, dddmm) and corrupts the parsed position/time. Build them by hand.
+static void meshPad(char* out, unsigned long val, int digits) {
+    out[digits] = '\0';
+    for (int j = digits - 1; j >= 0; j--) { out[j] = (char)('0' + (int)(val % 10)); val /= 10; }
+}
+
 static void meshSendPosition(double lat, double lon, float alt, uint8_t sats,
                               uint8_t h, uint8_t m, uint8_t s) {
     char ns = (lat >= 0) ? 'N' : 'S';
@@ -216,6 +224,8 @@ static void meshSendPosition(double lat, double lon, float alt, uint8_t sats,
     double latMin = (lat - latDeg) * 60.0;
     int latMinI = (int)latMin;
     long latMinF = (long)((latMin - latMinI) * 10000 + 0.5);
+    if (latMinF >= 10000) { latMinF -= 10000; latMinI++; }
+    if (latMinI >= 60) { latMinI -= 60; latDeg++; }
 
     char ew = (lon >= 0) ? 'E' : 'W';
     if (lon < 0) lon = -lon;
@@ -223,25 +233,37 @@ static void meshSendPosition(double lat, double lon, float alt, uint8_t sats,
     double lonMin = (lon - lonDeg) * 60.0;
     int lonMinI = (int)lonMin;
     long lonMinF = (long)((lonMin - lonMinI) * 10000 + 0.5);
+    if (lonMinF >= 10000) { lonMinF -= 10000; lonMinI++; }
+    if (lonMinI >= 60) { lonMinI -= 60; lonDeg++; }
 
     long altI = (long)alt;
     long altF = (long)(((alt < 0 ? -alt : alt) - (altI < 0 ? -altI : altI)) * 10 + 0.5);
 
+    char hhmmss[7];
+    meshPad(hhmmss, h, 2);
+    meshPad(hhmmss + 2, m, 2);
+    meshPad(hhmmss + 4, s, 2);
+    char latStr[11], lonStr[12], satStr[3];
+    meshPad(latStr, (unsigned long)latDeg, 2);
+    meshPad(latStr + 2, (unsigned long)latMinI, 2);
+    latStr[4] = '.';
+    meshPad(latStr + 5, (unsigned long)latMinF, 4);
+    meshPad(lonStr, (unsigned long)lonDeg, 3);
+    meshPad(lonStr + 3, (unsigned long)lonMinI, 2);
+    lonStr[5] = '.';
+    meshPad(lonStr + 6, (unsigned long)lonMinF, 4);
+    meshPad(satStr, sats, 2);
+
     char gga[128];
     snprintf(gga, sizeof(gga),
-             "GPGGA,%02u%02u%02u.00,%02d%02d.%04ld,%c,%03d%02d.%04ld,%c,1,%02u,0.9,%ld.%01ld,M,0.0,M,,",
-             (unsigned)h, (unsigned)m, (unsigned)s,
-             latDeg, latMinI, latMinF, ns,
-             lonDeg, lonMinI, lonMinF, ew,
-             (unsigned)sats, altI, altF);
+             "GPGGA,%s.00,%s,%c,%s,%c,1,%s,0.9,%ld.%01ld,M,0.0,M,,",
+             hhmmss, latStr, ns, lonStr, ew, satStr, altI, altF);
     meshSendLine(gga);
 
     char rmc[128];
     snprintf(rmc, sizeof(rmc),
-             "GPRMC,%02u%02u%02u.00,A,%02d%02d.%04ld,%c,%03d%02d.%04ld,%c,0.0,0.0,150326,,,A",
-             (unsigned)h, (unsigned)m, (unsigned)s,
-             latDeg, latMinI, latMinF, ns,
-             lonDeg, lonMinI, lonMinF, ew);
+             "GPRMC,%s.00,A,%s,%c,%s,%c,0.0,0.0,150326,,,A",
+             hhmmss, latStr, ns, lonStr, ew);
     meshSendLine(rmc);
 
     meshSerial->flush();
