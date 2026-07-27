@@ -3,9 +3,10 @@
 **Oceanographic Drop Camera — Subordinate Safety Monitor & Comms Relay**
 
 Firmware for the SparkFun Artemis Global Tracker (AGT) used on the Doris deep-sea
-drop-camera platform. The AGT does **not** run the dive. It is the sole GPIO35
-release driver and provides independently guarded release and surface-power
-safety fallbacks alongside GPS, Iridium, Meshtastic, and status LEDs.
+drop-camera platform. The AGT does **not** run the dive. It drives a GPIO35
+release output that mirrors the Navigator's own release relay, and provides
+independently guarded release and surface-power safety fallbacks alongside GPS,
+Iridium, Meshtastic, and status LEDs.
 
 ## Mission Profile
 
@@ -112,8 +113,11 @@ pattern.
   Wired through **NC**: coil OFF = devices powered (safe default through MCU
   resets). Coil energizes only after qualified surface shutdown + BlueOS ACK.
 - **Relay 2 — Electrolytic release** (GPIO35) — wired through **NO**, active
-  HIGH. AGT is the sole driver; ON is persisted and latched until an explicit,
-  guarded Lua OFF after the minimum hold.
+  HIGH. ON is persisted and latched until an explicit, guarded Lua OFF after the
+  minimum hold. Lua mirrors the same request to a Navigator relay, so both
+  controllers command a release; wire the actuator to exactly one of the two
+  outputs. Power management (Relay 1) may only be used when the actuator is
+  wired here, because cutting Pi power disables the Navigator output.
 
 ### Battery
 4S LiPo or equivalent marine battery, sized for seafloor recording + multi-day

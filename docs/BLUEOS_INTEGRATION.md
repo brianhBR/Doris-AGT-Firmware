@@ -317,13 +317,26 @@ path. If any qualification input becomes stale or false before cutoff, the
 request/ACK is cancelled and power remains on. There is intentionally no
 unacknowledged timeout cutoff.
 
+`1/191` is `MAV_COMP_ID_ONBOARD_COMPUTER`, which BlueOS's mavlink-server also
+advertises for itself. The ACK is deliberately accepted from that shared
+companion-side identity rather than one owned solely by the extension, so an
+operator on a laptop can also supply it. The consequence is that mavlink-server
+has to forward a message whose source matches its own advertised ID; that has
+not been confirmed on hardware. If it is dropped, the AGT never sees an ACK and
+leaves payload power on, so the failure is safe but silent — confirm the ACK
+arrives when bench-testing the handshake.
+
 `AGT_CAP` bits:
 
-- bit 0, `AGT_CAP_RELEASE_OWNER`: AGT is the sole GPIO35 release driver;
+- bit 0, `AGT_CAP_RELEASE_OWNER`: this firmware drives the GPIO35 release output
+  from `RELAY`;
 - bit 1, `AGT_CAP_SAFE_SURFACE_POWER`: AGT implements the qualified
   `PWR_SHDN`/`PWR_ACK` protocol.
 
-BlueOS must require both bits before enabling v0.3 safety integration.
+Lua mirrors each request to its own Navigator relay, so a mission is viable with
+either output wired. BlueOS therefore treats bit 0 as one of two release paths
+and requires both bits only before enabling the power-cutoff handshake, which
+disables the Navigator output along with Pi power.
 `AGT_CAP`, `REL_STAT`, and `PWR_SHDN` repeat at 1 Hz for routing/logging
 visibility.
 Release control is independent of this handshake. An active release marker is

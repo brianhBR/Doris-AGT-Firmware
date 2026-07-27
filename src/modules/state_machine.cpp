@@ -37,6 +37,10 @@ void StateMachine_init() {
     criticalVoltageStart = 0;
     surfaceQualificationActive = false;
     criticalVoltageTimingActive = false;
+    // A power cycle always restores Pi power. Nothing about the cutoff decision
+    // is persisted, and the dive evidence behind surface qualification is RAM
+    // only, so the vehicle must dive and reach recovery again before the AGT
+    // can cut power a second time.
     RelayController_setPowerManagement(true);
     DebugPrintln(F("State: PRE_DIVE"));
 }

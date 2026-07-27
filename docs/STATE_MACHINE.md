@@ -85,11 +85,35 @@ After qualification:
 Premature ACKs are rejected. Any transient or stale qualification before cutoff
 cancels the request and ACK. BlueOS must acknowledge a later request again.
 Unsigned elapsed-time subtraction keeps all bounded timers safe across
-`millis()` rollover. AGT boot/reset restores Pi power.
+`millis()` rollover.
+
+## Power cycle behavior
+
+Cutting power is an active operation: the NC power relay conducts whenever the
+coil is off, so an unpowered, reset, or crashed AGT leaves the Pi, camera, and
+lights powered. Every power cycle therefore brings the payload back up.
+
+Nothing about the cutoff decision is persisted. `MissionData_init()` clears the
+depth high-water mark and the Lua state, and `StateMachine_init()` returns to
+`PRE_DIVE` with `surfaceQualified`, `shutdownRequested`, and
+`shutdownAcknowledged` all false. Because the proof that a dive happened is that
+RAM-only high-water mark, the vehicle must dive and reach recovery again before
+the AGT can cut power a second time.
+
+That is deliberate for the on-deck case. After a recovery the autopilot has
+already cleared `DORIS_START`, so a power cycle brings Lua up in `CONFIG`
+reporting `STATE=-1`. The AGT sees no recovery signal, leaves the payload
+powered indefinitely, and the operator can download data or configure a new
+mission without the system shutting down underneath them.
+
+The accepted cost is that an AGT reset during an unattended surface wait ends
+the power saving for that deployment: the payload comes back up and stays up,
+because the AGT can no longer prove a dive occurred.
 
 ## Release controller
 
-AGT is the sole GPIO35 driver:
+The AGT drives GPIO35, mirroring the Navigator relay that Lua drives for the
+same request. Only one of the two outputs may be wired to the actuator:
 
 - finite `RELAY=1` from autopilot `1/1` latches release ON;
 - repeated ON commands are harmless;

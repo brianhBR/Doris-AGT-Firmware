@@ -13,7 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `PWR_ACK`) with strict source/value validation
 - Repeated `AGT_CAP` capability bitmask for BlueOS compatibility gating
 - Latched GPIO35 release controller with EEPROM active-state persistence,
-  guarded explicit OFF, manual/Iridium paths, and DIVING-only sensor failsafes
+  guarded explicit OFF, manual/Iridium paths, and DIVING-only sensor failsafes.
+  The output mirrors the Navigator relay that Lua still drives from the same
+  request, so the actuator may be wired to either controller — but only one.
+  Power cutoff via Relay 1 is only valid when the actuator is wired to the AGT,
+  because it takes the Navigator output offline with the Pi
 - Native tests for mission-data freshness, surface-power qualification/ACK, and
   release latch/hold/persistence behavior
 - `AGT_DEBUG` MAVLink command (`MAV_CMD_USER_3`, 31012) that dumps firmware
@@ -45,6 +49,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - Entering `RECOVERY` no longer cuts Pi power; missing/stale inputs or missing
   BlueOS ACK always keep power on, and boot/reset restores power
+- Power cutoff requires a live recovery signal from the autopilot and is never
+  persisted. A power cycle restores payload power, and because the proof of a
+  dive is a RAM-only depth high-water mark, the vehicle must dive and reach
+  recovery again before a second cutoff is possible. On deck this means the
+  operator can power cycle, download data, and configure a new mission without
+  the AGT shutting the Pi down again
+- `RELAY` command acknowledgements are only sent when the outcome changes; Lua
+  republishes the request at 2 Hz for the whole mission, which previously
+  produced a continuous STATUSTEXT stream on the link
 - BlueOS post-ACK shutdown grace increased to 30 seconds so
   `systemctl poweroff` can complete before physical cutoff
 - Release control is independent from power shutdown and no longer

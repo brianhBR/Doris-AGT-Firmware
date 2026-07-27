@@ -159,7 +159,11 @@
 **Load:** Electrolytic/galvanic drop weight ballast release mechanism
 
 **Control Logic:**
-- AGT is the sole GPIO35 driver and accepts source-validated Lua `RELAY=1`.
+- The AGT drives GPIO35 on source-validated Lua `RELAY=1`. Lua drives its own
+  Navigator relay from the same request, so wire the actuator to exactly one of
+  the two outputs — never both, since two independent outputs into one relay
+  input is not a supported configuration. Cutting Pi power with Relay 1 is only
+  permitted when the actuator is wired here.
 - ON latches, tolerates repeated commands, and is persisted across AGT reboot.
 - `RELAY=0` can clear it only after the 1500-second minimum hold and independent
   surface-safe qualification; it does not stop automatically at 1500 seconds.

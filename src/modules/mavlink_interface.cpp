@@ -24,6 +24,11 @@ static uint8_t systemId = MAVLINK_SYSTEM_ID;
 static uint8_t componentId = MAVLINK_COMPONENT_ID;
 static unsigned long lastHeartbeat = 0;
 static unsigned long lastSafetyStatus = 0;
+// Lua republishes RELAY at 2 Hz for the whole mission, so the outcome is
+// announced only when it changes instead of flooding the link.
+static bool releaseOutcomeReported = false;
+static bool lastReleaseRequestOn = false;
+static bool lastReleaseAccepted = false;
 static_assert(sizeof(MAVLINK_NAME_AGT_CAPABILITY) - 1 <= 10,
               "AGT_CAP name exceeds MAVLink field");
 static_assert(AGT_CAPABILITIES <= 0x00FFFFFFUL,
@@ -482,11 +487,23 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
                 if (validOn || validOff) {
                     bool accepted =
                         StateMachine_handleReleaseCommand(validOn);
-                    MAVLinkInterface_sendStatusText(
-                        accepted ? 6 : 4,
-                        accepted ? "RELAY: command accepted"
-                                 : "RELAY: OFF rejected (guard)");
-                    MAVLinkInterface_sendSafetyStatus();
+                    if (!releaseOutcomeReported ||
+                        lastReleaseRequestOn != validOn ||
+                        lastReleaseAccepted != accepted) {
+                        releaseOutcomeReported = true;
+                        lastReleaseRequestOn = validOn;
+                        lastReleaseAccepted = accepted;
+                        const char* text;
+                        if (!accepted) {
+                            text = "RELAY: OFF rejected (guard)";
+                        } else if (validOn) {
+                            text = "RELAY: ON latched";
+                        } else {
+                            text = "RELAY: OFF accepted";
+                        }
+                        MAVLinkInterface_sendStatusText(accepted ? 6 : 4, text);
+                        MAVLinkInterface_sendSafetyStatus();
+                    }
                 }
             } else if (fromBlueOS &&
                        namedValueIs(nv.name, MAVLINK_NAME_POWER_ACK) &&

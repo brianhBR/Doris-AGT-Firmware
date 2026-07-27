@@ -127,7 +127,7 @@
 #define AUTOPILOT_SYSTEM_ID            1
 #define AUTOPILOT_COMPONENT_ID         1
 #define BLUEOS_SYSTEM_ID               1
-#define BLUEOS_COMPONENT_ID            191
+#define BLUEOS_COMPONENT_ID            191    // MAV_COMP_ID_ONBOARD_COMPUTER; shared with mavlink-server so an operator laptop can also ACK
 #define MAVLINK_NAME_POWER_REQUEST     "PWR_SHDN" // AGT -> BlueOS, 1=request
 #define MAVLINK_NAME_POWER_ACK         "PWR_ACK"  // BlueOS -> AGT, 1=ready
 #define MAVLINK_NAME_RELEASE_COMMAND   "RELAY"    // Lua -> AGT, 0=off, 1=on
@@ -135,7 +135,7 @@
 #define MAVLINK_NAME_AGT_CAPABILITY    "AGT_CAP"  // AGT -> BlueOS, capability bitmask
 
 // AGT_CAP bits are represented exactly in NAMED_VALUE_FLOAT for this small mask.
-#define AGT_CAP_RELEASE_OWNER          (1UL << 0) // AGT is sole GPIO35 release driver
+#define AGT_CAP_RELEASE_OWNER          (1UL << 0) // AGT drives GPIO35 from RELAY
 #define AGT_CAP_SAFE_SURFACE_POWER     (1UL << 1) // Qualified PWR_SHDN/PWR_ACK handshake
 #define AGT_CAPABILITIES               (AGT_CAP_RELEASE_OWNER | AGT_CAP_SAFE_SURFACE_POWER)
 

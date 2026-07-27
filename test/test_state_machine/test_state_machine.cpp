@@ -289,12 +289,15 @@ void test_surface_power_requires_sustained_fresh_independent_data_and_ack(void) 
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 
     TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
-    for (int i = 0; i < 6; i++) {
+    for (uint32_t i = 0; i < POWER_SHUTDOWN_FINAL_GRACE_MS / 1000UL; i++) {
         MissionData_update_doris_state(4);
         MissionData_update_depth(0.5f);
         StateMachine_updateSurfacePower(true);
+        TEST_ASSERT_TRUE(RelayController_getPowerManagement());
         stub_advance_millis(1000);
     }
+    MissionData_update_doris_state(4);
+    MissionData_update_depth(0.5f);
     StateMachine_updateSurfacePower(true);
     TEST_ASSERT_FALSE(RelayController_getPowerManagement());
     TEST_ASSERT_TRUE(StateMachine_shouldShutdownNonessentials());
@@ -442,6 +445,85 @@ void test_boot_at_surface_cannot_request_shutdown(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Power cycle behavior
+// ---------------------------------------------------------------------------
+
+// Drive a complete dive, surface qualification, ACK, and final grace so the
+// power relay is left cut.
+static void qualifyAndCutPower(void) {
+    StateMachine_enterDiving();
+    MissionData_update_depth(3.0f);
+    StateMachine_enterRecovery();
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
+    for (uint32_t i = 0; i <= POWER_SHUTDOWN_FINAL_GRACE_MS / 1000UL; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+    TEST_ASSERT_FALSE(RelayController_getPowerManagement());
+}
+
+void test_power_cycle_restores_pi_power(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    qualifyAndCutPower();
+
+    // Power cycle: nothing about the cutoff is persisted.
+    RelayController_init();
+    MissionData_init();
+    StateMachine_init();
+
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+    TEST_ASSERT_FALSE(StateMachine_shouldShutdownNonessentials());
+    TEST_ASSERT_EQUAL(STATE_PRE_DIVE, StateMachine_getState());
+    StateMachineStatus s = StateMachine_getStatus();
+    TEST_ASSERT_TRUE(s.nonessentialsPowered);
+    TEST_ASSERT_FALSE(s.surfaceQualified);
+    TEST_ASSERT_FALSE(s.shutdownRequested);
+    TEST_ASSERT_FALSE(s.shutdownAcknowledged);
+}
+
+void test_rebooted_autopilot_cannot_cut_power(void) {
+    // After a power cycle Lua restarts in CONFIG and reports STATE=-1, so the
+    // AGT must leave the Pi powered on deck.
+    stub_set_millis(100);
+    StateMachine_init();
+    for (int i = 0; i < 120; i++) {
+        MissionData_update_doris_state(-1);
+        MissionData_update_depth(0.2f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+    TEST_ASSERT_EQUAL(STATE_PRE_DIVE, StateMachine_getState());
+}
+
+// The AGT's own max-depth high-water mark is the proof that a dive happened,
+// and it is RAM only.  After any reset the vehicle must be seen going deep
+// again before a second cutoff is possible.
+void test_lost_dive_evidence_blocks_a_second_cutoff(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterRecovery();
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+}
+
+// ---------------------------------------------------------------------------
 // Unity entry point
 // ---------------------------------------------------------------------------
 
@@ -502,6 +584,11 @@ int main(int argc, char** argv) {
     RUN_TEST(test_repeated_ack_does_not_restart_final_grace);
     RUN_TEST(test_surface_qualification_handles_millis_rollover);
     RUN_TEST(test_boot_at_surface_cannot_request_shutdown);
+
+    // Power cycle behavior
+    RUN_TEST(test_power_cycle_restores_pi_power);
+    RUN_TEST(test_rebooted_autopilot_cannot_cut_power);
+    RUN_TEST(test_lost_dive_evidence_blocks_a_second_cutoff);
 
     return UNITY_END();
 }
