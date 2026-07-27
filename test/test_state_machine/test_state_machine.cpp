@@ -1,9 +1,11 @@
 #include <unity.h>
+#include <limits.h>
 #include "Arduino.h"
 
 // Use stub relay controller instead of real hardware
 #include "modules/relay_controller.h"
 
+#include "../../src/modules/mission_data.cpp"
 #include "../../src/modules/state_machine.cpp"
 
 // ---------------------------------------------------------------------------
@@ -95,16 +97,15 @@ void test_reset_restores_nonessentials(void) {
     StateMachine_init();
     StateMachine_enterDiving();
     StateMachine_enterRecovery();
-
-    StateMachineStatus s = StateMachine_getStatus();
-    TEST_ASSERT_FALSE(s.nonessentialsPowered);
+    RelayController_setPowerManagement(false);
 
     StateMachine_reset();
-    s = StateMachine_getStatus();
+    StateMachineStatus s = StateMachine_getStatus();
     TEST_ASSERT_TRUE(s.nonessentialsPowered);
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
-void test_reset_clears_failsafe(void) {
+void test_reset_clears_failsafe_but_preserves_release_latch(void) {
     StateMachine_init();
     StateMachine_enterDiving();
     StateMachine_triggerFailsafe(FAILSAFE_LOW_VOLTAGE);
@@ -112,7 +113,7 @@ void test_reset_clears_failsafe(void) {
     StateMachine_reset();
     StateMachineStatus s = StateMachine_getStatus();
     TEST_ASSERT_EQUAL(FAILSAFE_NONE, s.lastFailsafeSource);
-    TEST_ASSERT_FALSE(s.releaseTriggered);
+    TEST_ASSERT_TRUE(s.releaseTriggered);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +147,6 @@ void test_failsafe_triggers_release_relay(void) {
     StateMachineStatus s = StateMachine_getStatus();
     TEST_ASSERT_TRUE(s.releaseTriggered);
     TEST_ASSERT_TRUE(_stub_timed_event_active);
-    TEST_ASSERT_EQUAL(RELEASE_RELAY_DURATION_SEC, _stub_timed_event_duration);
 }
 
 void test_failsafe_does_not_double_trigger_relay(void) {
@@ -184,14 +184,14 @@ void test_failsafe_all_sources(void) {
 // Recovery state behavior
 // ---------------------------------------------------------------------------
 
-void test_recovery_shuts_down_nonessentials(void) {
+void test_recovery_keeps_nonessentials_powered_until_handshake(void) {
     StateMachine_init();
     StateMachine_enterDiving();
     StateMachine_enterRecovery();
 
     StateMachineStatus s = StateMachine_getStatus();
-    TEST_ASSERT_FALSE(s.nonessentialsPowered);
-    TEST_ASSERT_FALSE(RelayController_getPowerManagement());
+    TEST_ASSERT_TRUE(s.nonessentialsPowered);
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
 void test_recovery_enables_strobe(void) {
@@ -260,7 +260,7 @@ void test_time_in_state_advances(void) {
 // Nonessential shutdown query
 // ---------------------------------------------------------------------------
 
-void test_should_shutdown_nonessentials_only_in_recovery(void) {
+void test_should_shutdown_nonessentials_only_after_qualification_and_ack(void) {
     StateMachine_init();
     TEST_ASSERT_FALSE(StateMachine_shouldShutdownNonessentials());
 
@@ -268,7 +268,177 @@ void test_should_shutdown_nonessentials_only_in_recovery(void) {
     TEST_ASSERT_FALSE(StateMachine_shouldShutdownNonessentials());
 
     StateMachine_enterRecovery();
+    TEST_ASSERT_FALSE(StateMachine_shouldShutdownNonessentials());
+}
+
+void test_surface_power_requires_sustained_fresh_independent_data_and_ack(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(3.0f);
+    StateMachine_enterRecovery();
+
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_TRUE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
+    for (int i = 0; i < 6; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+    StateMachine_updateSurfacePower(true);
+    TEST_ASSERT_FALSE(RelayController_getPowerManagement());
     TEST_ASSERT_TRUE(StateMachine_shouldShutdownNonessentials());
+}
+
+void test_stale_surface_data_cancels_shutdown_request(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(3.0f);
+    StateMachine_enterRecovery();
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+    TEST_ASSERT_TRUE(StateMachine_isShutdownRequested());
+    stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
+    StateMachine_updateSurfacePower(true);
+    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+}
+
+void test_premature_shutdown_ack_is_rejected(void) {
+    StateMachine_init();
+    TEST_ASSERT_FALSE(StateMachine_acknowledgeShutdown());
+    StateMachineStatus status = StateMachine_getStatus();
+    TEST_ASSERT_FALSE(status.shutdownAcknowledged);
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+}
+
+void test_stale_qualification_after_ack_cannot_cut_power(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(3.0f);
+    StateMachine_enterRecovery();
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
+    stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
+    StateMachine_updateSurfacePower(true);
+    stub_advance_millis(POWER_SHUTDOWN_FINAL_GRACE_MS + 1);
+    StateMachine_updateSurfacePower(true);
+
+    StateMachineStatus status = StateMachine_getStatus();
+    TEST_ASSERT_FALSE(status.shutdownAcknowledged);
+    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+}
+
+void test_transient_qualification_after_ack_requires_new_ack(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(3.0f);
+    StateMachine_enterRecovery();
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
+    StateMachine_updateSurfacePower(false);
+    stub_advance_millis(POWER_SHUTDOWN_FINAL_GRACE_MS + 1);
+    MissionData_update_doris_state(4);
+    MissionData_update_depth(0.5f);
+    StateMachine_updateSurfacePower(true);
+
+    StateMachineStatus status = StateMachine_getStatus();
+    TEST_ASSERT_FALSE(status.shutdownAcknowledged);
+    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+}
+
+void test_repeated_ack_does_not_restart_final_grace(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(3.0f);
+    StateMachine_enterRecovery();
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
+    uint32_t halfGraceSeconds = POWER_SHUTDOWN_FINAL_GRACE_MS / 2000UL;
+    for (uint32_t i = 0; i < halfGraceSeconds; i++) {
+        stub_advance_millis(1000);
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+    }
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
+    for (uint32_t i = 0; i <= halfGraceSeconds; i++) {
+        stub_advance_millis(1000);
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+    }
+
+    TEST_ASSERT_FALSE(RelayController_getPowerManagement());
+}
+
+void test_surface_qualification_handles_millis_rollover(void) {
+    stub_set_millis(ULONG_MAX - 15000UL);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(3.0f);
+    StateMachine_enterRecovery();
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_TRUE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+}
+
+void test_boot_at_surface_cannot_request_shutdown(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterRecovery();
+    for (int i = 0; i < 34; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower(true);
+        stub_advance_millis(1000);
+    }
+    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +448,7 @@ void test_should_shutdown_nonessentials_only_in_recovery(void) {
 void setUp(void) {
     stub_set_millis(0);
     stub_relay_reset();
+    MissionData_init();
 }
 
 void tearDown(void) {}
@@ -302,7 +473,7 @@ int main(int argc, char** argv) {
     // Reset
     RUN_TEST(test_reset_returns_to_pre_dive);
     RUN_TEST(test_reset_restores_nonessentials);
-    RUN_TEST(test_reset_clears_failsafe);
+    RUN_TEST(test_reset_clears_failsafe_but_preserves_release_latch);
 
     // Failsafe
     RUN_TEST(test_failsafe_enters_recovery);
@@ -312,7 +483,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_failsafe_all_sources);
 
     // Recovery behavior
-    RUN_TEST(test_recovery_shuts_down_nonessentials);
+    RUN_TEST(test_recovery_keeps_nonessentials_powered_until_handshake);
     RUN_TEST(test_recovery_enables_strobe);
     RUN_TEST(test_diving_keeps_nonessentials_powered);
 
@@ -322,7 +493,15 @@ int main(int argc, char** argv) {
     // State tracking
     RUN_TEST(test_previous_state_tracked);
     RUN_TEST(test_time_in_state_advances);
-    RUN_TEST(test_should_shutdown_nonessentials_only_in_recovery);
+    RUN_TEST(test_should_shutdown_nonessentials_only_after_qualification_and_ack);
+    RUN_TEST(test_surface_power_requires_sustained_fresh_independent_data_and_ack);
+    RUN_TEST(test_stale_surface_data_cancels_shutdown_request);
+    RUN_TEST(test_premature_shutdown_ack_is_rejected);
+    RUN_TEST(test_stale_qualification_after_ack_cannot_cut_power);
+    RUN_TEST(test_transient_qualification_after_ack_requires_new_ack);
+    RUN_TEST(test_repeated_ack_does_not_restart_final_grace);
+    RUN_TEST(test_surface_qualification_handles_millis_rollover);
+    RUN_TEST(test_boot_at_surface_cannot_request_shutdown);
 
     return UNITY_END();
 }

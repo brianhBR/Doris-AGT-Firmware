@@ -508,6 +508,11 @@ bool GPSManager_hasFix() {
     return currentGPSData.valid;
 }
 
+bool GPSManager_hasFreshFix(unsigned long maxAgeMs) {
+    return currentGPSData.valid && lastPVTTime > 0 &&
+           (millis() - lastPVTTime) <= maxAgeMs;
+}
+
 GPSData GPSManager_getData() {
     return currentGPSData;
 }

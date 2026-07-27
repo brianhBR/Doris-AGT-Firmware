@@ -280,10 +280,10 @@ Release triggered: NO
 
 **Relay Status:**
 ```
-Relay: Power management ON
-Relay: Power management OFF
-Relay: Triggering timed event for 1500s
-Relay: Timed event completed
+NAMED_VALUE_FLOAT REL_STAT=0|1
+NAMED_VALUE_FLOAT PWR_SHDN=0|1
+STATUSTEXT "RELAY: command accepted"
+STATUSTEXT "POWER: BlueOS shutdown ACK"
 ```
 
 **Failsafe:**
@@ -296,6 +296,43 @@ FAILSAFE: MANUAL
 ## MAVLink Integration
 
 The AGT sends MAVLink messages to the Navigator containing GPS data, battery status, and system time. The BlueOS extension can subscribe to these MAVLink messages via the BlueOS MAVLink router.
+
+### v0.3 safety named-float protocol
+
+All names fit MAVLink's 10-byte `NAMED_VALUE_FLOAT.name` field:
+
+| Name | Direction/source | Values | Meaning |
+|------|------------------|--------|---------|
+| `AGT_CAP` | AGT `1/192` → BlueOS | integer bitmask | Capability gating; required before enabling safety integration |
+| `RELAY` | ArduPilot `1/1` → AGT | finite 0/1 (±0.1) | Latch release ON, or request guarded OFF |
+| `REL_STAT` | AGT `1/192` → BlueOS | 0/1 | Actual latched GPIO35 release state |
+| `PWR_SHDN` | AGT `1/192` → BlueOS | 0/1 | Qualified graceful-shutdown request |
+| `PWR_ACK` | BlueOS `1/191` → AGT | finite 1 (±0.1) | BlueOS has completed shutdown preparation |
+
+BlueOS must ACK only after flushing logs/filesystems and stopping services. AGT
+requires repeated fresh Lua `STATE=4`, fresh shallow autopilot depth, its own GPS
+fix, and a 30-second sustained qualification before asserting `PWR_SHDN=1`.
+After a valid ACK it waits another 30 seconds before opening the NC Pi power
+path. If any qualification input becomes stale or false before cutoff, the
+request/ACK is cancelled and power remains on. There is intentionally no
+unacknowledged timeout cutoff.
+
+`AGT_CAP` bits:
+
+- bit 0, `AGT_CAP_RELEASE_OWNER`: AGT is the sole GPIO35 release driver;
+- bit 1, `AGT_CAP_SAFE_SURFACE_POWER`: AGT implements the qualified
+  `PWR_SHDN`/`PWR_ACK` protocol.
+
+BlueOS must require both bits before enabling v0.3 safety integration.
+`AGT_CAP`, `REL_STAT`, and `PWR_SHDN` repeat at 1 Hz for routing/logging
+visibility.
+Release control is independent of this handshake. An active release marker is
+stored in EEPROM and reasserted after AGT reboot; Pi power always initializes ON.
+
+Persistence limitation: GPIO35 is inactive during MCU reset/early boot until
+`RelayController_init()` validates and reapplies the EEPROM marker. A corrupt or
+unknown marker fails safe to release OFF. The record is written only when the
+latched state changes (not for repeated ON messages), limiting flash wear.
 
 **Messages sent by AGT:**
 
@@ -324,6 +361,7 @@ The AGT sends MAVLink messages to the Navigator containing GPS data, battery sta
 - **SCALED_PRESSURE** - Depth calculation (pressure-based)
 - **VFR_HUD** - Depth from altitude (negative = underwater)
 - **BATTERY_STATUS** - Battery voltage from autopilot
+- **NAMED_VALUE_FLOAT** - source-validated `STATE`, `PREARM`, `RELAY`, and `PWR_ACK`
 
 ## Time Synchronization
 

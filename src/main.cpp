@@ -196,6 +196,8 @@ void loop() {
 
     StateMachine_update();
     GPSManager_update();
+    StateMachine_updateSurfacePower(
+        GPSManager_hasFreshFix(MISSION_DATA_FRESHNESS_MS));
 
     // Keep the MCU RTC disciplined from the u-blox BBR-backed clock. Runs
     // every loop (cheap — idempotent if already synced and time hasn't
@@ -213,6 +215,7 @@ void loop() {
 
     if (sysConfig.enableMAVLink) {
         MAVLinkInterface_sendHeartbeat();
+        MAVLinkInterface_sendSafetyStatus();
     }
 
     // Manual Iridium test: triggered via MAVLink command or serial.
@@ -507,7 +510,8 @@ void processCommand(const String& cmd) {
         return;
     }
     if (cmd == "release_now") {
-        DebugPrintln(F("Release is handled by autopilot"));
+        StateMachine_triggerFailsafe(FAILSAFE_MANUAL);
+        DebugPrintln(F("Release latched ON (manual)"));
         return;
     }
     if (cmd == "iridium_test") {

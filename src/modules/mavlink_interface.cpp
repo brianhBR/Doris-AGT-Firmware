@@ -1,8 +1,11 @@
 #include "modules/mavlink_interface.h"
 #include "modules/mission_data.h"
 #include "modules/neopixel_controller.h"
+#include "modules/relay_controller.h"
+#include "modules/state_machine.h"
 #include "config.h"
 #include <Arduino.h>
+#include <math.h>
 
 extern bool iridiumTestRequested;
 
@@ -20,6 +23,11 @@ static bool initialized = false;
 static uint8_t systemId = MAVLINK_SYSTEM_ID;
 static uint8_t componentId = MAVLINK_COMPONENT_ID;
 static unsigned long lastHeartbeat = 0;
+static unsigned long lastSafetyStatus = 0;
+static_assert(sizeof(MAVLINK_NAME_AGT_CAPABILITY) - 1 <= 10,
+              "AGT_CAP name exceeds MAVLink field");
+static_assert(AGT_CAPABILITIES <= 0x00FFFFFFUL,
+              "AGT_CAP bitmask is not exactly representable as float");
 
 // Depth comes from the autopilot EKF (VFR_HUD.alt and GLOBAL_POSITION_INT.relative_alt).
 // No raw pressure conversion needed — ArduSub's EKF handles surface calibration.
@@ -276,6 +284,39 @@ void MAVLinkInterface_sendStatus(float voltage, float current) {
     MAVLINK_SERIAL.write(buf, len);
 }
 
+static void sendNamedFloat(const char* name, float value) {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_named_value_float_pack(
+        systemId, componentId, &msg, (uint32_t)millis(), name, value);
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    MAVLINK_SERIAL.write(buf, len);
+}
+
+static bool namedValueIs(const char field[10], const char* expected) {
+    size_t len = strlen(expected);
+    if (len > 10 || memcmp(field, expected, len) != 0) {
+        return false;
+    }
+    return len == 10 || field[len] == '\0';
+}
+
+void MAVLinkInterface_sendSafetyStatus() {
+    if (!initialized || !MAVLINK_SERIAL) {
+        return;
+    }
+    unsigned long now = millis();
+    if (now - lastSafetyStatus < POWER_STATUS_INTERVAL_MS) {
+        return;
+    }
+    sendNamedFloat(MAVLINK_NAME_AGT_CAPABILITY, (float)AGT_CAPABILITIES);
+    sendNamedFloat(MAVLINK_NAME_RELEASE_STATUS,
+                   RelayController_isReleaseActive() ? 1.0f : 0.0f);
+    sendNamedFloat(MAVLINK_NAME_POWER_REQUEST,
+                   StateMachine_isShutdownRequested() ? 1.0f : 0.0f);
+    lastSafetyStatus = now;
+}
+
 void MAVLinkInterface_sendStatusText(uint8_t severity, const char* text) {
     if (!initialized || !MAVLINK_SERIAL) return;
     mavlink_message_t msg;
@@ -350,7 +391,10 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         case MAVLINK_MSG_ID_HEARTBEAT: {
             // Only trust heartbeats from the autopilot (component 1).
             // Ignores companion computers, GCS, and our own echo.
-            if (msg->compid != 1) break;
+            if (msg->sysid != AUTOPILOT_SYSTEM_ID ||
+                msg->compid != AUTOPILOT_COMPONENT_ID) {
+                break;
+            }
             MissionData_update_heartbeat();
             mavlink_heartbeat_t hb;
             mavlink_msg_heartbeat_decode(msg, &hb);
@@ -359,6 +403,10 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         }
 
         case MAVLINK_MSG_ID_SYS_STATUS: {
+            if (msg->sysid != AUTOPILOT_SYSTEM_ID ||
+                msg->compid != AUTOPILOT_COMPONENT_ID) {
+                break;
+            }
             mavlink_sys_status_t sys;
             mavlink_msg_sys_status_decode(msg, &sys);
             if (sys.voltage_battery != 65535) {
@@ -371,6 +419,10 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         }
 
         case MAVLINK_MSG_ID_VFR_HUD: {
+            if (msg->sysid != AUTOPILOT_SYSTEM_ID ||
+                msg->compid != AUTOPILOT_COMPONENT_ID) {
+                break;
+            }
             mavlink_vfr_hud_t vfr;
             mavlink_msg_vfr_hud_decode(msg, &vfr);
             // ArduSub EKF altitude: negative = below surface
@@ -379,6 +431,10 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         }
 
         case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
+            if (msg->sysid != AUTOPILOT_SYSTEM_ID ||
+                msg->compid != AUTOPILOT_COMPONENT_ID) {
+                break;
+            }
             mavlink_global_position_int_t gpi;
             mavlink_msg_global_position_int_decode(msg, &gpi);
             // relative_alt is mm relative to home (surface); negative = underwater
@@ -387,6 +443,10 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         }
 
         case MAVLINK_MSG_ID_BATTERY_STATUS: {
+            if (msg->sysid != AUTOPILOT_SYSTEM_ID ||
+                msg->compid != AUTOPILOT_COMPONENT_ID) {
+                break;
+            }
             mavlink_battery_status_t bat;
             mavlink_msg_battery_status_decode(msg, &bat);
             if (bat.voltages[0] != 65535) {
@@ -398,10 +458,44 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         case MAVLINK_MSG_ID_NAMED_VALUE_FLOAT: {
             mavlink_named_value_float_t nv;
             mavlink_msg_named_value_float_decode(msg, &nv);
-            if (strncmp(nv.name, "STATE", 5) == 0) {
-                MissionData_update_doris_state((int)nv.value);
-            } else if (strncmp(nv.name, "PREARM", 6) == 0) {
+            if (!isfinite(nv.value)) {
+                break;
+            }
+
+            bool fromAutopilot =
+                msg->sysid == AUTOPILOT_SYSTEM_ID &&
+                msg->compid == AUTOPILOT_COMPONENT_ID;
+            bool fromBlueOS = msg->sysid == BLUEOS_SYSTEM_ID &&
+                              msg->compid == BLUEOS_COMPONENT_ID;
+            if (fromAutopilot && namedValueIs(nv.name, "STATE")) {
+                float rounded = roundf(nv.value);
+                if (fabsf(nv.value - rounded) <= 0.1f &&
+                    rounded >= -1.0f && rounded <= 4.0f) {
+                    MissionData_update_doris_state((int)rounded);
+                }
+            } else if (fromAutopilot && namedValueIs(nv.name, "PREARM")) {
                 MissionData_update_prearm_status((int)nv.value);
+            } else if (fromAutopilot &&
+                       namedValueIs(nv.name, MAVLINK_NAME_RELEASE_COMMAND)) {
+                bool validOff = nv.value >= -0.1f && nv.value <= 0.1f;
+                bool validOn = nv.value >= 0.9f && nv.value <= 1.1f;
+                if (validOn || validOff) {
+                    bool accepted =
+                        StateMachine_handleReleaseCommand(validOn);
+                    MAVLinkInterface_sendStatusText(
+                        accepted ? 6 : 4,
+                        accepted ? "RELAY: command accepted"
+                                 : "RELAY: OFF rejected (guard)");
+                    MAVLinkInterface_sendSafetyStatus();
+                }
+            } else if (fromBlueOS &&
+                       namedValueIs(nv.name, MAVLINK_NAME_POWER_ACK) &&
+                       nv.value >= 0.9f && nv.value <= 1.1f) {
+                bool accepted = StateMachine_acknowledgeShutdown();
+                MAVLinkInterface_sendStatusText(
+                    accepted ? 6 : 4,
+                    accepted ? "POWER: BlueOS shutdown ACK"
+                             : "POWER: premature ACK ignored");
             }
             break;
         }

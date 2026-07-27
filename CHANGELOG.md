@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- v0.3 safe surface power control: repeated/fresh recovery state, fresh shallow
+  depth, AGT GPS fix, sustained qualification, and BlueOS ACK + final grace
+- MAVLink named-float safety protocol (`RELAY`, `REL_STAT`, `PWR_SHDN`,
+  `PWR_ACK`) with strict source/value validation
+- Repeated `AGT_CAP` capability bitmask for BlueOS compatibility gating
+- Latched GPIO35 release controller with EEPROM active-state persistence,
+  guarded explicit OFF, manual/Iridium paths, and DIVING-only sensor failsafes
+- Native tests for mission-data freshness, surface-power qualification/ACK, and
+  release latch/hold/persistence behavior
 - `AGT_DEBUG` MAVLink command (`MAV_CMD_USER_3`, 31012) that dumps firmware
   version, RockBLOCK IMEI, and GPS diagnostics as STATUSTEXT
 - RockBLOCK IMEI reported over MAVLink; cached on first Iridium modem power-up
@@ -34,6 +43,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Recovery strobe LED pattern for visual location aid
 
 ### Changed
+- Entering `RECOVERY` no longer cuts Pi power; missing/stale inputs or missing
+  BlueOS ACK always keep power on, and boot/reset restores power
+- BlueOS post-ACK shutdown grace increased to 30 seconds so
+  `systemctl poweroff` can complete before physical cutoff
+- Release control is independent from power shutdown and no longer
+  automatically turns off at the old 1500-second timeout; 1500 s is now the
+  minimum OFF hold while the Lua-compatible requested hold is 7200 s
+- Autopilot mission/depth/voltage/release MAVLink inputs now require source 1/1
 - Replaced the unsupported `VERSION` command (`MAV_CMD_USER_6`, 31015 — MAVLink only defines USER_1..5) by folding version/IMEI reporting into `AGT_DEBUG`
 - Serial `gps_diag` command renamed to `debug` (now also prints version + IMEI)
 - State machine redesigned from 4 states (PREDEPLOYMENT/MISSION/RECOVERY/EMERGENCY) to 4 new states (PRE_MISSION/SELF_TEST/MISSION/RECOVERY)

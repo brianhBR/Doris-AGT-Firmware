@@ -150,13 +150,14 @@ PRE_MISSION → SELF_TEST → MISSION → RECOVERY
 - Either condition confirms the system has surfaced
 
 **What Happens on Transition to RECOVERY:**
-1. Relay 1 turns OFF (Navigator/Pi, camera, lights powered down)
+1. Relay 1 remains ON while surface qualification and BlueOS shutdown handshake run
 2. Strobe LEDs activate for visual location
 3. Iridium begins position reporting at configured interval
 4. Meshtastic NMEA continues
 
 If surfacing was triggered by failsafe:
-1. Release relay fires for 1500 seconds (25 minutes, electrolytic dissolution)
+1. Release relay remains latched through ascent; explicit guarded Lua OFF is
+   allowed only after the 1500-second minimum hold and surface qualification
 2. Same RECOVERY behavior as above
 
 ---
@@ -171,7 +172,7 @@ If surfacing was triggered by failsafe:
 - GPS fix reacquired
 - Iridium reporting position for recovery
 - Meshtastic NMEA active (if recovery vessel nearby with Meshtastic)
-- **Navigator/Pi OFF** (Relay 1 OFF, conserving power)
+- **Navigator/Pi OFF only after qualified BlueOS ACK** (otherwise remains ON)
 - **Strobe LEDs** active for visual location
 
 **AGT Operations:**

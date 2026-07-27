@@ -16,6 +16,10 @@ public:
         return _data[addr];
     }
 
+    size_t length() const {
+        return EEPROM_STUB_SIZE;
+    }
+
     void write(int addr, uint8_t val) {
         if (addr >= 0 && addr < EEPROM_STUB_SIZE)
             _data[addr] = val;

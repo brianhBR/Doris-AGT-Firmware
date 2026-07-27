@@ -113,10 +113,31 @@
 #define BATTERY_FULL_VOLTAGE     14.8  // Volts (for 4S LiPo)
 #define FAILSAFE_HEARTBEAT_TIMEOUT_MS  120000 // No MAVLink heartbeat -> failsafe (120 s)
 #define PI_HEARTBEAT_TIMEOUT_MS        5000   // Pi considered disconnected if no heartbeat in 5 s
+#define MISSION_DATA_FRESHNESS_MS      3000   // Depth/state/voltage must be newer than this
 #define DIVE_DEPTH_THRESHOLD_M         2.0    // Depth > this: PRE_DIVE -> DIVING (underwater detection)
 #define RECOVERY_DEPTH_THRESHOLD_M     1.5    // Depth < this AND GPS fix: DIVING -> RECOVERY
 #define DIVE_MIN_DURATION_MS           60000  // Min time in DIVING before RECOVERY transition (60 s)
 #define DIVE_HEARTBEAT_GRACE_MS        90000  // Ignore heartbeat timeout for this long after entering DIVING
+
+// Safe surface power cutoff. A single Lua STATE=4 is never sufficient.
+#define SURFACE_RECOVERY_MESSAGES      3      // Consecutive fresh RECOVERY reports
+#define SURFACE_QUALIFY_MS             30000  // All independent conditions sustained
+#define POWER_SHUTDOWN_FINAL_GRACE_MS  30000  // Allow BlueOS systemctl poweroff to complete
+#define POWER_STATUS_INTERVAL_MS       1000   // Repeat request/status for BlueOS
+#define AUTOPILOT_SYSTEM_ID            1
+#define AUTOPILOT_COMPONENT_ID         1
+#define BLUEOS_SYSTEM_ID               1
+#define BLUEOS_COMPONENT_ID            191
+#define MAVLINK_NAME_POWER_REQUEST     "PWR_SHDN" // AGT -> BlueOS, 1=request
+#define MAVLINK_NAME_POWER_ACK         "PWR_ACK"  // BlueOS -> AGT, 1=ready
+#define MAVLINK_NAME_RELEASE_COMMAND   "RELAY"    // Lua -> AGT, 0=off, 1=on
+#define MAVLINK_NAME_RELEASE_STATUS    "REL_STAT" // AGT -> BlueOS, 0=off, 1=on
+#define MAVLINK_NAME_AGT_CAPABILITY    "AGT_CAP"  // AGT -> BlueOS, capability bitmask
+
+// AGT_CAP bits are represented exactly in NAMED_VALUE_FLOAT for this small mask.
+#define AGT_CAP_RELEASE_OWNER          (1UL << 0) // AGT is sole GPIO35 release driver
+#define AGT_CAP_SAFE_SURFACE_POWER     (1UL << 1) // Qualified PWR_SHDN/PWR_ACK handshake
+#define AGT_CAPABILITIES               (AGT_CAP_RELEASE_OWNER | AGT_CAP_SAFE_SURFACE_POWER)
 
 // ============================================================================
 // RELAY CONFIGURATION
@@ -132,7 +153,8 @@
 #define RELAY_COIL_ACTIVE_HIGH       true   // Both relay modules energize on HIGH
 #define RELAY_POWER_MGMT_NC          true   // Power relay wired through NC terminal
 #define RELAY_TIMED_EVENT_NC         false  // Timed relay wired through NO terminal
-#define RELEASE_RELAY_DURATION_SEC   1500   // Failsafe release: relay on time (e.g. electrolytic release)
+#define RELEASE_MIN_HOLD_SEC         1500   // Earliest explicit surface-safe RELAY=0 may turn it off
+#define RELEASE_RELAY_DURATION_SEC   7200   // Legacy/timed-event compatibility; Lua mission hold is 2 h
 
 // ============================================================================
 // IRIDIUM CONFIGURATION

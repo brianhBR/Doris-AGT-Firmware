@@ -3,10 +3,9 @@
 **Oceanographic Drop Camera — Subordinate Safety Monitor & Comms Relay**
 
 Firmware for the SparkFun Artemis Global Tracker (AGT) used on the Doris deep-sea
-drop-camera platform. The AGT does **not** run the dive and does **not**
-autonomously fire the release — that is the job of the ArduSub Lua dive script
-on the Navigator/Pi. The AGT provides GPS to the autopilot, Iridium and
-Meshtastic comms, status LEDs, and a remotely-commandable release relay.
+drop-camera platform. The AGT does **not** run the dive. It is the sole GPIO35
+release driver and provides independently guarded release and surface-power
+safety fallbacks alongside GPS, Iridium, Meshtastic, and status LEDs.
 
 ## Mission Profile
 
@@ -14,9 +13,9 @@ Meshtastic comms, status LEDs, and a remotely-commandable release relay.
    indicate armed/not-armed, Meshtastic NMEA relay active.
 2. **Dive (underwater)** — Lua script on ArduSub controls descent / on-bottom /
    ascent. AGT silently watches for failsafe conditions.
-3. **Recovery (surfaced)** — Iridium position reports resume, white strobe lit
-   for visual recovery, Relay 1 cuts power to Pi / camera / lights for long
-   surface waits.
+3. **Recovery (surfaced)** — Iridium position reports resume and the white
+   strobe activates; Relay 1 cuts power only after the qualified BlueOS
+   shutdown handshake.
 
 ## Architecture
 
@@ -29,29 +28,35 @@ drive the dive.
 |------------|------------------------------------------------------------------------|-----------------------------------------------------------------------|
 | `PRE_DIVE` | Boot / `reset` command / Lua state ≤ 0 (`CONFIG` / `MISSION_START`)     | GPS to MAVLink + NMEA, Iridium test on demand, armed/not-armed LEDs   |
 | `DIVING`   | Lua state 1–3 (`DESCENT` / `ON_BOTTOM` / `ASCENT`), or depth > 2 m     | LEDs off (or Lua-commanded), no Iridium TX                            |
-| `RECOVERY` | Lua state 4, or independently when ascending + shallow + GPS fix       | White strobe, Iridium reports resume, Relay 1 cuts nonessential power |
+| `RECOVERY` | Lua state 4, or independently when ascending + shallow + GPS fix       | White strobe and Iridium resume; Pi remains powered pending qualification/handshake |
 
 State transitions are driven by `NAMED_VALUE_FLOAT "STATE"` from the Lua script
 (`-1=CONFIG`, `0=MISSION_START`, `1=DESCENT`, `2=ON_BOTTOM`, `3=ASCENT`,
 `4=RECOVERY`), with an independent depth+GPS surface detector as a backup so the
 AGT can transition to `RECOVERY` even if the Lua script has crashed.
 
-### Release relay
+### Release and safe surface power
 
-The AGT does **not** autonomously fire the release. The dive profile and any
-ballast release decisions are owned by the ArduSub Lua script. The AGT exposes
-the release relay (Relay 2, `RELEASE_RELAY_DURATION_SEC` = 1500 s default for
-electrolytic release) only as a remotely-commandable hardware output:
+ArduSub sends `NAMED_VALUE_FLOAT RELAY` from source `1/1`. Only finite values
+near 0 or 1 are accepted. `RELAY=1` latches GPIO35 ON, tolerates repeats, and
+persists the active marker in EEPROM so an AGT reboot reasserts the output.
+`RELAY=0` is accepted only after `RELEASE_MIN_HOLD_SEC` (1500 s) and independent
+surface qualification. The AGT reports the output repeatedly as `REL_STAT`.
 
-- The `release_now` serial command is a no-op and prints
-  `"Release is handled by autopilot"`.
-- A `DORIS_CMD_RELEASE` command can be delivered via Iridium MT (cloud → device)
-  to drive the relay; this is the only path that actually energises Relay 2 from
-  the AGT side.
-- The `StateMachine_triggerFailsafe()` hook and `MissionData` voltage / leak /
-  heartbeat fields exist for monitoring and reporting (and are wired into the
-  Doris telemetry bitfield) but are not bound to any autonomous relay action in
-  the current firmware.
+Manual `release_now`, valid Iridium `DORIS_CMD_RELEASE`, and guarded
+leak/critical-voltage/heartbeat failsafes while `DIVING` share this controller.
+Release never requests or implies Pi power cutoff.
+
+Pi power uses a separate fail-closed protocol. Repeated fresh Lua `STATE=4`,
+fresh shallow autopilot depth, and the AGT's own GPS fix must remain true for
+`SURFACE_QUALIFY_MS`. AGT then repeats `PWR_SHDN=1`; BlueOS acknowledges with
+`PWR_ACK=1` from `1/191`. GPIO4 cuts power only after that ACK and
+`POWER_SHUTDOWN_FINAL_GRACE_MS`. Missing/stale data or no ACK leaves Pi power on.
+Every AGT boot/reset restores Pi power.
+
+AGT also repeats `AGT_CAP`: bit 0 declares AGT release ownership and bit 1
+declares the safe surface power handshake. BlueOS must require both bits before
+enabling v0.3 safety integration.
 
 ### Comms
 
@@ -105,10 +110,10 @@ pattern.
 ### Relays
 - **Relay 1 — Power management** (GPIO4) — controls Navigator/Pi, camera, lights.
   Wired through **NC**: coil OFF = devices powered (safe default through MCU
-  resets). Coil energizes only in `RECOVERY` to cut power.
+  resets). Coil energizes only after qualified surface shutdown + BlueOS ACK.
 - **Relay 2 — Electrolytic release** (GPIO35) — wired through **NO**, active
-  HIGH. Default duration 1500 s. Driven only by an Iridium MT
-  `DORIS_CMD_RELEASE` command; not triggered autonomously by the AGT.
+  HIGH. AGT is the sole driver; ON is persisted and latched until an explicit,
+  guarded Lua OFF after the minimum hold.
 
 ### Battery
 4S LiPo or equivalent marine battery, sized for seafloor recording + multi-day
@@ -131,7 +136,7 @@ on-board PSM analog interface exists but is disabled by default.
 │    │ Lights   │         │ RAK4603  │ │9603N│ │
 │    └──────────┘         └──────────┘ └─────┘ │
 │         ▲                                    │
-│   Relay 1 (NC, cuts power in RECOVERY)       │
+│   Relay 1 (NC, qualified + ACK power cutoff) │
 │                                              │
 │   Relay 2 (NO) ──► Electrolytic release      │
 └─────────────────────────────────────────────┘
@@ -202,7 +207,7 @@ debug                 Firmware version, RockBLOCK IMEI, and GPS diagnostics
 iridium_test          Queue a one-off Iridium test transmission
 reset                 Force state machine back to PRE_DIVE
 reboot                Soft reboot the AGT
-release_now           No-op — release is owned by the autopilot (logs that fact)
+release_now           Latch release ON through the guarded manual path
 set_leak <0|1>        Force the leak flag (failsafe testing)
 mesh_test             Send a text message over Meshtastic
 mesh_test_gps         Send hardcoded NMEA over Meshtastic (link test)
@@ -218,8 +223,8 @@ set_power_save_voltage <volts>
 enable_<feature> / disable_<feature>   (iridium, meshtastic, mavlink, psm, neopixels)
 ```
 
-Defaults: Iridium 5 min, Meshtastic 10 s, MAVLink 200 ms (5 Hz), release relay
-1500 s, NeoPixels enabled, PSM disabled.
+Defaults: Iridium 5 min, Meshtastic 10 s, MAVLink 200 ms (5 Hz), release minimum
+hold 1500 s, Lua compatibility hold 7200 s, NeoPixels enabled, PSM disabled.
 
 ## Status LEDs
 

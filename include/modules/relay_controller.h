@@ -18,6 +18,13 @@ void RelayController_triggerTimedEvent(uint32_t durationSeconds);
 // Check if timed event is currently active
 bool RelayController_isTimedEventActive();
 
+// Guarded release output. ON is latched and persisted; repeated ON requests
+// are harmless. OFF is accepted only after the minimum hold and an independently
+// supplied surface-safe decision.
+void RelayController_requestRelease();
+bool RelayController_requestReleaseOff(bool surfaceSafe);
+bool RelayController_isReleaseActive();
+
 // Update relay controller (call in main loop to handle timed events)
 void RelayController_update();
 

@@ -2,6 +2,11 @@
 
 Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interface communication and control capabilities for an oceanographic drop camera system.
 
+> **next/0.3 safety architecture:** `RECOVERY` does not directly cut Pi power.
+> Cutoff requires repeated fresh Lua recovery reports, fresh shallow autopilot
+> depth, AGT GPS, sustained qualification, BlueOS `PWR_ACK`, and a final grace.
+> GPIO35 release is separately latched/persisted and reported as `REL_STAT`.
+
 ## Features
 
 ### Core Functionality
@@ -17,7 +22,7 @@ Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interf
 ### Advanced Features
 - Configurable reporting intervals for all communication channels
 - Programmable timed event relay (GMT or delay-based triggering)
-- State-based power management (nonessentials OFF in recovery)
+- Independently qualified, acknowledged graceful surface power shutdown
 - Depth-based automatic state transitions from MAVLink sensor data
 - Serial configuration interface with EEPROM persistence
 - RTC synchronization from GPS, forwarded to ArduPilot as SYSTEM_TIME
@@ -130,7 +135,10 @@ Connect to the AGT via USB serial (57600 baud) and use these commands:
 
 ### Timed Event Configuration
 
-The timed event relay can be triggered in two modes:
+The legacy timed-event fields remain readable for configuration compatibility,
+but next/0.3 release output is latched and does not automatically turn off at a
+configured duration. Use Lua `RELAY=1/0` and the guarded release protocol for
+missions.
 
 **GMT Mode** (absolute time):
 ```
@@ -162,7 +170,7 @@ MAVLink Interval:     1000 ms (1 Hz)
 Power Save Voltage:   11.5V
 Enabled:              Iridium, Meshtastic, MAVLink, NeoPixels
 Disabled:             PSM (causes MbedOS mutex issues)
-Timed Event:          Disabled (default duration 1500s when set)
+Timed Event:          Legacy/disabled (compatibility hold 7200s)
 ```
 
 ## Operation
@@ -174,7 +182,7 @@ Timed Event:          Disabled (default duration 1500s when set)
 | PRE_MISSION | ON | OFF | Initial setup, waiting for operator |
 | SELF_TEST | ON | OFF | System verification, Iridium can TX |
 | MISSION | ON | OFF* | Underwater, failsafe monitoring active |
-| RECOVERY | OFF | N/A | Surface, strobe LEDs, Iridium reports |
+| RECOVERY | ON pending handshake | Latched independently | Surface, strobe, Iridium; power cuts only after qualification + BlueOS ACK |
 
 *Relay 2 fires on failsafe trigger during MISSION.
 
@@ -190,7 +198,10 @@ During MISSION state, the AGT monitors these conditions:
 | No Heartbeat | > 30s without | MAVLink HEARTBEAT |
 | Manual | `release_now` | Serial command |
 
-When triggered: release relay fires (1500s) and system enters RECOVERY.
+When triggered while diving: release relay latches ON and system enters
+RECOVERY. It remains ON through ascent and can only be cleared by an explicit
+Lua `RELAY=0` after the 1500-second minimum hold and surface qualification.
+The active marker is persisted across AGT reboot.
 
 ### NeoPixel Status
 

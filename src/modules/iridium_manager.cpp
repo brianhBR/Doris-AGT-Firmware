@@ -1,6 +1,7 @@
 #include "modules/iridium_manager.h"
 #include "modules/doris_protocol.h"
 #include "modules/mavlink_interface.h"
+#include "modules/state_machine.h"
 #include "config.h"
 #include <Arduino.h>
 
@@ -313,10 +314,23 @@ static bool iridiumSendText(const char* message) {
         DebugPrint(F("/"));
         DebugPrintln(MAX_IRIDIUM_RETRY);
 
-        err = modemPtr->sendSBDText(message);
+        uint8_t rxBuf[270];
+        size_t rxLen = sizeof(rxBuf);
+        err = modemPtr->sendReceiveSBDText(message, rxBuf, rxLen);
         if (err == ISBD_SUCCESS) {
             DebugPrintln(F("Iridium: >>> Message sent! <<<"));
             modemPtr->clearBuffers(ISBD_CLEAR_MO);
+            if (rxLen > 0) {
+                DorisCommand command = {};
+                uint8_t msgId = DorisProtocol_parseMT(
+                    rxBuf, rxLen, nullptr, &command);
+                if (msgId == DORIS_MSG_ID_COMMAND &&
+                    command.command == DORIS_CMD_RELEASE) {
+                    StateMachine_triggerFailsafe(FAILSAFE_IRIDIUM);
+                    MAVLinkInterface_sendStatusText(
+                        2, "RELAY: Iridium release accepted");
+                }
+            }
             success = true;
             break;
         }
