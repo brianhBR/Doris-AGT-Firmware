@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-28 - Safe Surface Power Control
+
 ### Added
 - v0.3 safe surface power control: repeated/fresh recovery state, fresh shallow
   depth that is also moving, sustained qualification, and BlueOS ACK + final
