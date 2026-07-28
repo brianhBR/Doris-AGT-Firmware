@@ -49,9 +49,6 @@ void GPSManager_update();
 // Check if GPS has valid fix
 bool GPSManager_hasFix();
 
-// Check that the usable fix came from a recent PVT update.
-bool GPSManager_hasFreshFix(unsigned long maxAgeMs);
-
 // Get current GPS data
 GPSData GPSManager_getData();
 

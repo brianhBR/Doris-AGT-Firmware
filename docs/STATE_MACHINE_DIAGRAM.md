@@ -44,7 +44,7 @@ stateDiagram-v2
     PRE_DIVE --> DIVING : follow Lua, STATE is 1, 2 or 3
     PRE_DIVE --> RECOVERY : follow Lua, STATE is 4
     DIVING --> RECOVERY : follow Lua, STATE is 4
-    DIVING --> RECOVERY : AGT backup detect, STATE at least 3 plus shallow plus AGT GPS fix
+    DIVING --> RECOVERY : AGT backup detect, STATE at least 3 plus shallow depth sustained and moving
     DIVING --> RECOVERY : any DIVING failsafe fires
     RECOVERY --> PRE_DIVE : follow Lua, STATE at most 0
     RECOVERY --> PRE_DIVE : serial command reset
@@ -84,7 +84,7 @@ Transition sources, line by line:
 | `PRE_DIVE` | `DIVING` | `dorisState` in 1..3 | `main.cpp:396-399` |
 | `PRE_DIVE` | `RECOVERY` | `dorisState` at least 4 | `main.cpp:402-405` |
 | `DIVING` | `RECOVERY` | `dorisState` at least 4 | `main.cpp:402-405` |
-| `DIVING` | `RECOVERY` | `dorisState` at least 3 AND `depth_valid` AND `depth_m` below `RECOVERY_DEPTH_THRESHOLD_M` (1.5 m) AND `GPSManager_hasFix()` | `main.cpp:408-417` |
+| `DIVING` | `RECOVERY` | `dorisState` at least 3 AND fresh `depth_m` below `RECOVERY_DEPTH_THRESHOLD_M` (1.5 m), sustained `SURFACE_QUALIFY_MS` and spanning at least `SURFACE_DEPTH_LIVENESS_M` | `StateMachine_updateSurfaceBackstop` |
 | `DIVING` | `RECOVERY` | any failsafe reaches `enterState` | `state_machine.cpp:191-193` |
 | `RECOVERY` | `PRE_DIVE` | `dorisState` at most 0 | `main.cpp:390-393` |
 | `RECOVERY` | `PRE_DIVE` | serial `reset` | `main.cpp:528-531` |
@@ -174,10 +174,10 @@ latches release without changing state.
 
 ## 3. Surface power-cutoff sub-state machine
 
-`StateMachine_updateSurfacePower(agtGpsFix)` (`state_machine.cpp:84-122`) is
-called every loop from `main.cpp:199-200` with
-`GPSManager_hasFreshFix(MISSION_DATA_FRESHNESS_MS)`, i.e. a valid fix whose
-last PVT is no older than 3 s.
+`StateMachine_updateSurfacePower()` is called every loop from `main.cpp`. It
+takes no arguments: the AGT's own GPS fix was removed from this gate because
+acquisition after surfacing was measured at up to 38.7 minutes, and power saving
+exists precisely to survive a long surface wait.
 
 ```mermaid
 stateDiagram-v2
@@ -238,7 +238,11 @@ The single ANDed qualification expression (`state_machine.cpp:87-95`) is:
 6. `md.depth_m` at most `RECOVERY_DEPTH_THRESHOLD_M` (1.5 m);
 7. `md.max_depth_m` at least `DIVE_DEPTH_THRESHOLD_M` (2.0 m) — proof that
    *this boot* observed a real dive;
-8. `agtGpsFix` — the AGT's own fresh u-blox fix.
+8. depth liveness — across the qualification window the reading must span at
+   least `SURFACE_DEPTH_LIVENESS_M` (0.02 m). This replaced the GPS term. Depth
+   is now the only sensor evidence not derived from the autopilot's own
+   assertion, and a frozen channel reads shallow and steady exactly like a
+   floating vehicle, so it has to be shown to be alive.
 
 Everything after step 8 is a plain fall-through in the same function, so the
 whole chain is re-evaluated every loop iteration. Any single false condition
@@ -381,7 +385,7 @@ or reset restores payload power and de-asserts release.
 
 | | `PRE_DIVE` | `DIVING` | `RECOVERY` |
 |---|---|---|---|
-| Iridium periodic report | Blocked, `canTransmitIridium` false (`state_machine.cpp:196-198`) | Blocked | Allowed every `sysConfig.iridiumInterval` when a GPS fix exists (`main.cpp:289-307`) |
+| Iridium periodic report | Blocked, `canTransmitIridium` false (`state_machine.cpp:196-198`) | Blocked | Located report every `sysConfig.iridiumInterval` while a fix exists; otherwise an unlocated `SURFACED,NOFIX` report at 2 min then every 30 min (`IridiumSchedule_*`) |
 | Iridium manual test | Allowed via `iridium_test` or MAVLink 31013, not state gated (`main.cpp:225`) | Allowed, not state gated | Allowed |
 | NeoPixel mode | `LED_MODE_READY` if `MissionData_isArmed()`, else `LED_MODE_ERROR` (`main.cpp:375-380`) | `LED_MODE_LUA` if a Lua LED command is fresh, else `LED_MODE_DIVING` (`main.cpp:366-373`) | `LED_MODE_RECOVERY` strobe (`main.cpp:361-364`) |
 | Power relay on state entry | Driven to conduct (`state_machine.cpp:242`) | Driven to conduct (`state_machine.cpp:249`) | Driven to conduct (`state_machine.cpp:255`) |

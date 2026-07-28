@@ -13,13 +13,49 @@ static const char* stateNames[] = {
 static const char* failsafeNames[] = {
     "NONE", "LOW_VOLTAGE", "LEAK", "NO_HEARTBEAT", "MANUAL", "IRIDIUM"
 };
-static unsigned long surfaceQualifyStart = 0;
 static unsigned long shutdownAckTime = 0;
 static unsigned long criticalVoltageStart = 0;
-static bool surfaceQualificationActive = false;
 static bool criticalVoltageTimingActive = false;
 
+// Neither surface test requires a GPS fix any more, because acquisition has
+// taken over half an hour after surfacing and both tests exist to work in
+// exactly those conditions. Depth is the remaining evidence, so it has to be
+// shown to be alive: a frozen channel reads shallow and perfectly steady,
+// which is indistinguishable from floating. Each test tracks the spread of the
+// readings it saw across its own hold window.
+struct DepthWindow {
+    unsigned long start;
+    float min;
+    float max;
+    bool active;
+};
+
+static DepthWindow powerWindow;
+static DepthWindow backstopWindow;
+
 static void enterState(SystemState newState);
+
+static void depthWindowReset(DepthWindow* w) {
+    w->start = 0;
+    w->min = 0.0f;
+    w->max = 0.0f;
+    w->active = false;
+}
+
+static bool depthWindowQualified(DepthWindow* w, float depth,
+                                 unsigned long holdMs) {
+    if (!w->active) {
+        w->active = true;
+        w->start = millis();
+        w->min = depth;
+        w->max = depth;
+    } else {
+        if (depth < w->min) w->min = depth;
+        if (depth > w->max) w->max = depth;
+    }
+    return (w->max - w->min) >= SURFACE_DEPTH_LIVENESS_M &&
+           millis() - w->start >= holdMs;
+}
 
 void StateMachine_init() {
     status.currentState = STATE_PRE_DIVE;
@@ -32,11 +68,11 @@ void StateMachine_init() {
     status.surfaceQualified = false;
     status.shutdownRequested = false;
     status.shutdownAcknowledged = false;
-    surfaceQualifyStart = 0;
     shutdownAckTime = 0;
     criticalVoltageStart = 0;
-    surfaceQualificationActive = false;
     criticalVoltageTimingActive = false;
+    depthWindowReset(&powerWindow);
+    depthWindowReset(&backstopWindow);
     // A power cycle always restores Pi power. Nothing about the cutoff decision
     // is persisted, and the dive evidence behind surface qualification is RAM
     // only, so the vehicle must dive and reach recovery again before the AGT
@@ -85,7 +121,7 @@ void StateMachine_update() {
     }
 }
 
-void StateMachine_updateSurfacePower(bool agtGpsFix) {
+void StateMachine_updateSurfacePower() {
     MissionData md;
     MissionData_get(&md);
     bool qualifiedNow =
@@ -95,11 +131,10 @@ void StateMachine_updateSurfacePower(bool agtGpsFix) {
         MissionData_getRecoveryMessageCount() >= SURFACE_RECOVERY_MESSAGES &&
         MissionData_isDepthFresh() &&
         md.depth_m <= RECOVERY_DEPTH_THRESHOLD_M &&
-        md.max_depth_m >= DIVE_DEPTH_THRESHOLD_M &&
-        agtGpsFix;
+        md.max_depth_m >= DIVE_DEPTH_THRESHOLD_M;
 
     if (!qualifiedNow) {
-        surfaceQualificationActive = false;
+        depthWindowReset(&powerWindow);
         status.surfaceQualified = false;
         status.shutdownRequested = false;
         status.shutdownAcknowledged = false;
@@ -107,12 +142,8 @@ void StateMachine_updateSurfacePower(bool agtGpsFix) {
         return;
     }
 
-    if (!surfaceQualificationActive) {
-        surfaceQualifyStart = millis();
-        surfaceQualificationActive = true;
-    }
     status.surfaceQualified =
-        millis() - surfaceQualifyStart >= SURFACE_QUALIFY_MS;
+        depthWindowQualified(&powerWindow, md.depth_m, SURFACE_QUALIFY_MS);
     if (!status.surfaceQualified) {
         return;
     }
@@ -123,6 +154,24 @@ void StateMachine_updateSurfacePower(bool agtGpsFix) {
         RelayController_setPowerManagement(false);
         status.nonessentialsPowered = false;
     }
+}
+
+bool StateMachine_updateSurfaceBackstop() {
+    MissionData md;
+    MissionData_get(&md);
+    bool ascending = status.currentState == STATE_DIVING && md.doris_state >= 3;
+    bool shallow = MissionData_isDepthFresh() && md.depth_valid &&
+                   md.depth_m < RECOVERY_DEPTH_THRESHOLD_M;
+    if (!ascending || !shallow) {
+        depthWindowReset(&backstopWindow);
+        return false;
+    }
+    if (!depthWindowQualified(&backstopWindow, md.depth_m, SURFACE_QUALIFY_MS)) {
+        return false;
+    }
+    depthWindowReset(&backstopWindow);
+    enterState(STATE_RECOVERY);
+    return true;
 }
 
 bool StateMachine_acknowledgeShutdown() {

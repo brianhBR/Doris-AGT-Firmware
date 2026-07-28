@@ -29,12 +29,14 @@ drive the dive.
 |------------|------------------------------------------------------------------------|-----------------------------------------------------------------------|
 | `PRE_DIVE` | Boot / `reset` command / Lua state ≤ 0 (`CONFIG` / `MISSION_START`)     | GPS to MAVLink + NMEA, Iridium test on demand, armed/not-armed LEDs   |
 | `DIVING`   | Lua state 1–3 (`DESCENT` / `ON_BOTTOM` / `ASCENT`), or depth > 2 m     | LEDs off (or Lua-commanded), no Iridium TX                            |
-| `RECOVERY` | Lua state 4, or independently when ascending + shallow + GPS fix       | White strobe and Iridium resume; Pi remains powered pending qualification/handshake |
+| `RECOVERY` | Lua state 4, or independently when ascending + sustained shallow depth | White strobe and Iridium resume; Pi remains powered pending qualification/handshake |
 
 State transitions are driven by `NAMED_VALUE_FLOAT "STATE"` from the Lua script
 (`-1=CONFIG`, `0=MISSION_START`, `1=DESCENT`, `2=ON_BOTTOM`, `3=ASCENT`,
-`4=RECOVERY`), with an independent depth+GPS surface detector as a backup so the
-AGT can transition to `RECOVERY` even if the Lua script has crashed.
+`4=RECOVERY`), with an independent depth-based surface detector as a backup so
+the AGT can transition to `RECOVERY` even if the Lua script has crashed. That
+backstop carries no GPS term: acquisition after surfacing has taken as long as
+38 minutes, which is exactly when a wedged script most needs a way out.
 
 ### Release and safe surface power
 
@@ -48,12 +50,18 @@ Manual `release_now`, valid Iridium `DORIS_CMD_RELEASE`, and guarded
 leak/critical-voltage/heartbeat failsafes while `DIVING` share this controller.
 Release never requests or implies Pi power cutoff.
 
-Pi power uses a separate fail-closed protocol. Repeated fresh Lua `STATE=4`,
-fresh shallow autopilot depth, and the AGT's own GPS fix must remain true for
-`SURFACE_QUALIFY_MS`. AGT then repeats `PWR_SHDN=1`; BlueOS acknowledges with
-`PWR_ACK=1` from `1/191`. GPIO4 cuts power only after that ACK and
+Pi power uses a separate fail-closed protocol. Repeated fresh Lua `STATE=4` and
+fresh shallow autopilot depth must remain true for `SURFACE_QUALIFY_MS`, and the
+depth reading must move by at least `SURFACE_DEPTH_LIVENESS_M` across that
+window — a frozen channel reads shallow and steady, which is what floating looks
+like. AGT then repeats `PWR_SHDN=1`; BlueOS acknowledges with `PWR_ACK=1` from
+`1/191`. GPIO4 cuts power only after that ACK and
 `POWER_SHUTDOWN_FINAL_GRACE_MS`. Missing/stale data or no ACK leaves Pi power on.
 Every AGT boot/reset restores Pi power.
+
+No GPS fix is required anywhere in this path. Acquisition after surfacing was
+measured at 17 s, 6.8 min, 30.4 min, and 38.7 min across four dives, so gating
+power saving on a fix meant giving it up in the worst conditions.
 
 AGT also repeats `AGT_CAP`: bit 0 declares AGT release ownership and bit 1
 declares the safe surface power handshake. BlueOS must require both bits before

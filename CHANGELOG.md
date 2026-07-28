@@ -8,7 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - v0.3 safe surface power control: repeated/fresh recovery state, fresh shallow
-  depth, AGT GPS fix, sustained qualification, and BlueOS ACK + final grace
+  depth that is also moving, sustained qualification, and BlueOS ACK + final
+  grace
+- Unlocated Iridium reporting so surfacing is visible without a fix. The first
+  `SURFACED,NOFIX,...` report goes out 2 minutes after entering `RECOVERY` and
+  repeats every 30 minutes, carrying elapsed time, voltage, leak, and max depth
+  but no position. A fix upgrades it to the full located report immediately.
+  The repeat interval is long on purpose: Iridium and GPS share one antenna, so
+  each session interrupts the acquisition being waited on
 - MAVLink named-float safety protocol (`RELAY`, `REL_STAT`, `PWR_SHDN`,
   `PWR_ACK`) with strict source/value validation
 - Repeated `AGT_CAP` capability bitmask for BlueOS compatibility gating
@@ -47,6 +54,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Recovery strobe LED pattern for visual location aid
 
 ### Changed
+- Surface detection no longer requires a GPS fix, in either the power cutoff or
+  the AGT's independent backstop. Measured over four dives, acquisition after
+  surfacing took 17 s, 6.8 min, 30.4 min, and 38.7 min, and the mission ended
+  within a second of the fix every time, so a fix was the sole thing holding up
+  the end of the dive. Depth is now the primary evidence
+- Both surface tests require the depth reading to have moved by at least
+  `SURFACE_DEPTH_LIVENESS_M` (0.02 m) across their window. A frozen channel
+  reads shallow and perfectly steady, which is indistinguishable from floating,
+  and with the GPS term gone this is what keeps a dead sensor from being enough
+  on its own. Measured surface windows spanned at least 0.070 m
+- The independent backstop now needs sustained shallow depth for
+  `SURFACE_QUALIFY_MS` rather than a single shallow reading plus a fix
 - Entering `RECOVERY` no longer cuts Pi power; missing/stale inputs or missing
   BlueOS ACK always keep power on, and boot/reset restores power
 - Power cutoff requires a live recovery signal from the autopilot and is never

@@ -19,6 +19,12 @@ bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData);
 // Send position + mission stats (legacy text format)
 bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission);
 
+// Send a short unlocated report so surfacing is visible without a GPS fix.
+// Acquisition has taken over half an hour after surfacing, and until then the
+// operator has no way to tell a surfaced vehicle from a lost one.
+bool IridiumManager_sendStatusReport(MissionData* mission,
+                                     uint32_t minutesInRecovery);
+
 // Send Doris binary telemetry report and check for MT commands.
 // Populates mtMsgId, mtConfig, and mtCommand if an MT message was received.
 // Returns true if the MO report was sent successfully.

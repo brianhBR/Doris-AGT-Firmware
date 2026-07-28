@@ -18,7 +18,7 @@ are intentionally separate.
 PRE_DIVE ── Lua STATE=1..3 ──► DIVING
     ▲                              │
     │ reset                        ├── Lua STATE=4 ──► RECOVERY
-    │                              ├── ascent + shallow depth + AGT GPS ──► RECOVERY
+    │                              ├── ascent + sustained shallow depth ──► RECOVERY
     └──────────────────────────────┴── guarded failsafe ──► RECOVERY
 ```
 
@@ -26,8 +26,11 @@ PRE_DIVE ── Lua STATE=1..3 ──► DIVING
 - A Lua `STATE` value from 1 through 3 moves `PRE_DIVE` to `DIVING`.
 - Lua `STATE=4` moves the mission state to `RECOVERY`, but cannot directly cut
   Pi power.
-- While Lua reports ascent (`STATE>=3`), fresh shallow autopilot depth plus AGT
-  GPS provides a backup transition to `RECOVERY`.
+- While Lua reports ascent (`STATE>=3`), fresh shallow autopilot depth sustained
+  for `SURFACE_QUALIFY_MS` provides a backup transition to `RECOVERY`. There is
+  no GPS term: this backstop exists for a wedged script, and acquisition after
+  surfacing has taken as long as 38 minutes, so a fix requirement disabled it in
+  exactly the conditions it was written for.
 - Leak, sustained critical voltage, and heartbeat-loss release failsafes are
   evaluated only while `DIVING`, after the dive-entry grace.
 - `release_now` and valid Iridium release commands are explicit operator paths
@@ -71,7 +74,21 @@ A single `STATE=4` does not authorize cutoff. All of these must remain true for
 - fresh finite autopilot depth no deeper than
   `RECOVERY_DEPTH_THRESHOLD_M`;
 - evidence that this boot observed depth at least `DIVE_DEPTH_THRESHOLD_M`;
-- a fresh, valid fix from the AGT's own GNSS receiver.
+- a depth reading that moved by at least `SURFACE_DEPTH_LIVENESS_M` (0.02 m)
+  across the window.
+
+A GPS fix is deliberately not on that list. Measured over four dives,
+acquisition after surfacing took 17 s, 6.8 min, 30.4 min, and 38.7 min, and the
+mission ended within a second of the fix every time — a fix was the only thing
+holding up the end of the dive, and the whole point of cutting power is to
+survive a long surface wait.
+
+The liveness term is what buys back the independence that gives up. Depth is now
+the only sensor evidence the AGT has that does not come from the autopilot's own
+assertion, and a stuck channel reads shallow and perfectly steady, which is
+indistinguishable from floating. Across 146 surface windows on three dives the
+quietest still held a 0.070 m standard deviation, against exactly zero for a
+dead channel, so 0.02 m clears real data with roughly triple margin.
 
 After qualification:
 
@@ -86,6 +103,34 @@ Premature ACKs are rejected. Any transient or stale qualification before cutoff
 cancels the request and ACK. BlueOS must acknowledge a later request again.
 Unsigned elapsed-time subtraction keeps all bounded timers safe across
 `millis()` rollover.
+
+## Iridium reporting in RECOVERY
+
+A located report goes out as soon as there is a fix, then every
+`iridiumInterval`. Without a fix the AGT used to say nothing at all, so a
+surfaced vehicle and a lost one looked identical for as long as acquisition
+took. It now sends a short unlocated report instead:
+
+```text
+SURFACED,NOFIX,T:12m,V:14.82,LEAK:0,MAXD:2238.0m
+```
+
+The first goes out `IRIDIUM_NOFIX_FIRST_MS` (2 minutes) after entering
+`RECOVERY`, timed from the state entry so a failsafe release reports on the same
+schedule as a normal surfacing. Repeats follow every `IRIDIUM_NOFIX_REPEAT_MS`
+(30 minutes). When a fix finally arrives the full located report is sent
+immediately rather than waiting out the interval, since the position is the
+whole point and the operator has so far only been told the vehicle is up.
+
+The repeat interval is long deliberately. Iridium and GPS share one antenna via
+`antennaToIridium()` / `antennaToGPS()`, and there is already history of SBD
+sessions disturbing GPS warm start, so reporting every few minutes through a
+38-minute wait would interrupt acquisition repeatedly and could make the fix
+take longer still.
+
+The report carries no position at all, not even a last-known-good one: a fix
+from before the dive would read as though it were where the vehicle surfaced,
+and a drifting vehicle can be a long way from it.
 
 ## Power cycle behavior
 

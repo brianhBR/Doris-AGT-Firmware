@@ -271,6 +271,20 @@ void test_should_shutdown_nonessentials_only_after_qualification_and_ack(void) {
     TEST_ASSERT_FALSE(StateMachine_shouldShutdownNonessentials());
 }
 
+// No test here supplies a GPS fix, because the cutoff no longer consults one.
+// Acquisition has taken over half an hour after surfacing and power saving
+// cannot be hostage to it. The depth-liveness term below is what replaced it.
+//
+// Qualification requires the depth reading to have moved, so ticks alternate
+// rather than repeating a single value. Real surface windows spanned at least
+// 0.070 m; the 0.03 m here clears SURFACE_DEPTH_LIVENESS_M without pretending
+// to model sea state.
+static void surfaceTick(int i) {
+    MissionData_update_doris_state(4);
+    MissionData_update_depth((i % 2 == 0) ? 0.50f : 0.53f);
+    StateMachine_updateSurfacePower();
+}
+
 void test_surface_power_requires_sustained_fresh_independent_data_and_ack(void) {
     stub_set_millis(100);
     StateMachine_init();
@@ -279,9 +293,7 @@ void test_surface_power_requires_sustained_fresh_independent_data_and_ack(void) 
     StateMachine_enterRecovery();
 
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
 
@@ -290,17 +302,37 @@ void test_surface_power_requires_sustained_fresh_independent_data_and_ack(void) 
 
     TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
     for (uint32_t i = 0; i < POWER_SHUTDOWN_FINAL_GRACE_MS / 1000UL; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick((int)i);
         TEST_ASSERT_TRUE(RelayController_getPowerManagement());
         stub_advance_millis(1000);
     }
-    MissionData_update_doris_state(4);
-    MissionData_update_depth(0.5f);
-    StateMachine_updateSurfacePower(true);
+    surfaceTick(0);
     TEST_ASSERT_FALSE(RelayController_getPowerManagement());
     TEST_ASSERT_TRUE(StateMachine_shouldShutdownNonessentials());
+}
+
+// A dead depth channel reads shallow and perfectly steady, which is exactly
+// what floating looks like. With the GPS term gone, this is the only thing
+// standing between a stuck sensor and a payload power cut.
+void test_frozen_depth_channel_never_qualifies(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(3.0f);
+    StateMachine_enterRecovery();
+
+    for (int i = 0; i < 120; i++) {
+        MissionData_update_doris_state(4);
+        MissionData_update_depth(0.5f);
+        StateMachine_updateSurfacePower();
+        stub_advance_millis(1000);
+    }
+
+    StateMachineStatus s = StateMachine_getStatus();
+    TEST_ASSERT_FALSE(s.surfaceQualified);
+    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_FALSE(StateMachine_acknowledgeShutdown());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
 void test_stale_surface_data_cancels_shutdown_request(void) {
@@ -310,14 +342,12 @@ void test_stale_surface_data_cancels_shutdown_request(void) {
     MissionData_update_depth(3.0f);
     StateMachine_enterRecovery();
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
     TEST_ASSERT_TRUE(StateMachine_isShutdownRequested());
     stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
-    StateMachine_updateSurfacePower(true);
+    StateMachine_updateSurfacePower();
     TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
@@ -337,17 +367,15 @@ void test_stale_qualification_after_ack_cannot_cut_power(void) {
     MissionData_update_depth(3.0f);
     StateMachine_enterRecovery();
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
 
     TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
     stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
-    StateMachine_updateSurfacePower(true);
+    StateMachine_updateSurfacePower();
     stub_advance_millis(POWER_SHUTDOWN_FINAL_GRACE_MS + 1);
-    StateMachine_updateSurfacePower(true);
+    StateMachine_updateSurfacePower();
 
     StateMachineStatus status = StateMachine_getStatus();
     TEST_ASSERT_FALSE(status.shutdownAcknowledged);
@@ -362,18 +390,17 @@ void test_transient_qualification_after_ack_requires_new_ack(void) {
     MissionData_update_depth(3.0f);
     StateMachine_enterRecovery();
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
 
     TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
-    StateMachine_updateSurfacePower(false);
-    stub_advance_millis(POWER_SHUTDOWN_FINAL_GRACE_MS + 1);
+    // One deep reading drops qualification, and the ACK has to be re-earned.
     MissionData_update_doris_state(4);
-    MissionData_update_depth(0.5f);
-    StateMachine_updateSurfacePower(true);
+    MissionData_update_depth(5.0f);
+    StateMachine_updateSurfacePower();
+    stub_advance_millis(POWER_SHUTDOWN_FINAL_GRACE_MS + 1);
+    surfaceTick(0);
 
     StateMachineStatus status = StateMachine_getStatus();
     TEST_ASSERT_FALSE(status.shutdownAcknowledged);
@@ -388,9 +415,7 @@ void test_repeated_ack_does_not_restart_final_grace(void) {
     MissionData_update_depth(3.0f);
     StateMachine_enterRecovery();
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
 
@@ -398,16 +423,12 @@ void test_repeated_ack_does_not_restart_final_grace(void) {
     uint32_t halfGraceSeconds = POWER_SHUTDOWN_FINAL_GRACE_MS / 2000UL;
     for (uint32_t i = 0; i < halfGraceSeconds; i++) {
         stub_advance_millis(1000);
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick((int)i);
     }
     TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
     for (uint32_t i = 0; i <= halfGraceSeconds; i++) {
         stub_advance_millis(1000);
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick((int)i);
     }
 
     TEST_ASSERT_FALSE(RelayController_getPowerManagement());
@@ -420,9 +441,7 @@ void test_surface_qualification_handles_millis_rollover(void) {
     MissionData_update_depth(3.0f);
     StateMachine_enterRecovery();
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
 
@@ -435,9 +454,7 @@ void test_boot_at_surface_cannot_request_shutdown(void) {
     StateMachine_init();
     StateMachine_enterRecovery();
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
     TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
@@ -455,16 +472,12 @@ static void qualifyAndCutPower(void) {
     MissionData_update_depth(3.0f);
     StateMachine_enterRecovery();
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
     TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
     for (uint32_t i = 0; i <= POWER_SHUTDOWN_FINAL_GRACE_MS / 1000UL; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick((int)i);
         stub_advance_millis(1000);
     }
     TEST_ASSERT_FALSE(RelayController_getPowerManagement());
@@ -497,8 +510,8 @@ void test_rebooted_autopilot_cannot_cut_power(void) {
     StateMachine_init();
     for (int i = 0; i < 120; i++) {
         MissionData_update_doris_state(-1);
-        MissionData_update_depth(0.2f);
-        StateMachine_updateSurfacePower(true);
+        MissionData_update_depth((i % 2 == 0) ? 0.20f : 0.23f);
+        StateMachine_updateSurfacePower();
         stub_advance_millis(1000);
     }
     TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
@@ -514,13 +527,126 @@ void test_lost_dive_evidence_blocks_a_second_cutoff(void) {
     StateMachine_init();
     StateMachine_enterRecovery();
     for (int i = 0; i < 34; i++) {
-        MissionData_update_doris_state(4);
-        MissionData_update_depth(0.5f);
-        StateMachine_updateSurfacePower(true);
+        surfaceTick(i);
         stub_advance_millis(1000);
     }
     TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+}
+
+// ---------------------------------------------------------------------------
+// Independent surface backstop
+// ---------------------------------------------------------------------------
+
+// Lua is wedged in ASCENT waiting on a fix that is not coming. This is the
+// AGT's own way out, and gating it on a fix made it useless in exactly the
+// conditions it exists for.
+static void backstopTick(int i, float depth) {
+    MissionData_update_doris_state(3);
+    MissionData_update_depth(depth);
+    StateMachine_updateSurfaceBackstop();
+}
+
+static float livingSurfaceDepth(int i) {
+    return (i % 2 == 0) ? 0.40f : 0.43f;
+}
+
+void test_backstop_enters_recovery_on_depth_alone(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(30.0f);
+
+    for (int i = 0; i < 31; i++) {
+        backstopTick(i, livingSurfaceDepth(i));
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_EQUAL(STATE_RECOVERY, StateMachine_getState());
+}
+
+void test_backstop_needs_the_full_window(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(30.0f);
+
+    for (int i = 0; i < 25; i++) {
+        backstopTick(i, livingSurfaceDepth(i));
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_EQUAL(STATE_DIVING, StateMachine_getState());
+}
+
+void test_backstop_refuses_a_frozen_depth_channel(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(30.0f);
+
+    for (int i = 0; i < 120; i++) {
+        backstopTick(i, 0.40f);
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_EQUAL(STATE_DIVING, StateMachine_getState());
+}
+
+void test_backstop_restarts_when_the_vehicle_goes_under_again(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(30.0f);
+
+    for (int i = 0; i < 25; i++) {
+        backstopTick(i, livingSurfaceDepth(i));
+        stub_advance_millis(1000);
+    }
+    // A swell pushes it back under, so the window starts over.
+    backstopTick(0, 4.0f);
+    stub_advance_millis(1000);
+    for (int i = 0; i < 25; i++) {
+        backstopTick(i, livingSurfaceDepth(i));
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_EQUAL(STATE_DIVING, StateMachine_getState());
+}
+
+// A vehicle sitting shallow at the start of a descent must never be mistaken
+// for one that has surfaced.
+void test_backstop_does_not_fire_before_ascent(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+
+    for (int i = 0; i < 120; i++) {
+        MissionData_update_doris_state(1);
+        MissionData_update_depth(livingSurfaceDepth(i));
+        StateMachine_updateSurfaceBackstop();
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_EQUAL(STATE_DIVING, StateMachine_getState());
+}
+
+void test_backstop_ignores_stale_depth(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    StateMachine_enterDiving();
+    MissionData_update_depth(30.0f);
+    backstopTick(0, 0.40f);
+
+    // Depth reports stop arriving; the window must not keep maturing on the
+    // strength of one old reading.
+    stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
+    for (int i = 0; i < 60; i++) {
+        StateMachine_updateSurfaceBackstop();
+        stub_advance_millis(1000);
+    }
+
+    TEST_ASSERT_EQUAL(STATE_DIVING, StateMachine_getState());
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +703,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_time_in_state_advances);
     RUN_TEST(test_should_shutdown_nonessentials_only_after_qualification_and_ack);
     RUN_TEST(test_surface_power_requires_sustained_fresh_independent_data_and_ack);
+    RUN_TEST(test_frozen_depth_channel_never_qualifies);
     RUN_TEST(test_stale_surface_data_cancels_shutdown_request);
     RUN_TEST(test_premature_shutdown_ack_is_rejected);
     RUN_TEST(test_stale_qualification_after_ack_cannot_cut_power);
@@ -589,6 +716,14 @@ int main(int argc, char** argv) {
     RUN_TEST(test_power_cycle_restores_pi_power);
     RUN_TEST(test_rebooted_autopilot_cannot_cut_power);
     RUN_TEST(test_lost_dive_evidence_blocks_a_second_cutoff);
+
+    // Independent surface backstop
+    RUN_TEST(test_backstop_enters_recovery_on_depth_alone);
+    RUN_TEST(test_backstop_needs_the_full_window);
+    RUN_TEST(test_backstop_refuses_a_frozen_depth_channel);
+    RUN_TEST(test_backstop_restarts_when_the_vehicle_goes_under_again);
+    RUN_TEST(test_backstop_does_not_fire_before_ascent);
+    RUN_TEST(test_backstop_ignores_stale_depth);
 
     return UNITY_END();
 }

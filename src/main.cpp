@@ -25,6 +25,7 @@
 
 #include "modules/gps_manager.h"
 #include "modules/iridium_manager.h"
+#include "modules/iridium_schedule.h"
 #include "modules/meshtastic_interface.h"
 #include "modules/mavlink_interface.h"
 #include "modules/neopixel_controller.h"
@@ -44,7 +45,8 @@ SystemConfig sysConfig;
 extern Apollo3RTC rtc;
 Apollo3RTC& myRTC = rtc;
 
-unsigned long lastIridiumSend = 0;
+static IridiumSchedule iridiumSchedule = {0, false, true};
+static SystemState lastSeenState = STATE_PRE_DIVE;
 unsigned long lastMeshtasticUpdate = 0;
 unsigned long lastMAVLinkUpdate = 0;
 unsigned long lastPSMUpdate = 0;
@@ -165,8 +167,9 @@ void setup() {
         NeoPixelController_init();
     }
 
-
-    lastIridiumSend = millis();
+    // Boot is not a surfacing: nothing is due until RECOVERY is entered and
+    // resets the schedule.
+    IridiumSchedule_noteSent(&iridiumSchedule, millis(), true);
 
     DebugPrintln(F("Setup complete. State: PRE_DIVE (ready)"));
     DebugPrintln(F("Type 'help' for commands."));
@@ -196,8 +199,7 @@ void loop() {
 
     StateMachine_update();
     GPSManager_update();
-    StateMachine_updateSurfacePower(
-        GPSManager_hasFreshFix(MISSION_DATA_FRESHNESS_MS));
+    StateMachine_updateSurfacePower();
 
     // Keep the MCU RTC disciplined from the u-blox BBR-backed clock. Runs
     // every loop (cheap — idempotent if already synced and time hasn't
@@ -243,7 +245,7 @@ void loop() {
             MissionData_get(&mission);
 
             bool ok = IridiumManager_sendMissionReport(&gpsData, &mission);
-            lastIridiumSend = millis();
+            IridiumSchedule_noteSent(&iridiumSchedule, millis(), true);
 
             if (ok) {
                 DebugPrintln(F("==================================="));
@@ -285,20 +287,35 @@ void loop() {
         }
     }
 
-    // Iridium: text position report (RECOVERY only)
-    if (sysConfig.enableIridium && modemPtr && StateMachine_canTransmitIridium() &&
-        (now - lastIridiumSend >= sysConfig.iridiumInterval)) {
-        if (GPSManager_hasFix()) {
+    // Iridium reporting (RECOVERY only). A position report goes out as soon as
+    // there is a fix. Without one the vehicle used to stay silent for as long
+    // as acquisition took, so an unlocated report still tells the operator it
+    // surfaced, with health but no position.
+    if (sysConfig.enableIridium && modemPtr && StateMachine_canTransmitIridium()) {
+        bool haveFix = GPSManager_hasFix();
+        bool located = haveFix &&
+            IridiumSchedule_locatedDue(&iridiumSchedule, now,
+                                       sysConfig.iridiumInterval);
+        bool unlocated = !haveFix &&
+            IridiumSchedule_unlocatedDue(&iridiumSchedule, now,
+                                         StateMachine_getTimeInState());
+
+        if (located || unlocated) {
             if (sysConfig.enableNeoPixels) {
                 NeoPixelController_setSolidWhite();
             }
 
-            GPSData gpsData = GPSManager_getData();
             MissionData mission;
             MissionData_get(&mission);
 
-            IridiumManager_sendMissionReport(&gpsData, &mission);
-            lastIridiumSend = millis();
+            if (located) {
+                GPSData gpsData = GPSManager_getData();
+                IridiumManager_sendMissionReport(&gpsData, &mission);
+            } else {
+                IridiumManager_sendStatusReport(
+                    &mission, StateMachine_getTimeInState() / 60UL);
+            }
+            IridiumSchedule_noteSent(&iridiumSchedule, millis(), located);
 
             DebugPrintln(F("GPS: Re-initializing after Iridium send..."));
             MAVLinkInterface_serviceDelay(2000);
@@ -401,18 +418,23 @@ void checkStateTransitions() {
     // Follow autopilot: RECOVERY
     if (dorisState >= 4 && currentState != STATE_RECOVERY) {
         StateMachine_enterRecovery();
-        lastIridiumSend = 0;
     }
 
-    // Independent surface detection: ASCENT + shallow + GPS → RECOVERY
-    if (currentState == STATE_DIVING && dorisState >= 3) {
-        MissionData md;
-        MissionData_get(&md);
-        bool shallow = md.depth_valid && md.depth_m < RECOVERY_DEPTH_THRESHOLD_M;
-        bool gpsFix = GPSManager_hasFix();
-        if (shallow && gpsFix) {
-            StateMachine_enterRecovery();
-            lastIridiumSend = 0;
+    // Independent surface detection: ASCENT + sustained shallow depth →
+    // RECOVERY. Deliberately no GPS term; this backstop exists for the case
+    // where Lua is stuck waiting on a fix, so gating it on one made it useless
+    // in exactly the conditions it was written for.
+    StateMachine_updateSurfaceBackstop();
+
+    // Restart Iridium reporting on every entry to RECOVERY, whichever path got
+    // us there — autopilot, the depth backstop, or a failsafe release. Watching
+    // the state rather than each call site means a failsafe surfacing reports
+    // on the same schedule as a normal one.
+    SystemState newState = StateMachine_getState();
+    if (newState != lastSeenState) {
+        lastSeenState = newState;
+        if (newState == STATE_RECOVERY) {
+            IridiumSchedule_reset(&iridiumSchedule);
         }
     }
 }

@@ -401,6 +401,33 @@ bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
     return iridiumSendText(message);
 }
 
+bool IridiumManager_sendStatusReport(MissionData* mission,
+                                     uint32_t minutesInRecovery) {
+    // No position at all, not even a stale one: a last-known-good fix from
+    // before the dive would be reported as if it were where the vehicle
+    // surfaced, and a drifting vehicle can be a long way from it. The point of
+    // this report is only to say the vehicle is up and healthy.
+    float vbat = getBusVoltage();
+
+    char message[340];
+    int pos = 0;
+    pos += snprintf(message + pos, sizeof(message) - pos,
+                    "SURFACED,NOFIX,T:%lum,V:",
+                    (unsigned long)minutesInRecovery);
+    float v = (mission != nullptr && mission->battery_voltage > 0)
+                  ? mission->battery_voltage
+                  : vbat;
+    pos = appendFloat(message, pos, sizeof(message), v, 2);
+    if (mission != nullptr) {
+        pos += snprintf(message + pos, sizeof(message) - pos, ",LEAK:%d,MAXD:",
+                        mission->leak_detected ? 1 : 0);
+        pos = appendFloat(message, pos, sizeof(message), mission->max_depth_m, 1);
+        snprintf(message + pos, sizeof(message) - pos, "m");
+    }
+
+    return iridiumSendText(message);
+}
+
 bool IridiumManager_sendMessage(const char* message) {
     return iridiumSendText(message);
 }

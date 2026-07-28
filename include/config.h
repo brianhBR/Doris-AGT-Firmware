@@ -74,6 +74,12 @@
 // ============================================================================
 #define GPS_FIX_TIMEOUT_MS         180000  // 3 minutes
 #define IRIDIUM_SEND_INTERVAL_MS   600000  // 10 minutes
+// Unlocated reports while waiting for a fix in RECOVERY. The repeat is
+// deliberately long: Iridium and GPS share one antenna, so every SBD session
+// interrupts acquisition. Reporting every few minutes through a 38-minute wait
+// would interrupt it repeatedly and could make the fix take longer still.
+#define IRIDIUM_NOFIX_FIRST_MS     120000  // First "surfaced, no fix" report
+#define IRIDIUM_NOFIX_REPEAT_MS    1800000 // 30 minutes between repeats
 #define MESHTASTIC_UPDATE_MS       10000   // 10 seconds (Meshtastic mesh relay, low rate OK)
 #define MAVLINK_UPDATE_MS          200     // 5 Hz
 #define PSM_UPDATE_MS              5000    // 5 seconds
@@ -115,13 +121,18 @@
 #define PI_HEARTBEAT_TIMEOUT_MS        5000   // Pi considered disconnected if no heartbeat in 5 s
 #define MISSION_DATA_FRESHNESS_MS      3000   // Depth/state/voltage must be newer than this
 #define DIVE_DEPTH_THRESHOLD_M         2.0    // Depth > this: PRE_DIVE -> DIVING (underwater detection)
-#define RECOVERY_DEPTH_THRESHOLD_M     1.5    // Depth < this AND GPS fix: DIVING -> RECOVERY
+#define RECOVERY_DEPTH_THRESHOLD_M     1.5    // Depth < this, sustained: DIVING -> RECOVERY
 #define DIVE_MIN_DURATION_MS           60000  // Min time in DIVING before RECOVERY transition (60 s)
 #define DIVE_HEARTBEAT_GRACE_MS        90000  // Ignore heartbeat timeout for this long after entering DIVING
 
 // Safe surface power cutoff. A single Lua STATE=4 is never sufficient.
 #define SURFACE_RECOVERY_MESSAGES      3      // Consecutive fresh RECOVERY reports
 #define SURFACE_QUALIFY_MS             30000  // All independent conditions sustained
+// Minimum depth span across the qualification window. A frozen depth channel
+// reads shallow and perfectly steady, which is what floating looks like, so
+// the reading must move before depth is trusted. Measured surface windows held
+// at least 0.070 m of spread, against exactly zero for a dead channel.
+#define SURFACE_DEPTH_LIVENESS_M       0.02f
 #define POWER_SHUTDOWN_FINAL_GRACE_MS  30000  // Allow BlueOS systemctl poweroff to complete
 #define POWER_STATUS_INTERVAL_MS       1000   // Repeat request/status for BlueOS
 #define AUTOPILOT_SYSTEM_ID            1
