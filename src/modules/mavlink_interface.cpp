@@ -4,6 +4,7 @@
 #include "modules/relay_controller.h"
 #include "modules/state_machine.h"
 #include "config.h"
+#include "mavlink_name_field.h"
 #include <Arduino.h>
 #include <math.h>
 
@@ -290,10 +291,15 @@ void MAVLinkInterface_sendStatus(float voltage, float current) {
 }
 
 static void sendNamedFloat(const char* name, float value) {
+    // Never hand a bare literal to the packer; it copies the full ten bytes and
+    // would trail whatever sits next in .rodata behind the terminator.
+    char field[MAVLINK_NAME_FIELD_LEN];
+    mavlinkNameField(field, name);
+
     mavlink_message_t msg;
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     mavlink_msg_named_value_float_pack(
-        systemId, componentId, &msg, (uint32_t)millis(), name, value);
+        systemId, componentId, &msg, (uint32_t)millis(), field, value);
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     MAVLINK_SERIAL.write(buf, len);
 }

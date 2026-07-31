@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-31
+
+### Fixed
+- Named-float names no longer trail bytes borrowed from the string literal next
+  to them. MAVLink's `NAMED_VALUE_FLOAT` name is a fixed `char[10]` and the
+  generated packer copies all ten bytes out of whatever pointer it is handed, so
+  passing a shorter literal read past the end of that literal and put whatever
+  the linker had placed after it on the wire. Captured off the vehicle, the AGT
+  was transmitting `AGT_CAP\0RE`, `REL_STAT\0P` and `PWR_SHDN\0v` — the trailing
+  characters are fragments of the neighbouring names. A receiver that stops at
+  the terminator reads these correctly, but BlueOS deletes NULs instead and so
+  saw `AGT_CAPRE`, `REL_STATP` and `PWR_SHDNv`, which match nothing and were
+  discarded. The extension consequently reported no AGT capability
+  advertisement, no release status, and the AGT release path unavailable, while
+  the AGT had in fact been announcing all three once a second since 0.3.0; the
+  power-cutoff handshake could never have completed. Names now pass through
+  `mavlinkNameField()`, which copies into a zero-filled field. `STATUSTEXT` was
+  already staged in a padded buffer and was never affected, which is why log
+  messages always looked right.
+
 ## [0.3.0] - 2026-07-28 - Safe Surface Power Control
 
 ### Added
