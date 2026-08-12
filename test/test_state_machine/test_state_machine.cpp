@@ -218,7 +218,7 @@ void test_diving_keeps_nonessentials_powered(void) {
 // Iridium transmission rules
 // ---------------------------------------------------------------------------
 
-void test_iridium_allowed_in_recovery_only(void) {
+void test_iridium_blocked_until_recovery_payload_cutoff(void) {
     StateMachine_init();
     TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
 
@@ -226,7 +226,7 @@ void test_iridium_allowed_in_recovery_only(void) {
     TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
 
     StateMachine_enterRecovery();
-    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
+    TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +473,13 @@ static void qualifyAndCutPower(void) {
     TEST_ASSERT_FALSE(RelayController_getPowerManagement());
 }
 
+void test_iridium_allowed_after_recovery_payload_cutoff(void) {
+    StateMachine_init();
+    qualifyAndCutPower();
+
+    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
+}
+
 void test_power_cycle_restores_pi_power(void) {
     stub_set_millis(100);
     StateMachine_init();
@@ -683,7 +690,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_diving_keeps_nonessentials_powered);
 
     // Transmission rules
-    RUN_TEST(test_iridium_allowed_in_recovery_only);
+    RUN_TEST(test_iridium_blocked_until_recovery_payload_cutoff);
+    RUN_TEST(test_iridium_allowed_after_recovery_payload_cutoff);
 
     // State tracking
     RUN_TEST(test_previous_state_tracked);

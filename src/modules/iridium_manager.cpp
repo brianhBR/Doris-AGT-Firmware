@@ -1,5 +1,6 @@
 #include "modules/iridium_manager.h"
 #include "modules/doris_protocol.h"
+#include "modules/iridium_message.h"
 #include "modules/mavlink_interface.h"
 #include "modules/state_machine.h"
 #include "config.h"
@@ -372,30 +373,31 @@ bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData) {
 }
 
 bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
-    if (!gpsData->valid) return false;
+    if (gpsData == nullptr || !gpsData->valid) {
+        return false;
+    }
     float vbat = getBusVoltage();
 
-    char message[340];
-    int pos = 0;
-    pos += snprintf(message + pos, sizeof(message) - pos, "LAT:");
-    pos = appendFloat(message, pos, sizeof(message), gpsData->latitude, 6);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",LON:");
-    pos = appendFloat(message, pos, sizeof(message), gpsData->longitude, 6);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",ALT:");
-    pos = appendFloat(message, pos, sizeof(message), gpsData->altitude, 1);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",SAT:%d", gpsData->satellites);
+    IridiumProtocolBFields fields = {};
+    fields.gpsValid = true;
+    fields.latitudeDegrees = gpsData->latitude;
+    fields.longitudeDegrees = gpsData->longitude;
+    fields.groundSpeedMetersPerSecond = gpsData->speed;
+    fields.courseDegrees = gpsData->course;
+    fields.maximumDepthMeters = mission != nullptr ? mission->max_depth_m : 0.0f;
+    fields.batteryVoltage =
+        mission != nullptr && mission->battery_voltage > 0.0f
+            ? mission->battery_voltage
+            : vbat;
+    fields.temperatureValid =
+        mission != nullptr && mission->temperature_valid;
+    fields.minimumTemperatureCelsius =
+        mission != nullptr ? mission->minimum_temperature_c : 0.0f;
 
-    if (mission) {
-        float v = mission->battery_voltage > 0 ? mission->battery_voltage : vbat;
-        pos += snprintf(message + pos, sizeof(message) - pos, ",V:");
-        pos = appendFloat(message, pos, sizeof(message), v, 2);
-        pos += snprintf(message + pos, sizeof(message) - pos, ",LEAK:%d,MAXD:",
-                        mission->leak_detected ? 1 : 0);
-        pos = appendFloat(message, pos, sizeof(message), mission->max_depth_m, 1);
-        snprintf(message + pos, sizeof(message) - pos, "m");
-    } else {
-        pos += snprintf(message + pos, sizeof(message) - pos, ",V:");
-        pos = appendFloat(message, pos, sizeof(message), vbat, 2);
+    char message[96];
+    if (!IridiumMessage_formatProtocolB(message, sizeof(message), fields)) {
+        DebugPrintln(F("Iridium: Protocol B payload buffer too small"));
+        return false;
     }
 
     return iridiumSendText(message);
@@ -403,26 +405,25 @@ bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
 
 bool IridiumManager_sendStatusReport(MissionData* mission,
                                      uint32_t minutesInRecovery) {
-    // No position at all, not even a stale one: a last-known-good fix from
-    // before the dive would be reported as if it were where the vehicle
-    // surfaced, and a drifting vehicle can be a long way from it. The point of
-    // this report is only to say the vehicle is up and healthy.
+    (void)minutesInRecovery;
     float vbat = getBusVoltage();
 
-    char message[340];
-    int pos = 0;
-    pos += snprintf(message + pos, sizeof(message) - pos,
-                    "SURFACED,NOFIX,T:%lum,V:",
-                    (unsigned long)minutesInRecovery);
-    float v = (mission != nullptr && mission->battery_voltage > 0)
-                  ? mission->battery_voltage
-                  : vbat;
-    pos = appendFloat(message, pos, sizeof(message), v, 2);
-    if (mission != nullptr) {
-        pos += snprintf(message + pos, sizeof(message) - pos, ",LEAK:%d,MAXD:",
-                        mission->leak_detected ? 1 : 0);
-        pos = appendFloat(message, pos, sizeof(message), mission->max_depth_m, 1);
-        snprintf(message + pos, sizeof(message) - pos, "m");
+    IridiumProtocolBFields fields = {};
+    fields.gpsValid = false;
+    fields.maximumDepthMeters = mission != nullptr ? mission->max_depth_m : 0.0f;
+    fields.batteryVoltage =
+        mission != nullptr && mission->battery_voltage > 0.0f
+            ? mission->battery_voltage
+            : vbat;
+    fields.temperatureValid =
+        mission != nullptr && mission->temperature_valid;
+    fields.minimumTemperatureCelsius =
+        mission != nullptr ? mission->minimum_temperature_c : 0.0f;
+
+    char message[96];
+    if (!IridiumMessage_formatProtocolB(message, sizeof(message), fields)) {
+        DebugPrintln(F("Iridium: Protocol B payload buffer too small"));
+        return false;
     }
 
     return iridiumSendText(message);

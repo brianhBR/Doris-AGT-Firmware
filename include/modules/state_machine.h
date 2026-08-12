@@ -77,7 +77,8 @@ void StateMachine_reset();
 // Failsafe: trigger release relay and enter recovery
 void StateMachine_triggerFailsafe(FailsafeSource source);
 
-// Transmission gating
+// Automatic recovery transmission is allowed only after the acknowledged
+// payload-power cutoff. Manual operator tests are gated separately.
 bool StateMachine_canTransmitIridium();
 
 // Recovery queries

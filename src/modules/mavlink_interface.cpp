@@ -486,6 +486,8 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
                 }
             } else if (fromAutopilot && namedValueIs(nv.name, "PREARM")) {
                 MissionData_update_prearm_status((int)nv.value);
+            } else if (fromAutopilot && namedValueIs(nv.name, "MIN_TEMP")) {
+                MissionData_update_minimum_temperature(nv.value);
             } else if (fromAutopilot &&
                        namedValueIs(nv.name, MAVLINK_NAME_RELEASE_COMMAND)) {
                 bool validOff = nv.value >= -0.1f && nv.value <= 0.1f;

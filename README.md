@@ -14,9 +14,9 @@ Iridium, Meshtastic, and status LEDs.
    indicate armed/not-armed, Meshtastic NMEA relay active.
 2. **Dive (underwater)** — Lua script on ArduSub controls descent / on-bottom /
    ascent. AGT silently watches for failsafe conditions.
-3. **Recovery (surfaced)** — Iridium position reports resume and the white
-   strobe activates; Relay 1 cuts power only after Lua's three-minute surface
-   dwell and the BlueOS storage-safety handshake.
+3. **Recovery (surfaced)** — The white strobe activates; Relay 1 cuts power
+   after Lua's three-minute surface dwell and the BlueOS storage-safety
+   handshake, then automatic Iridium reporting begins.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ drive the dive.
 |------------|------------------------------------------------------------------------|-----------------------------------------------------------------------|
 | `PRE_DIVE` | Boot / `reset` command / Lua state ≤ 0 (`CONFIG` / `MISSION_START`)     | GPS to MAVLink + NMEA, Iridium test on demand, armed/not-armed LEDs   |
 | `DIVING`   | Lua state 1–3 (`DESCENT` / `ON_BOTTOM` / `ASCENT`), or depth > 2 m     | LEDs off (or Lua-commanded), no Iridium TX                            |
-| `RECOVERY` | Lua state 4, or independently when ascending + sustained shallow depth | White strobe and Iridium resume; only Lua state 4 can start the powered dwell/handshake |
+| `RECOVERY` | Lua state 4, or independently when ascending + sustained shallow depth | White strobe; only Lua state 4 can start the powered dwell/handshake, and automatic Iridium starts after cutoff |
 
 State transitions are driven by `NAMED_VALUE_FLOAT "STATE"` from the Lua script
 (`-1=CONFIG`, `0=MISSION_START`, `1=DESCENT`, `2=ON_BOTTOM`, `3=ASCENT`,
@@ -73,9 +73,9 @@ bit 0 is evaluated separately when checking the optional AGT release path.
 - **MAVLink (USB, 57600 baud)** — `GPS_INPUT` to ArduSub for navigation,
   `SYSTEM_TIME` once the RTC has been synced from a valid GPS fix, periodic
   heartbeats. Component ID 192 (`MAV_COMP_ID_ONBOARD_COMPUTER2`).
-- **Iridium 9603N** — Doris binary SBD telemetry (SolarSurfer2-compatible
-  framing) plus MT command support. Transmits only in `RECOVERY` (or on
-  demand via `iridium_test`).
+- **Iridium 9603N** — DORIS ASCII protocol B recovery reports plus binary MT
+  command support. Automatic reports transmit only after recovery payload
+  cutoff; `iridium_test` remains available on demand.
 - **Meshtastic RAK4603** — NMEA 0183 (`GPGGA` + `GPRMC`) via SoftwareSerial on
   J10 (D39/D40, 9600 baud). RAK4603 uses the AGT as an external GPS source.
 - **u-blox ZOE-M8Q GPS** — 6 Hz, BBR-backed for fast warm starts, V_BCKP coin

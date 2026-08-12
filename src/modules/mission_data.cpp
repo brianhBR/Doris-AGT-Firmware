@@ -9,8 +9,10 @@ static bool missionReady = false;
 void MissionData_init(void) {
     data.depth_m = 0;
     data.max_depth_m = 0;
+    data.minimum_temperature_c = 0;
     data.battery_voltage = 0;
     data.depth_valid = false;
+    data.temperature_valid = false;
     data.depth_ms = 0;
     data.voltage_from_autopilot = false;
     data.voltage_ms = 0;
@@ -42,6 +44,20 @@ void MissionData_update_depth(float depth_m) {
     if (depth_m > data.max_depth_m) {
         data.max_depth_m = depth_m;
     }
+}
+
+void MissionData_update_minimum_temperature(float temperature_c) {
+    // Lua uses 999 until the pressure sensor has produced a sample.
+    if (!isfinite(temperature_c) ||
+        temperature_c < -100.0f ||
+        temperature_c > 100.0f) {
+        return;
+    }
+    if (!data.temperature_valid ||
+        temperature_c < data.minimum_temperature_c) {
+        data.minimum_temperature_c = temperature_c;
+    }
+    data.temperature_valid = true;
 }
 
 void MissionData_update_heartbeat(void) {
@@ -113,6 +129,16 @@ bool MissionData_isMissionReady(void) {
 }
 
 void MissionData_update_doris_state(int state) {
+    bool completedMissionReset =
+        state <= 0 &&
+        data.doris_state_valid &&
+        data.doris_state > 0;
+    if (completedMissionReset) {
+        data.max_depth_m = 0.0f;
+        data.minimum_temperature_c = 0.0f;
+        data.temperature_valid = false;
+    }
+
     if (state == 4) {
         bool sequenceFresh = data.doris_state_valid &&
                              data.doris_state == 4 &&

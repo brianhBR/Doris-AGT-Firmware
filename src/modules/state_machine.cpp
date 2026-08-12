@@ -251,7 +251,11 @@ void StateMachine_triggerFailsafe(FailsafeSource source) {
 }
 
 bool StateMachine_canTransmitIridium() {
-    return status.currentState == STATE_RECOVERY;
+    // Automatic recovery reports use a blocking modem transaction. Starting
+    // one before cutoff can postpone the logging dwell and shutdown handshake
+    // for many minutes when satellite acquisition is poor.
+    return status.currentState == STATE_RECOVERY &&
+           !status.nonessentialsPowered;
 }
 
 bool StateMachine_shouldShutdownNonessentials() {

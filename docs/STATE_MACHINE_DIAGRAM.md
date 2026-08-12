@@ -215,6 +215,7 @@ stateDiagram-v2
         RelayController_setPowerManagement false
         nonessentialsPowered = false
         Power relay coil energizes, NC contact opens, loads off
+        Automatic Iridium reporting is now allowed
     end note
 ```
 
@@ -252,7 +253,10 @@ a premature or replayed `PWR_ACK` cannot pre-arm the sequence. A repeated ACK
 after the first is idempotent and does not restart the grace timer.
 
 Once `POWER_CUT` is reached the relay is never re-closed by this function.
-Power is restored only by a reset/state entry or by a boot.
+Power is restored only by a reset/state entry or by a boot. It is also the
+point where `StateMachine_canTransmitIridium()` becomes true. This ordering
+prevents a blocking satellite session from delaying the logging dwell,
+BlueOS ACK, or electrical cutoff.
 
 ## 4. Release relay latch state machine
 
@@ -371,7 +375,7 @@ or reset restores payload power and de-asserts release.
 
 | | `PRE_DIVE` | `DIVING` | `RECOVERY` |
 |---|---|---|---|
-| Iridium periodic report | Blocked, `canTransmitIridium` false (`state_machine.cpp:196-198`) | Blocked | Located report every `sysConfig.iridiumInterval` while a fix exists; otherwise an unlocated `SURFACED,NOFIX` report at 2 min then every 30 min (`IridiumSchedule_*`) |
+| Iridium periodic report | Blocked | Blocked | Blocked while payload power is on; after cutoff, protocol B sends the already-due located or zero-navigation report, then follows `IridiumSchedule_*` |
 | Iridium manual test | Allowed via `iridium_test` or MAVLink 31013, not state gated (`main.cpp:225`) | Allowed, not state gated | Allowed |
 | NeoPixel mode | `LED_MODE_READY` if `MissionData_isArmed()`, else `LED_MODE_ERROR` (`main.cpp:375-380`) | `LED_MODE_LUA` if a Lua LED command is fresh, else `LED_MODE_DIVING` (`main.cpp:366-373`) | `LED_MODE_RECOVERY` strobe (`main.cpp:361-364`) |
 | Power relay on state entry | Driven to conduct (`state_machine.cpp:242`) | Driven to conduct (`state_machine.cpp:249`) | Driven to conduct (`state_machine.cpp:255`) |

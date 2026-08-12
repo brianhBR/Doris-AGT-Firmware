@@ -17,8 +17,10 @@ void test_init_zeroes_all_fields(void) {
 
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.depth_m);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.max_depth_m);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.minimum_temperature_c);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.battery_voltage);
     TEST_ASSERT_FALSE(md.depth_valid);
+    TEST_ASSERT_FALSE(md.temperature_valid);
     TEST_ASSERT_FALSE(md.voltage_from_autopilot);
     TEST_ASSERT_FALSE(md.leak_detected);
     TEST_ASSERT_FALSE(md.heartbeat_valid);
@@ -77,6 +79,37 @@ void test_max_depth_not_affected_by_negative(void) {
     MissionData md;
     MissionData_get(&md);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 20.0f, md.max_depth_m);
+}
+
+void test_minimum_temperature_tracks_lowest_valid_report(void) {
+    MissionData_update_minimum_temperature(8.5f);
+    MissionData_update_minimum_temperature(4.2f);
+    MissionData_update_minimum_temperature(6.0f);
+
+    MissionData md;
+    MissionData_get(&md);
+    TEST_ASSERT_TRUE(md.temperature_valid);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 4.2f, md.minimum_temperature_c);
+}
+
+void test_minimum_temperature_rejects_lua_sentinel(void) {
+    MissionData_update_minimum_temperature(999.0f);
+
+    MissionData md;
+    MissionData_get(&md);
+    TEST_ASSERT_FALSE(md.temperature_valid);
+}
+
+void test_completed_mission_reset_clears_accumulated_statistics(void) {
+    MissionData_update_depth(50.0f);
+    MissionData_update_minimum_temperature(3.0f);
+    MissionData_update_doris_state(4);
+    MissionData_update_doris_state(0);
+
+    MissionData md;
+    MissionData_get(&md);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.max_depth_m);
+    TEST_ASSERT_FALSE(md.temperature_valid);
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +246,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_nonfinite_depth_is_rejected);
     RUN_TEST(test_max_depth_tracks_highest);
     RUN_TEST(test_max_depth_not_affected_by_negative);
+    RUN_TEST(test_minimum_temperature_tracks_lowest_valid_report);
+    RUN_TEST(test_minimum_temperature_rejects_lua_sentinel);
+    RUN_TEST(test_completed_mission_reset_clears_accumulated_statistics);
     RUN_TEST(test_voltage_update_from_psm);
     RUN_TEST(test_autopilot_voltage_sets_flag);
     RUN_TEST(test_autopilot_voltage_overrides_psm);

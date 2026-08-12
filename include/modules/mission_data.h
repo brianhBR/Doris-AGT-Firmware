@@ -8,8 +8,10 @@
 struct MissionData {
     float depth_m;           // Current depth (m), positive down
     float max_depth_m;       // Max depth this mission
+    float minimum_temperature_c; // Minimum pressure-sensor temperature this mission
     float battery_voltage;   // Primary: autopilot via MAVLink, fallback: PSM
     bool  depth_valid;       // True once we've received at least one depth reading from autopilot
+    bool  temperature_valid; // True after a plausible MIN_TEMP report
     unsigned long depth_ms;  // millis() when last valid depth arrived
     bool  voltage_from_autopilot;  // True if battery_voltage came from autopilot via MAVLink
     unsigned long voltage_ms;
@@ -37,6 +39,7 @@ struct MissionData {
 
 void MissionData_init(void);
 void MissionData_update_depth(float depth_m);
+void MissionData_update_minimum_temperature(float temperature_c);
 void MissionData_update_heartbeat(void);
 void MissionData_update_voltage(float voltage);
 void MissionData_update_autopilot_voltage(float voltage);

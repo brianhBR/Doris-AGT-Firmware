@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-12
+
+### Added
+- DORIS ASCII Iridium protocol B with fixed signed coordinates, speed, course,
+  maximum mission depth, battery voltage, minimum pressure-sensor temperature,
+  and a reserved `00` status byte. No-fix reports use zero navigation fields.
+- Ingestion of Lua `MIN_TEMP` telemetry, including validity checks and
+  per-mission minimum tracking.
+
+### Changed
+- Automatic recovery Iridium sessions now start only after the acknowledged
+  BlueOS shutdown handshake, 30-second grace, and physical payload cutoff.
+  This prevents a long synchronous satellite attempt from delaying clean
+  shutdown; explicit operator tests remain available before cutoff.
+
 ## [0.3.4] - 2026-08-12
 
 ### Added

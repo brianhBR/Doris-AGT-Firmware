@@ -76,9 +76,11 @@ reports are the sole surface/shutdown authority. They start
 powered and Lua continues sending telemetry into the active MCAP.
 
 Depth and GPS are deliberately absent from the cutoff vote. The independent
-shallow-depth/liveness backstop still enters `RECOVERY` so Iridium and the strobe
-can operate if Lua is wedged, but it cannot start the power dwell. This keeps
-surface detection and payload shutdown as separate decisions.
+shallow-depth/liveness backstop still enters `RECOVERY` so the strobe can
+operate if Lua is wedged, but it cannot start the power dwell. Automatic
+Iridium reporting now waits for payload cutoff, so a backstop-only recovery
+does not start a blocking modem session. This keeps surface detection and
+payload shutdown as separate decisions.
 
 After the dwell:
 
@@ -96,21 +98,34 @@ Unsigned elapsed-time subtraction keeps both timers safe across rollover.
 
 ## Iridium reporting in RECOVERY
 
-A located report goes out as soon as there is a fix, then every
-`iridiumInterval`. Without a fix the AGT used to say nothing at all, so a
-surfaced vehicle and a lost one looked identical for as long as acquisition
-took. It now sends a short unlocated report instead:
+Automatic Iridium reporting starts only after the BlueOS handshake, final
+30-second grace, and physical payload-relay cutoff are complete. A synchronous
+Iridium session can block firmware execution for many minutes in poor
+conditions; running it first previously delayed the three-minute dwell and
+clean shutdown. Manual operator tests remain available before cutoff.
+
+The schedule continues aging while shutdown completes. After cutoff, a located
+report that is already due goes out immediately, then repeats every
+`iridiumInterval`. Without a fix, the first unlocated report becomes due
+`IRIDIUM_NOFIX_FIRST_MS` (2 minutes) after entering `RECOVERY`, and repeats
+every `IRIDIUM_NOFIX_REPEAT_MS` (30 minutes).
+
+Both report types use DORIS ASCII protocol B:
 
 ```text
-SURFACED,NOFIX,T:12m,V:14.82,LEAK:0,MAXD:2238.0m
+B,+033.12345,-118.12345,07,245,2238,14.8,3.2,00
 ```
 
-The first goes out `IRIDIUM_NOFIX_FIRST_MS` (2 minutes) after entering
-`RECOVERY`, timed from the state entry so a failsafe release reports on the same
-schedule as a normal surfacing. Repeats follow every `IRIDIUM_NOFIX_REPEAT_MS`
-(30 minutes). When a fix finally arrives the full located report is sent
-immediately rather than waiting out the interval, since the position is the
-whole point and the operator has so far only been told the vehicle is up.
+The fields are protocol version, signed latitude and longitude with five
+decimals, ground speed in decimeters per second, course in degrees, maximum
+mission depth in meters, battery voltage, minimum pressure-sensor temperature,
+and a status byte. Speed, course, and depth are rounded to integers. The status
+byte is reserved as `00` until its bit assignments are defined.
+
+Without a fix, the navigation fields are
+`+000.00000,+000.00000,00,000`; no stale pre-dive position is used. When a fix
+finally arrives, the located report is sent immediately rather than waiting
+out the interval.
 
 The repeat interval is long deliberately. Iridium and GPS share one antenna via
 `antennaToIridium()` / `antennaToGPS()`, and there is already history of SBD

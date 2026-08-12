@@ -16,12 +16,10 @@ bool IridiumManager_init(IridiumSBD* modem);
 // Send position report (legacy text format)
 bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData);
 
-// Send position + mission stats (legacy text format)
+// Send a located DORIS protocol B mission report
 bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission);
 
-// Send a short unlocated report so surfacing is visible without a GPS fix.
-// Acquisition has taken over half an hour after surfacing, and until then the
-// operator has no way to tell a surfaced vehicle from a lost one.
+// Send protocol B with zero navigation fields when no GPS fix is available
 bool IridiumManager_sendStatusReport(MissionData* mission,
                                      uint32_t minutesInRecovery);
 

@@ -223,6 +223,7 @@ GPS (I2C) ──┬──► MAVLink (Navigator USB, 57600 baud)
 
 MAVLink IN ──┬──► Depth (SCALED_PRESSURE / VFR_HUD)
              ├──► Battery voltage (SYS_STATUS / BATTERY_STATUS)
+             ├──► Minimum dive temperature (MIN_TEMP)
              ├──► Heartbeat monitoring
              └──► Failsafe decisions
 
@@ -234,12 +235,20 @@ Status ────────────► NeoPixels
 
 ## Iridium Messages
 
-Position reports include mission statistics:
+Automatic recovery messages are sent only after the acknowledged payload-power
+cutoff, so a blocking satellite session cannot delay clean shutdown. Manual
+operator tests remain available before cutoff.
+
+Located and no-fix reports use DORIS ASCII protocol B:
+
 ```
-LAT:37.422408,LON:-122.084108,ALT:15.2,SPD:2.5,SAT:12,BATT:12.45V
+B,+033.12345,-118.12345,07,245,2238,14.8,3.2,00
 ```
 
-When in RECOVERY after failsafe, reports also include depth and failsafe source information.
+Fields are version, signed latitude, signed longitude, speed in decimeters per
+second, course in degrees, maximum depth in meters, battery voltage, minimum
+dive temperature, and status. The status byte is reserved as `00`. Reports
+without a GPS fix use zero navigation fields.
 
 ## MAVLink Integration
 
