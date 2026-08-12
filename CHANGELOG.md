@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-12
+
+### Added
+- AssistNow Autonomous (AOP) on the ZOE-M8Q. The receiver now predicts
+  satellite orbits on-chip (up to ~3 days ahead on M8) from ephemeris it has
+  already downloaded — no network, almanac upload, or server needed. Predictions
+  persist in BBR kept alive by the V_BCKP coin cell, so a surfacing after a long
+  dive (broadcast ephemeris long expired) can get an AOP-assisted start instead
+  of a full cold acquisition. Enabled via `UBX-CFG-NAVX5`, which — unlike
+  `enableGNSS` — does not reset the receiver or wipe ephemeris. The enable path
+  is idempotent and runs outside the `alreadyConfigured` guard, so units whose
+  BBR predates this feature also converge on next boot. Gated by
+  `GPS_ENABLE_AOP` with `GPS_AOP_ORBIT_MAX_ERR` for the orbit-error bound.
+- AOP status in the `AGT_DEBUG` GPS diagnostics: reports whether AOP is enabled
+  (`use=ON/OFF`) and the live subsystem state (`idle(ready)` vs `generating`),
+  so an operator can confirm predictions are computed and stored in BBR during
+  the pre-deployment warm-up before splashdown.
+
+### Changed
+- GPS navigation rate lowered from 6 Hz to 1 Hz (`GPS_UPDATE_RATE_HZ`) so the
+  receiver has spare CPU to generate AOP orbit predictions. 1 Hz is ample for a
+  surface position tracker; MAVLink, Meshtastic, and Iridium all consume
+  position far more slowly.
+
 ## [0.3.3] - 2026-08-12
 
 ### Changed

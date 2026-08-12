@@ -182,9 +182,28 @@
 // ============================================================================
 // GPS CONFIGURATION
 // ============================================================================
-#define GPS_UPDATE_RATE_HZ       6
+// Lowered from 6 Hz: AssistNow Autonomous (AOP, below) computes orbit
+// predictions on the receiver's own CPU, and u-blox generates them faster when
+// the nav engine isn't saturated at a high rate. 1 Hz is ample for a surface
+// position tracker (MAVLink/Meshtastic/Iridium all consume position far slower)
+// and frees the most CPU for prediction generation during the pre-deployment
+// warm-up. Tune upward if a faster live position is ever needed.
+#define GPS_UPDATE_RATE_HZ       1
 #define GPS_MIN_SATS             4
 #define GPS_DYNAMIC_MODEL        DYN_MODEL_PORTABLE  // or SEA, AIRBORNE1g, etc.
+
+// AssistNow Autonomous (AOP). The ZOE-M8Q predicts satellite orbits on-chip
+// (up to ~3 days ahead on M8) using ephemeris it has already downloaded — no
+// network, almanac upload, or server needed. Predictions live in BBR, which
+// the V_BCKP coin cell keeps alive across power cycles, so a surfacing after a
+// long dive (broadcast ephemeris long expired) can still get an AOP-assisted
+// start instead of a full cold acquisition. Applied via UBX-CFG-NAVX5, which
+// (unlike enableGNSS) does NOT reset the receiver or wipe ephemeris. Set to 0
+// to disable.
+#define GPS_ENABLE_AOP           1
+// Max acceptable AOP orbit error (metres), passed to CFG-NAVX5 aopOrbMaxErr.
+// 0 keeps the receiver firmware default.
+#define GPS_AOP_ORBIT_MAX_ERR    0
 
 // ============================================================================
 // MAVLINK CONFIGURATION
