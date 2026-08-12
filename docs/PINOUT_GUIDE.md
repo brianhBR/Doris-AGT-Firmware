@@ -150,7 +150,7 @@ GND            →  GND
 - PRE_MISSION: ON
 - SELF_TEST: ON
 - MISSION: ON
-- RECOVERY: OFF
+- RECOVERY: ON until sustained surface qualification + BlueOS ACK + final grace
 
 #### Relay 2 - Drop Weight Release (GPIO35/AD35)
 
@@ -167,8 +167,8 @@ GND            →  GND                →  Negative terminal
 **Controls:** Electrolytic/galvanic ballast release mechanism
 **Active:** HIGH (3.3V signal triggers relay)
 **Power Source:** Battery voltage (12-14.8V from 4S LiPo)
-**Duration:** Configured (default 1500 seconds / 25 minutes for electrolytic dissolution)
-**Trigger:** Failsafe condition or `release_now` command
+**Duration:** Latched; 1500 seconds is the minimum guarded OFF hold, not an automatic timeout
+**Trigger:** Source-validated Lua `RELAY=1`, manual, Iridium, or guarded DIVING failsafe
 
 **Important:**
 - Relay coil powered by battery voltage (NOT 3.3V/5V)
@@ -366,7 +366,8 @@ The TOP_VIEW image shows all breakout pins with labels. Key pins for this projec
 - Connect common ground
 
 ⚠️ **Electrolytic Release:**
-- Relay 2 default timing for electrolytic release: 1500 seconds (25 minutes)
+- Relay 2 remains latched through ascent; validate the 1500-second minimum hold
+  and explicit surface-safe OFF behavior
 - Test timing before deployment
 - Have backup release mechanism
 

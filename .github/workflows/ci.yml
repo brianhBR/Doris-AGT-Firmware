@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main, master, develop]
+    # next/** carries release lines that are developed for months before they
+    # merge, and release.yml only builds — it does not run the unit tests.
+    # Without this a tagged firmware could ship having never been tested by CI.
+    branches: [main, master, develop, "next/**"]
   pull_request:
-    branches: [main, master, develop]
+    branches: [main, master, develop, "next/**"]
 
 jobs:
   build:

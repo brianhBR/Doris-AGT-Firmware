@@ -15,6 +15,11 @@ void MAVLinkInterface_sendHeartbeat();
 // Send system status
 void MAVLinkInterface_sendStatus(float voltage, float current);
 
+// Repeated named-float status visible to BlueOS:
+// AGT_CAP (capability mask), REL_STAT (latched GPIO35 state), and PWR_SHDN
+// (graceful shutdown request).
+void MAVLinkInterface_sendSafetyStatus();
+
 // Process incoming MAVLink messages (reads from MAVLINK_SERIAL)
 void MAVLinkInterface_update();
 

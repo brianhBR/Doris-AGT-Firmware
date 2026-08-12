@@ -8,9 +8,13 @@
 struct MissionData {
     float depth_m;           // Current depth (m), positive down
     float max_depth_m;       // Max depth this mission
+    float minimum_temperature_c; // Minimum pressure-sensor temperature this mission
     float battery_voltage;   // Primary: autopilot via MAVLink, fallback: PSM
     bool  depth_valid;       // True once we've received at least one depth reading from autopilot
+    bool  temperature_valid; // True after a plausible MIN_TEMP report
+    unsigned long depth_ms;  // millis() when last valid depth arrived
     bool  voltage_from_autopilot;  // True if battery_voltage came from autopilot via MAVLink
+    unsigned long voltage_ms;
     bool  leak_detected;     // From MAVLink SYS_STATUS or sensor
     unsigned long last_heartbeat_ms;  // Last autopilot heartbeat (millis)
     bool  heartbeat_valid;   // Have we ever received a heartbeat?
@@ -26,6 +30,7 @@ struct MissionData {
     int      doris_state;
     unsigned long doris_state_ms;   // millis() when last received
     bool     doris_state_valid;     // true once we've received at least one update
+    uint8_t  recovery_message_count; // consecutive STATE=4 reports
 
     // Lua prearm status from NAMED_VALUE_FLOAT "PREARM"
     // -1=unknown, 0=waiting, 1=GPS_OK, 2=GPS+batt ok, 3=all checks passed
@@ -34,6 +39,7 @@ struct MissionData {
 
 void MissionData_init(void);
 void MissionData_update_depth(float depth_m);
+void MissionData_update_minimum_temperature(float temperature_c);
 void MissionData_update_heartbeat(void);
 void MissionData_update_voltage(float voltage);
 void MissionData_update_autopilot_voltage(float voltage);
@@ -63,6 +69,10 @@ bool MissionData_isMissionReady(void);
 void MissionData_update_doris_state(int state);
 int  MissionData_getDorisState(void);
 bool MissionData_hasDorisState(void);
+bool MissionData_isDepthFresh(void);
+bool MissionData_isDorisStateFresh(void);
+bool MissionData_isAutopilotVoltageFresh(void);
+uint8_t MissionData_getRecoveryMessageCount(void);
 
 // Lua prearm status from NAMED_VALUE_FLOAT "PREARM"
 void MissionData_update_prearm_status(int status);

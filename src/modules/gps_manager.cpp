@@ -104,6 +104,41 @@ static bool initI2CAndGPS(bool fullConfig) {
             configSavedToBBR = true;
             DebugPrintln(F("GPS: BBR config valid, skipping reconfig (ephemeris preserved)"));
         }
+
+#if GPS_ENABLE_AOP
+        // Ensure AssistNow Autonomous (AOP) and the AOP-friendly nav rate are
+        // applied and persisted. Both CFG-NAVX5 (AOP) and CFG-RATE are safe to
+        // (re)apply — unlike enableGNSS they do NOT trigger the M8 receiver
+        // reset that wipes ephemeris from RAM. Idempotent: only write + save
+        // when a value actually differs, so this converges fresh units AND
+        // already-deployed units whose BBR predates this feature (which take
+        // the alreadyConfigured branch above and would otherwise never get AOP),
+        // without a redundant BBR write on every boot. getAopCfg() returns 255
+        // on a failed poll; (255 & 0x01) == 1 reads as "enabled" so a comms
+        // glitch just skips the write rather than spuriously reconfiguring.
+        bool aopCfgChanged = false;
+        if ((gpsPtr->getAopCfg() & 0x01) == 0) {
+            if (gpsPtr->setAopCfg(1, GPS_AOP_ORBIT_MAX_ERR)) {
+                aopCfgChanged = true;
+                DebugPrintln(F("GPS: AssistNow Autonomous (AOP) enabled"));
+            } else {
+                DebugPrintln(F("GPS: WARNING - failed to enable AOP"));
+            }
+        }
+        if (gpsPtr->getNavigationFrequency() != GPS_UPDATE_RATE_HZ) {
+            if (gpsPtr->setNavigationFrequency(GPS_UPDATE_RATE_HZ)) {
+                aopCfgChanged = true;
+                DebugPrintln(F("GPS: Nav rate lowered for AOP"));
+            }
+        }
+        if (aopCfgChanged) {
+            if (gpsPtr->saveConfiguration()) {
+                DebugPrintln(F("GPS: AOP/rate config saved to BBR"));
+            } else {
+                DebugPrintln(F("GPS: WARNING - failed to save AOP/rate to BBR"));
+            }
+        }
+#endif
     } else {
         DebugPrintln(F("GPS: Light reinit (BBR config retained)"));
     }
@@ -650,6 +685,22 @@ void GPSManager_printDiagnostics() {
         MAVLinkInterface_sendStatusText(6, msg);
     } else {
         MAVLinkInterface_sendStatusText(4, "GPS: NAV-STATUS query failed");
+    }
+
+    // AssistNow Autonomous (AOP) status. `use` reflects whether AOP is enabled
+    // in CFG-NAVX5; `status` is the live subsystem state: idle(0) means the
+    // current prediction batch is computed and the module is ready — a non-zero
+    // value means it's still generating. Before a deployment, wait for
+    // idle(ready) so orbit predictions are stored in BBR for the next surfacing.
+    if (gpsPtr->getAOPSTATUS()) {
+        uint8_t aopUse     = gpsPtr->packetUBXNAVAOPSTATUS->data.aopCfg.bits.useAOP;
+        uint8_t aopRunning = gpsPtr->packetUBXNAVAOPSTATUS->data.status;
+        snprintf(msg, sizeof(msg), "GPS: AOP use=%s state=%s",
+                 aopUse ? "ON" : "OFF",
+                 aopRunning ? "generating" : "idle(ready)");
+        MAVLinkInterface_sendStatusText(6, msg);
+    } else {
+        MAVLinkInterface_sendStatusText(4, "GPS: AOP status query failed");
     }
 
     UBX_MON_HW_data_t hw;

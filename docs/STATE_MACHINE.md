@@ -2,323 +2,215 @@
 
 ## Overview
 
-The AGT firmware uses a **state-based architecture** with four sequential states. **ArduPilot/Navigator provides real-time sensor data** (depth, battery, leak) via MAVLink, and the AGT uses this data for automatic state transitions and failsafe decisions.
+The next/0.3 AGT firmware has three mission states:
 
-## State Diagram
+1. `PRE_DIVE`
+2. `DIVING`
+3. `RECOVERY`
 
-```
-                    ┌──────────────────┐
-                    │   PRE_MISSION    │◄───┐
-                    │  (Initial Setup) │    │
-                    └────────┬─────────┘    │
-                             │              │
-                     start_self_test        reset
-                             │              │
-                    ┌────────▼─────────┐    │
-                    │    SELF_TEST     │────┘
-                    │  (Verify Ready)  │
-                    └────────┬─────────┘
-                             │
-                     depth > 2m (MAVLink)
-                             │
-                    ┌────────▼─────────┐
-                    │     MISSION      │
-                    │  (Underwater)    │
-                    └────────┬─────────┘
-                             │
-                     depth < 3m OR GPS fix
-                     OR failsafe triggered
-                             │
-                    ┌────────▼─────────┐
-                    │     RECOVERY     │
-                    │ (Surface / Low   │
-                    │   Power / Strobe)│
-                    └──────────────────┘
+The ArduSub Lua mission remains in charge of the dive. The AGT independently
+guards release and Pi power, but mission state, release state, and power state
+are intentionally separate.
+
+## State transitions
+
+```text
+PRE_DIVE ── Lua STATE=1..3 ──► DIVING
+    ▲                              │
+    │ reset                        ├── Lua STATE=4 ──► RECOVERY
+    │                              ├── ascent + sustained shallow depth ──► RECOVERY
+    └──────────────────────────────┴── guarded failsafe ──► RECOVERY
 ```
 
-## State Definitions
+- Boot and `reset` enter `PRE_DIVE`.
+- A Lua `STATE` value from 1 through 3 moves `PRE_DIVE` to `DIVING`.
+- Lua `STATE=4` moves the mission state to `RECOVERY`, but cannot directly cut
+  Pi power.
+- While Lua reports ascent (`STATE>=3`), fresh shallow autopilot depth sustained
+  for `SURFACE_QUALIFY_MS` provides a backup transition to `RECOVERY`. There is
+  no GPS term: this backstop exists for a wedged script, and acquisition after
+  surfacing has taken as long as 38 minutes, so a fix requirement disabled it in
+  exactly the conditions it was written for.
+- Leak, sustained critical voltage, and heartbeat-loss release failsafes are
+  evaluated only while `DIVING`, after the dive-entry grace.
+- `release_now` and valid Iridium release commands are explicit operator paths
+  and may latch release independently of mission state.
 
-### 1. PRE_MISSION
+All trusted autopilot mission, depth, voltage, heartbeat, and release MAVLink
+inputs must come from system/component `1/1`.
 
-**Purpose:** Initial power-on state, waiting for operator to begin
+## State behavior
 
-**Characteristics:**
-- All systems powered ON (Relay 1 ON)
-- GPS acquiring fix
-- Configuration via serial/BlueOS
-- Waiting for `start_self_test` command
+### PRE_DIVE
 
-**Relay States:**
-- Relay 1 (Power Management): **ON** (Navigator/Pi powered)
-- Relay 2 (Release): **OFF** (inactive)
+- Navigator/Pi, camera, and lights remain powered through the NC power relay.
+- GPS, MAVLink, Meshtastic, optional Iridium test, and readiness LEDs operate.
+- Release remains independent; a persisted active release is not cleared by
+  boot or mission reset.
 
-**Allowed Transitions:**
-- → SELF_TEST (via `start_self_test` command)
+### DIVING
 
-**NeoPixel Display:**
-- Pre-mission indicator pattern
+- All nonessential loads remain powered.
+- Lua controls the mission and may command LEDs and `RELAY`.
+- AGT monitors fresh autopilot voltage, leak state, and heartbeat for guarded
+  release fallbacks.
+- Iridium recovery reporting is disabled.
 
----
+### RECOVERY
 
-### 2. SELF_TEST
+- Strobe and recovery communications are enabled.
+- Navigator/Pi, camera, and lights remain powered for Lua's three-minute
+  surface-logging dwell.
+- Only after that dwell, BlueOS acknowledgement, and final grace does the power
+  relay open and turn all nonessential loads off.
+- A missing ACK keeps all loads powered. Stale/reverted Lua state cancels before
+  ACK, but transport loss after ACK cannot cancel the latched final countdown.
 
-**Purpose:** Verify systems are ready before deployment
+## Safe surface power handshake
 
-**Characteristics:**
-- GPS, Iridium, battery, and mission parameters verified
-- Iridium can transmit (position check)
-- System health confirmed
-- Waiting for deployment (depth > 2m from MAVLink)
+A single `STATE=4` does not authorize cutoff. The AGT must have observed the
+RAM-only `PRE_DIVE -> DIVING` mission sequence, then receive at least
+`SURFACE_RECOVERY_MESSAGES` (3) consecutive fresh Lua `STATE=4` reports. Those
+reports are the sole surface/shutdown authority. They start
+`SURFACE_LOGGING_DWELL_MS` (180 seconds), during which the payload remains
+powered and Lua continues sending telemetry into the active MCAP.
 
-**Relay States:**
-- Relay 1 (Power Management): **ON** (all systems powered)
-- Relay 2 (Release): **OFF** (inactive)
+Depth and GPS are deliberately absent from the cutoff vote. The independent
+shallow-depth/liveness backstop still enters `RECOVERY` so the strobe can
+operate if Lua is wedged, but it cannot start the power dwell. Automatic
+Iridium reporting now waits for payload cutoff, so a backstop-only recovery
+does not start a blocking modem session. This keeps surface detection and
+payload shutdown as separate decisions.
 
-**Allowed Transitions:**
-- → MISSION (automatic when MAVLink depth > 2m)
-- → PRE_MISSION (via `reset` command)
+After the dwell:
 
-**NeoPixel Display:**
-- Self-test indicator pattern
+1. AGT repeatedly publishes `PWR_SHDN=1` while fresh `STATE=4` continues.
+2. BlueOS component `1/191` finishes shutdown preparation and publishes
+   `PWR_ACK=1`.
+3. AGT waits `POWER_SHUTDOWN_FINAL_GRACE_MS` (30 seconds) so BlueOS
+   `systemctl poweroff` can complete.
+4. AGT opens the NC power relay. The ACK latches this countdown, so the expected
+   loss of MAVLink during Linux shutdown cannot cancel it.
 
-**Automatic Transition:**
-The AGT monitors depth data from ArduPilot via MAVLink (SCALED_PRESSURE or VFR_HUD messages). When confirmed depth exceeds `MISSION_DEPTH_THRESHOLD_M` (2.0m), the system automatically transitions to MISSION.
+Premature ACKs are rejected. Stale or reverted Lua state before ACK resets the
+dwell and cancels the request. Only a power cycle clears an accepted ACK.
+Unsigned elapsed-time subtraction keeps both timers safe across rollover.
 
----
+## Iridium reporting in RECOVERY
 
-### 3. MISSION
+Automatic Iridium reporting starts only after the BlueOS handshake, final
+30-second grace, and physical payload-relay cutoff are complete. A synchronous
+Iridium session can block firmware execution for many minutes in poor
+conditions; running it first previously delayed the three-minute dwell and
+clean shutdown. Manual operator tests remain available before cutoff.
 
-**Purpose:** Active underwater deployment
+The schedule continues aging while shutdown completes. After cutoff, a located
+report that is already due goes out immediately, then repeats every
+`iridiumInterval`. Without a fix, the first unlocated report becomes due
+`IRIDIUM_NOFIX_FIRST_MS` (2 minutes) after entering `RECOVERY`, and repeats
+every `IRIDIUM_NOFIX_REPEAT_MS` (30 minutes).
 
-**Characteristics:**
-- ArduPilot recording video and sensor data
-- AGT monitors failsafe conditions:
-  - Battery voltage (from autopilot via MAVLink)
-  - Leak detection
-  - Maximum depth exceeded
-  - Loss of autopilot heartbeat
-- GPS tracking (no fix expected underwater)
-- Meshtastic NMEA output continues
+Both report types use DORIS ASCII protocol B:
 
-**Relay States:**
-- Relay 1 (Power Management): **ON** (all systems powered)
-- Relay 2 (Release): **OFF** (until failsafe triggers it)
-
-**Allowed Transitions:**
-- → RECOVERY (automatic when depth < 3m or GPS fix acquired)
-- → RECOVERY (via failsafe trigger — release relay fires first)
-
-**NeoPixel Display:**
-- Green pulse (GPS fix, operational)
-- Yellow pulse (no GPS fix)
-
-**Failsafe Monitoring:**
-The state machine continuously checks for failsafe conditions during MISSION (see Failsafe System below).
-
----
-
-### 4. RECOVERY
-
-**Purpose:** Surface recovery mode with visual and satellite tracking
-
-**Characteristics:**
-- **Navigator/Pi powered OFF** (Relay 1 OFF) to conserve power
-- Camera and lights powered OFF
-- AGT continues:
-  - GPS tracking
-  - Iridium position reporting (with mission stats)
-  - Meshtastic NMEA broadcasts
-- **Strobe LEDs** active for visual location aid
-- Conserving battery for extended surface wait
-
-**Relay States:**
-- Relay 1 (Power Management): **OFF** (nonessentials shut down)
-- Relay 2 (Release): **N/A** (may have been triggered by failsafe)
-
-**Allowed Transitions:**
-- → PRE_MISSION (via `reset` command after physical recovery)
-
-**NeoPixel Display:**
-- **Recovery strobe** (high-visibility flashing for locating)
-
----
-
-## Failsafe System
-
-The failsafe system replaces the previous EMERGENCY state. When a failsafe condition is detected during MISSION, the AGT:
-
-1. Fires the release relay (Relay 2) for `RELEASE_RELAY_DURATION_SEC` (default 1500 seconds / 25 minutes for electrolytic release)
-2. Transitions immediately to RECOVERY state
-
-### Failsafe Triggers
-
-| Source | Constant | Condition | Description |
-|--------|----------|-----------|-------------|
-| Low Voltage | `FAILSAFE_LOW_VOLTAGE` | Autopilot-confirmed voltage < 11.0V | Battery critically low |
-| Leak | `FAILSAFE_LEAK` | Leak detected via MAVLink/sensor | Water ingress |
-| Max Depth | `FAILSAFE_MAX_DEPTH` | Depth > 200m | Exceeded safe operating depth |
-| No Heartbeat | `FAILSAFE_NO_HEARTBEAT` | No MAVLink heartbeat for 30s | Autopilot communication lost |
-| Manual | `FAILSAFE_MANUAL` | `release_now` command | Operator-initiated abort |
-
-**Voltage failsafe** only acts on voltage data confirmed from the autopilot via MAVLink (not PSM fallback data), preventing false triggers from noisy analog readings.
-
-### Failsafe Behavior
-
-- The release relay fires **once** — if already triggered, subsequent failsafe events do not re-trigger it
-- All failsafe sources result in the same action: release relay + RECOVERY
-- The failsafe source is logged and reported in `status` output
-
----
-
-## State Transitions
-
-### Command-Based Transitions
-
-Sent via USB serial (57600 baud):
-
-```
-start_self_test           # PRE_MISSION → SELF_TEST
-reset                     # Any → PRE_MISSION
-release_now               # MISSION → fires release relay → RECOVERY
+```text
+B,+033.12345,-118.12345,07,245,2238,14.8,3.2,00
 ```
 
-### Automatic Transitions
+The fields are protocol version, signed latitude and longitude with five
+decimals, ground speed in decimeters per second, course in degrees, maximum
+mission depth in meters, battery voltage, minimum pressure-sensor temperature,
+and a status byte. Speed, course, and depth are rounded to integers. The status
+byte is reserved as `00` until its bit assignments are defined.
 
-| From | To | Trigger | Description |
-|------|----|---------| ------------|
-| SELF_TEST | MISSION | MAVLink depth > 2m | Deployment confirmed |
-| MISSION | RECOVERY | Depth < 3m OR GPS fix | Surfaced |
-| MISSION | RECOVERY | Any failsafe trigger | Release relay fired, enter low-power mode |
+Without a fix, the navigation fields are
+`+000.00000,+000.00000,00,000`; no stale pre-dive position is used. When a fix
+finally arrives, the located report is sent immediately rather than waiting
+out the interval.
 
-### Transition Guards
+The repeat interval is long deliberately. Iridium and GPS share one antenna via
+`antennaToIridium()` / `antennaToGPS()`, and there is already history of SBD
+sessions disturbing GPS warm start, so reporting every few minutes through a
+38-minute wait would interrupt acquisition repeatedly and could make the fix
+take longer still.
 
-- `start_self_test`: Only from PRE_MISSION
-- `enterMission`: Only from SELF_TEST (automatic, not a serial command)
-- Failsafe checks: Only run during MISSION state
+The report carries no position at all, not even a last-known-good one: a fix
+from before the dive would read as though it were where the vehicle surfaced,
+and a drifting vehicle can be a long way from it.
 
----
+## Power cycle behavior
 
-## Iridium Transmission Windows
+Cutting power is an active operation: the NC power relay conducts whenever the
+coil is off, so an unpowered, reset, or crashed AGT leaves the Pi, camera, and
+lights powered. Every power cycle therefore brings the payload back up.
 
-Iridium can only transmit in certain states (GPS and Iridium share the antenna via RF switch):
+Nothing about the cutoff decision is persisted. `MissionData_init()` clears the
+Lua state, and `StateMachine_init()` returns to
+`PRE_DIVE` with `surfaceQualified`, `shutdownRequested`, and
+`shutdownAcknowledged` all false. Because the observed `DIVING -> RECOVERY`
+sequence is RAM-only, the vehicle must run another dive before the AGT can cut
+power a second time; replayed `STATE=4` after boot is insufficient.
 
-- **SELF_TEST**: Allowed (pre-deployment position check)
-- **RECOVERY**: Allowed (position reporting for recovery)
-- **PRE_MISSION**: Not allowed
-- **MISSION**: Not allowed (underwater, no signal)
+That is deliberate for the on-deck case. After a recovery the autopilot has
+already cleared `DORIS_START`, so a power cycle brings Lua up in `CONFIG`
+reporting `STATE=-1`. The AGT sees no recovery signal, leaves the payload
+powered indefinitely, and the operator can download data or configure a new
+mission without the system shutting down underneath them.
 
----
+The accepted cost is that an AGT reset during an unattended surface wait ends
+the power saving for that deployment: the payload comes back up and stays up,
+because the AGT can no longer prove a dive occurred.
 
-## LED State Indicators
+## Release controller
 
-| LED Pattern | State | Meaning |
-|-------------|-------|---------|
-| Pre-mission pattern | PRE_MISSION | Waiting for operator |
-| Self-test pattern | SELF_TEST | System verification |
-| Green pulse | MISSION (GPS fix) | Operational with GPS |
-| Yellow pulse | MISSION (no fix) | Operational, no GPS |
-| Recovery strobe | RECOVERY | Flashing for visual location |
+The AGT drives GPIO35, mirroring the Navigator relay that Lua drives for the
+same request. Only one of the two outputs may be wired to the actuator:
 
----
+- finite `RELAY=1` from autopilot `1/1` latches release ON;
+- repeated ON commands are harmless;
+- manual, Iridium, and guarded `DIVING` failsafes use the same controller;
+- the active marker is stored in a bounded EEPROM record and reapplied after
+  reboot;
+- release does not automatically stop after 1500 seconds;
+- explicit Lua `RELAY=0` is accepted only after `RELEASE_MIN_HOLD_SEC` and
+  confirmed Lua recovery;
+- release state never causes Pi power cutoff.
 
-## Serial Commands
+During MCU reset and early boot GPIO35 is inactive until the persisted marker is
+validated and reapplied. Corrupt, unknown, or out-of-bounds EEPROM records fail
+safe to release OFF.
 
-```
-help                      # Show all commands
-start_self_test           # PRE_MISSION → SELF_TEST
-status                    # Print current state, time, failsafe info
-gps                       # Show GPS position or satellite count
-debug                     # Version, IMEI, GPS BBR/backup battery diagnostics
-release_now               # Trigger failsafe (fires release relay → RECOVERY)
-reset                     # Return to PRE_MISSION
-set_leak <0|1>            # Set/clear leak flag for testing
-mesh_test                 # Send test text to Meshtastic
-mesh_test_gps             # Send test NMEA to Meshtastic
-mesh_send <text>          # Send custom text to Meshtastic
-config                    # Show configuration
-save                      # Save config to EEPROM
-set_iridium_interval <s>  # Set Iridium interval (seconds)
-set_meshtastic_interval <s>  # Set Meshtastic interval (seconds)
-set_mavlink_interval <ms> # Set MAVLink interval (milliseconds)
-set_timed_event <gmt|delay> <time> <duration_s>
-set_power_save_voltage <V>
-enable_<feature>          # Enable feature
-disable_<feature>         # Disable feature
-```
+## MAVLink compatibility/status protocol
 
----
+All names fit the 10-byte `NAMED_VALUE_FLOAT.name` field.
 
-## MissionData
+| Name | Direction/source | Meaning |
+|------|------------------|---------|
+| `AGT_CAP` | AGT `1/192` → BlueOS | Capability bitmask for compatibility gating |
+| `REL_STAT` | AGT `1/192` → BlueOS | Actual latched GPIO35 state |
+| `PWR_SHDN` | AGT `1/192` → BlueOS | Qualified graceful-shutdown request |
+| `PWR_ACK` | BlueOS `1/191` → AGT | Shutdown preparation complete |
+| `RELAY` | autopilot `1/1` → AGT | Guarded release request |
 
-The `MissionData` module collects real-time data from the autopilot via MAVLink for state transitions and failsafe decisions:
+`AGT_CAP` currently defines:
 
-| Field | Source | Purpose |
-|-------|--------|---------|
-| `depth_m` | MAVLink SCALED_PRESSURE / VFR_HUD | State transitions (SELF_TEST→MISSION, MISSION→RECOVERY) |
-| `max_depth_m` | Tracked from depth updates | Failsafe: max depth check, Iridium reports |
-| `battery_voltage` | MAVLink SYS_STATUS / BATTERY_STATUS, fallback PSM | Failsafe: low voltage |
-| `leak_detected` | MAVLink or `set_leak` command | Failsafe: water ingress |
-| `last_heartbeat_ms` | MAVLink HEARTBEAT | Failsafe: heartbeat timeout |
+- bit 0 (`AGT_CAP_RELEASE_OWNER`): AGT owns GPIO35 release control;
+- bit 1 (`AGT_CAP_SAFE_SURFACE_POWER`): AGT implements the safe surface
+  `PWR_SHDN`/`PWR_ACK` handshake.
 
----
+BlueOS verifies bit 1 before acknowledging shutdown. Bit 0 is evaluated
+separately when checking whether the AGT is an available release path; shutdown
+does not require AGT release ownership.
 
-## Configuration Thresholds
+## Persistence and reset
 
-Defined in `config.h`:
+- Mission state and surface qualification are not persisted.
+- Pi power always initializes ON.
+- Active release is persisted separately and is not cleared by mission reset.
+- `NO_RELAYS` builds track the same logical state without driving relay pins and
+  use a distinct EEPROM magic value so bench simulation cannot arm a production
+  image.
 
-```cpp
-#define FAILSAFE_HEARTBEAT_TIMEOUT_MS  30000   // 30s no heartbeat → failsafe
-#define FAILSAFE_MAX_DEPTH_M           200.0   // Max depth before failsafe
-#define MISSION_DEPTH_THRESHOLD_M      2.0     // Depth to enter MISSION
-#define RECOVERY_DEPTH_THRESHOLD_M     3.0     // Depth to enter RECOVERY
-#define BATTERY_CRITICAL_VOLTAGE       11.0    // Voltage failsafe trigger
-#define RELEASE_RELAY_DURATION_SEC     1500    // Release relay on-time (25 min)
-```
+## Configuration
 
----
-
-## State Persistence
-
-State machine status is **not** persisted to EEPROM. On power cycle:
-- System starts in PRE_MISSION
-- Release relay status resets
-- This is intentional for safety
-
-For persistent settings (intervals, features), use ConfigManager with `save` command.
-
----
-
-## API Reference
-
-### State Machine Functions
-
-```cpp
-void StateMachine_init();
-void StateMachine_update();
-
-SystemState StateMachine_getState();
-StateMachineStatus StateMachine_getStatus();
-uint32_t StateMachine_getTimeInState();
-
-void StateMachine_startSelfTest();       // PRE_MISSION → SELF_TEST
-void StateMachine_enterMission();        // SELF_TEST → MISSION (called by main on depth)
-void StateMachine_enterRecovery();       // → RECOVERY
-void StateMachine_reset();               // → PRE_MISSION
-
-void StateMachine_triggerFailsafe(FailsafeSource source);
-
-bool StateMachine_canTransmitIridium();
-bool StateMachine_canTransmitMeshtastic();
-bool StateMachine_shouldShutdownNonessentials();
-bool StateMachine_isRecoveryStrobe();
-
-void StateMachine_printState();
-```
-
----
-
-## References
-
-- [Main Firmware Documentation](../README_FIRMWARE.md)
-- [Mission Profile](MISSION_PROFILE.md)
-- [BlueOS Integration](BLUEOS_INTEGRATION.md)
+Safety thresholds and protocol constants are defined in `include/config.h`.
+Operational intervals and feature enables remain in `SystemConfig`.

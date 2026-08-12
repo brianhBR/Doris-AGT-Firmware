@@ -74,6 +74,12 @@
 // ============================================================================
 #define GPS_FIX_TIMEOUT_MS         180000  // 3 minutes
 #define IRIDIUM_SEND_INTERVAL_MS   600000  // 10 minutes
+// Unlocated reports while waiting for a fix in RECOVERY. The repeat is
+// deliberately long: Iridium and GPS share one antenna, so every SBD session
+// interrupts acquisition. Reporting every few minutes through a 38-minute wait
+// would interrupt it repeatedly and could make the fix take longer still.
+#define IRIDIUM_NOFIX_FIRST_MS     120000  // First "surfaced, no fix" report
+#define IRIDIUM_NOFIX_REPEAT_MS    1800000 // 30 minutes between repeats
 #define MESHTASTIC_UPDATE_MS       10000   // 10 seconds (Meshtastic mesh relay, low rate OK)
 #define MAVLINK_UPDATE_MS          200     // 5 Hz
 #define PSM_UPDATE_MS              5000    // 5 seconds
@@ -113,10 +119,41 @@
 #define BATTERY_FULL_VOLTAGE     14.8  // Volts (for 4S LiPo)
 #define FAILSAFE_HEARTBEAT_TIMEOUT_MS  120000 // No MAVLink heartbeat -> failsafe (120 s)
 #define PI_HEARTBEAT_TIMEOUT_MS        5000   // Pi considered disconnected if no heartbeat in 5 s
+#define MISSION_DATA_FRESHNESS_MS      3000   // Depth/state/voltage must be newer than this
 #define DIVE_DEPTH_THRESHOLD_M         2.0    // Depth > this: PRE_DIVE -> DIVING (underwater detection)
-#define RECOVERY_DEPTH_THRESHOLD_M     1.5    // Depth < this AND GPS fix: DIVING -> RECOVERY
+#define RECOVERY_DEPTH_THRESHOLD_M     1.5    // Depth < this, sustained: DIVING -> RECOVERY
 #define DIVE_MIN_DURATION_MS           60000  // Min time in DIVING before RECOVERY transition (60 s)
 #define DIVE_HEARTBEAT_GRACE_MS        90000  // Ignore heartbeat timeout for this long after entering DIVING
+
+// Safe surface power cutoff. Lua is the sole surface authority, but a single
+// STATE=4 packet is never sufficient: require a short consecutive sequence,
+// then keep the payload powered for surface logging before asking BlueOS to
+// shut down cleanly.
+#define SURFACE_RECOVERY_MESSAGES      3      // Consecutive fresh RECOVERY reports
+#define SURFACE_LOGGING_DWELL_MS       180000 // 3 min of powered surface logging
+// Used only by the independent depth backstop that enters RECOVERY for
+// Iridium/strobe behavior. It does not authorize payload power cutoff.
+#define SURFACE_QUALIFY_MS             30000
+// Minimum depth span across the independent recovery-backstop window. A frozen
+// depth channel reads shallow and perfectly steady, which is what floating
+// looks like, so the reading must move before the backstop trusts it.
+#define SURFACE_DEPTH_LIVENESS_M       0.02f
+#define POWER_SHUTDOWN_FINAL_GRACE_MS  30000  // Allow BlueOS systemctl poweroff to complete
+#define POWER_STATUS_INTERVAL_MS       1000   // Repeat request/status for BlueOS
+#define AUTOPILOT_SYSTEM_ID            1
+#define AUTOPILOT_COMPONENT_ID         1
+#define BLUEOS_SYSTEM_ID               1
+#define BLUEOS_COMPONENT_ID            191    // MAV_COMP_ID_ONBOARD_COMPUTER; shared with mavlink-server so an operator laptop can also ACK
+#define MAVLINK_NAME_POWER_REQUEST     "PWR_SHDN" // AGT -> BlueOS, 1=request
+#define MAVLINK_NAME_POWER_ACK         "PWR_ACK"  // BlueOS -> AGT, 1=ready
+#define MAVLINK_NAME_RELEASE_COMMAND   "RELAY"    // Lua -> AGT, 0=off, 1=on
+#define MAVLINK_NAME_RELEASE_STATUS    "REL_STAT" // AGT -> BlueOS, 0=off, 1=on
+#define MAVLINK_NAME_AGT_CAPABILITY    "AGT_CAP"  // AGT -> BlueOS, capability bitmask
+
+// AGT_CAP bits are represented exactly in NAMED_VALUE_FLOAT for this small mask.
+#define AGT_CAP_RELEASE_OWNER          (1UL << 0) // AGT drives GPIO35 from RELAY
+#define AGT_CAP_SAFE_SURFACE_POWER     (1UL << 1) // Qualified PWR_SHDN/PWR_ACK handshake
+#define AGT_CAPABILITIES               (AGT_CAP_RELEASE_OWNER | AGT_CAP_SAFE_SURFACE_POWER)
 
 // ============================================================================
 // RELAY CONFIGURATION
@@ -132,7 +169,8 @@
 #define RELAY_COIL_ACTIVE_HIGH       true   // Both relay modules energize on HIGH
 #define RELAY_POWER_MGMT_NC          true   // Power relay wired through NC terminal
 #define RELAY_TIMED_EVENT_NC         false  // Timed relay wired through NO terminal
-#define RELEASE_RELAY_DURATION_SEC   1500   // Failsafe release: relay on time (e.g. electrolytic release)
+#define RELEASE_MIN_HOLD_SEC         1500   // Earliest explicit surface-safe RELAY=0 may turn it off
+#define RELEASE_RELAY_DURATION_SEC   7200   // Legacy/timed-event compatibility; Lua mission hold is 2 h
 
 // ============================================================================
 // IRIDIUM CONFIGURATION
@@ -144,9 +182,28 @@
 // ============================================================================
 // GPS CONFIGURATION
 // ============================================================================
-#define GPS_UPDATE_RATE_HZ       6
+// Lowered from 6 Hz: AssistNow Autonomous (AOP, below) computes orbit
+// predictions on the receiver's own CPU, and u-blox generates them faster when
+// the nav engine isn't saturated at a high rate. 1 Hz is ample for a surface
+// position tracker (MAVLink/Meshtastic/Iridium all consume position far slower)
+// and frees the most CPU for prediction generation during the pre-deployment
+// warm-up. Tune upward if a faster live position is ever needed.
+#define GPS_UPDATE_RATE_HZ       1
 #define GPS_MIN_SATS             4
 #define GPS_DYNAMIC_MODEL        DYN_MODEL_PORTABLE  // or SEA, AIRBORNE1g, etc.
+
+// AssistNow Autonomous (AOP). The ZOE-M8Q predicts satellite orbits on-chip
+// (up to ~3 days ahead on M8) using ephemeris it has already downloaded — no
+// network, almanac upload, or server needed. Predictions live in BBR, which
+// the V_BCKP coin cell keeps alive across power cycles, so a surfacing after a
+// long dive (broadcast ephemeris long expired) can still get an AOP-assisted
+// start instead of a full cold acquisition. Applied via UBX-CFG-NAVX5, which
+// (unlike enableGNSS) does NOT reset the receiver or wipe ephemeris. Set to 0
+// to disable.
+#define GPS_ENABLE_AOP           1
+// Max acceptable AOP orbit error (metres), passed to CFG-NAVX5 aopOrbMaxErr.
+// 0 keeps the receiver firmware default.
+#define GPS_AOP_ORBIT_MAX_ERR    0
 
 // ============================================================================
 // MAVLINK CONFIGURATION

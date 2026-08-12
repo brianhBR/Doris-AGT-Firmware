@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <math.h>
 #include "Arduino.h"
 #include "modules/mission_data.h"
 
@@ -16,8 +17,10 @@ void test_init_zeroes_all_fields(void) {
 
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.depth_m);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.max_depth_m);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.minimum_temperature_c);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.battery_voltage);
     TEST_ASSERT_FALSE(md.depth_valid);
+    TEST_ASSERT_FALSE(md.temperature_valid);
     TEST_ASSERT_FALSE(md.voltage_from_autopilot);
     TEST_ASSERT_FALSE(md.leak_detected);
     TEST_ASSERT_FALSE(md.heartbeat_valid);
@@ -48,6 +51,14 @@ void test_depth_negative_clamped_to_zero(void) {
     TEST_ASSERT_TRUE(md.depth_valid);
 }
 
+void test_nonfinite_depth_is_rejected(void) {
+    MissionData_init();
+    MissionData_update_depth(-INFINITY);
+    MissionData md;
+    MissionData_get(&md);
+    TEST_ASSERT_FALSE(md.depth_valid);
+}
+
 void test_max_depth_tracks_highest(void) {
     MissionData_init();
     MissionData_update_depth(10.0f);
@@ -68,6 +79,37 @@ void test_max_depth_not_affected_by_negative(void) {
     MissionData md;
     MissionData_get(&md);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 20.0f, md.max_depth_m);
+}
+
+void test_minimum_temperature_tracks_lowest_valid_report(void) {
+    MissionData_update_minimum_temperature(8.5f);
+    MissionData_update_minimum_temperature(4.2f);
+    MissionData_update_minimum_temperature(6.0f);
+
+    MissionData md;
+    MissionData_get(&md);
+    TEST_ASSERT_TRUE(md.temperature_valid);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 4.2f, md.minimum_temperature_c);
+}
+
+void test_minimum_temperature_rejects_lua_sentinel(void) {
+    MissionData_update_minimum_temperature(999.0f);
+
+    MissionData md;
+    MissionData_get(&md);
+    TEST_ASSERT_FALSE(md.temperature_valid);
+}
+
+void test_completed_mission_reset_clears_accumulated_statistics(void) {
+    MissionData_update_depth(50.0f);
+    MissionData_update_minimum_temperature(3.0f);
+    MissionData_update_doris_state(4);
+    MissionData_update_doris_state(0);
+
+    MissionData md;
+    MissionData_get(&md);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, md.max_depth_m);
+    TEST_ASSERT_FALSE(md.temperature_valid);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +201,31 @@ void test_get_with_null_does_not_crash(void) {
     TEST_PASS();
 }
 
+void test_depth_freshness_expires(void) {
+    stub_set_millis(100);
+    MissionData_update_depth(0.5f);
+    TEST_ASSERT_TRUE(MissionData_isDepthFresh());
+    stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
+    TEST_ASSERT_FALSE(MissionData_isDepthFresh());
+}
+
+void test_recovery_messages_must_be_repeated_and_consecutive(void) {
+    MissionData_update_doris_state(4);
+    MissionData_update_doris_state(4);
+    TEST_ASSERT_EQUAL_UINT8(2, MissionData_getRecoveryMessageCount());
+    MissionData_update_doris_state(3);
+    TEST_ASSERT_EQUAL_UINT8(0, MissionData_getRecoveryMessageCount());
+}
+
+void test_stale_recovery_sequence_restarts_count(void) {
+    stub_set_millis(100);
+    MissionData_update_doris_state(4);
+    MissionData_update_doris_state(4);
+    stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
+    MissionData_update_doris_state(4);
+    TEST_ASSERT_EQUAL_UINT8(1, MissionData_getRecoveryMessageCount());
+}
+
 // ---------------------------------------------------------------------------
 // Unity entry point
 // ---------------------------------------------------------------------------
@@ -176,8 +243,12 @@ int main(int argc, char** argv) {
     RUN_TEST(test_init_zeroes_all_fields);
     RUN_TEST(test_depth_update_sets_value_and_valid);
     RUN_TEST(test_depth_negative_clamped_to_zero);
+    RUN_TEST(test_nonfinite_depth_is_rejected);
     RUN_TEST(test_max_depth_tracks_highest);
     RUN_TEST(test_max_depth_not_affected_by_negative);
+    RUN_TEST(test_minimum_temperature_tracks_lowest_valid_report);
+    RUN_TEST(test_minimum_temperature_rejects_lua_sentinel);
+    RUN_TEST(test_completed_mission_reset_clears_accumulated_statistics);
     RUN_TEST(test_voltage_update_from_psm);
     RUN_TEST(test_autopilot_voltage_sets_flag);
     RUN_TEST(test_autopilot_voltage_overrides_psm);
@@ -185,6 +256,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_heartbeat_updates_on_subsequent_calls);
     RUN_TEST(test_leak_set_and_clear);
     RUN_TEST(test_get_with_null_does_not_crash);
+    RUN_TEST(test_depth_freshness_expires);
+    RUN_TEST(test_recovery_messages_must_be_repeated_and_consecutive);
+    RUN_TEST(test_stale_recovery_sequence_restarts_count);
 
     return UNITY_END();
 }

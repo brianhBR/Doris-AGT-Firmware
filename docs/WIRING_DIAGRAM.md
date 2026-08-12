@@ -140,10 +140,12 @@
 **Load:** Navigator/Pi, Camera, Lights power control
 
 **Control Logic:**
-- HIGH = Relay ON = Systems powered
-- LOW = Relay OFF = Systems shut down
-- ON in PRE_MISSION, SELF_TEST, MISSION states
-- OFF in RECOVERY state (conserves power)
+- Load is wired through the relay's **NC** contact.
+- GPIO LOW / coil OFF = NC closed = Pi/camera/lights powered (safe default).
+- GPIO HIGH / coil ON = NC open = loads powered off.
+- Entering `RECOVERY` alone does not cut power. Cutoff requires sustained
+  surface qualification, BlueOS `PWR_ACK`, and the final grace period.
+- AGT boot/reset always drives the powered state.
 
 ### 8. Relay Module 2 (Release — Drop Weight)
 
@@ -157,10 +159,16 @@
 **Load:** Electrolytic/galvanic drop weight ballast release mechanism
 
 **Control Logic:**
-- Triggered by failsafe conditions during MISSION state
-- Default activation duration: 1500 seconds (25 minutes) for electrolytic dissolution
-- Also triggered by `release_now` manual command
-- One-shot activation for ballast release
+- The AGT drives GPIO35 on source-validated Lua `RELAY=1`. Lua drives its own
+  Navigator relay from the same request, so wire the actuator to exactly one of
+  the two outputs — never both, since two independent outputs into one relay
+  input is not a supported configuration. Cutting Pi power with Relay 1 is only
+  permitted when the actuator is wired here.
+- ON latches, tolerates repeated commands, and is persisted across AGT reboot.
+- `RELAY=0` can clear it only after the 1500-second minimum hold and independent
+  surface-safe qualification; it does not stop automatically at 1500 seconds.
+- Manual, Iridium, and carefully gated DIVING failsafes use the same controller.
+- Release state is independent from GPIO4 Pi power control.
 
 **IMPORTANT:**
 - GPIO35 provides LOW POWER 3.3V trigger signal only
@@ -284,7 +292,8 @@ IMPORTANT NOTES:
 - Add flyback diodes for inductive loads
 - Verify relay coil voltage matches supply
 - Size relay contacts for load current
-- Release relay must handle 25+ minute sustained activation
+- Release relay must handle the full mission/ascent hold (up to 7200 seconds or
+  longer if no valid explicit surface-safe OFF arrives)
 
 ## Testing Checklist
 

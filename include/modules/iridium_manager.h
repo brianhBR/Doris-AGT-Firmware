@@ -16,8 +16,12 @@ bool IridiumManager_init(IridiumSBD* modem);
 // Send position report (legacy text format)
 bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData);
 
-// Send position + mission stats (legacy text format)
+// Send a located DORIS protocol B mission report
 bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission);
+
+// Send protocol B with zero navigation fields when no GPS fix is available
+bool IridiumManager_sendStatusReport(MissionData* mission,
+                                     uint32_t minutesInRecovery);
 
 // Send Doris binary telemetry report and check for MT commands.
 // Populates mtMsgId, mtConfig, and mtCommand if an MT message was received.

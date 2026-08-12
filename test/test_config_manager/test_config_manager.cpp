@@ -41,7 +41,7 @@ void test_defaults_timed_event_disabled(void) {
     SystemConfig cfg;
     ConfigManager_setDefaults(&cfg);
     TEST_ASSERT_FALSE(cfg.timedEvent.enabled);
-    TEST_ASSERT_EQUAL(1500, cfg.timedEvent.durationSeconds);
+    TEST_ASSERT_EQUAL(RELEASE_RELAY_DURATION_SEC, cfg.timedEvent.durationSeconds);
 }
 
 void test_defaults_power_save_voltage(void) {
@@ -78,6 +78,13 @@ void test_defaults_checksum_is_valid(void) {
     ConfigManager_setDefaults(&cfg);
     uint32_t expected = calculateChecksum(&cfg);
     TEST_ASSERT_EQUAL_UINT32(expected, cfg.checksum);
+}
+
+void test_agt_capability_bits_are_stable(void) {
+    TEST_ASSERT_TRUE(sizeof(MAVLINK_NAME_AGT_CAPABILITY) - 1 <= 10);
+    TEST_ASSERT_EQUAL_UINT32(1UL, AGT_CAP_RELEASE_OWNER);
+    TEST_ASSERT_EQUAL_UINT32(2UL, AGT_CAP_SAFE_SURFACE_POWER);
+    TEST_ASSERT_EQUAL_UINT32(3UL, AGT_CAPABILITIES);
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +239,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_checksum_is_deterministic);
     RUN_TEST(test_checksum_changes_on_field_modification);
     RUN_TEST(test_defaults_checksum_is_valid);
+    RUN_TEST(test_agt_capability_bits_are_stable);
 
     // EEPROM round-trip
     RUN_TEST(test_save_and_load_round_trip);
