@@ -22,6 +22,7 @@
 #include <IridiumSBD.h>
 #include <ArduinoJson.h>
 #include <RTC.h>
+#include "apollo_rtc_time.h"
 
 #include "modules/gps_manager.h"
 #include "modules/iridium_manager.h"
@@ -89,7 +90,31 @@ static void syncRTCFromGPSIfValid() {
                   g.day >= 1 && g.day <= 31;
     bool timeOk = g.hour <= 23 && g.minute <= 59 && g.second <= 59;
     if (!dateOk || !timeOk) return;
-    myRTC.setTime(g.hour, g.minute, g.second, 0, g.day, g.month, g.year);
+
+    ApolloRtcTime t;
+    if (!apolloRtcTimeFromCalendar(
+            g.year, g.month, g.day, g.hour, g.minute, g.second, &t)) {
+        return;
+    }
+    myRTC.setTime(
+        t.hundredths, t.seconds, t.minutes, t.hours,
+        t.day, t.month, t.yearSince2000);
+
+    // Do not publish RTC-derived time unless the hardware accepted exactly
+    // what we intended. This turns any future API/order mismatch into missing
+    // SYSTEM_TIME rather than another vehicle-wide clock jump.
+    myRTC.getTime();
+    bool readbackOk = myRTC.year == t.yearSince2000 &&
+                      myRTC.month == t.month &&
+                      myRTC.dayOfMonth == t.day &&
+                      myRTC.hour == t.hours &&
+                      myRTC.minute == t.minutes &&
+                      myRTC.seconds == t.seconds;
+    if (!readbackOk) {
+        rtcSyncedFromGPS = false;
+        return;
+    }
+
     if (!rtcSyncedFromGPS) {
         rtcSyncedFromGPS = true;
         const char* src = g.time_fully_resolved ? "resolved" :

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-12
+
+### Fixed
+- GPS calendar time is now passed to `Apollo3RTC::setTime` in the API's actual
+  order (`hundredths, seconds, minutes, hours, day, month, year-since-2000`).
+  The old call supplied `hours, minutes, seconds, 0, day, month, full-year`,
+  which turned a real time such as `2026-08-12 18:06:45` into
+  `2074-08-12 00:45:06`. The resulting `SYSTEM_TIME` moved the vehicle clock,
+  fragmented recorder and autopilot logs, and caused post-dive processing to
+  select an unrelated MCAP. The RTC is now read back and must match before its
+  time is published, so a future mapping failure suppresses `SYSTEM_TIME`
+  instead of poisoning the vehicle clock.
+
 ## [0.3.1] - 2026-07-31
 
 ### Fixed
