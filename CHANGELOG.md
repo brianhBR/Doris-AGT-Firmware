@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-12
+
 ### Changed
 - Lua's repeated fresh terminal `STATE=4` is now the sole payload-shutdown
   authority. After an observed dive, three recovery reports start a
