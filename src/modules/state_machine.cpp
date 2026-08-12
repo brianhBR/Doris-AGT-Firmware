@@ -14,15 +14,15 @@ static const char* failsafeNames[] = {
     "NONE", "LOW_VOLTAGE", "LEAK", "NO_HEARTBEAT", "MANUAL", "IRIDIUM"
 };
 static unsigned long shutdownAckTime = 0;
+static unsigned long surfaceDwellStart = 0;
+static bool surfaceDwellActive = false;
 static unsigned long criticalVoltageStart = 0;
 static bool criticalVoltageTimingActive = false;
 
-// Neither surface test requires a GPS fix any more, because acquisition has
-// taken over half an hour after surfacing and both tests exist to work in
-// exactly those conditions. Depth is the remaining evidence, so it has to be
-// shown to be alive: a frozen channel reads shallow and perfectly steady,
-// which is indistinguishable from floating. Each test tracks the spread of the
-// readings it saw across its own hold window.
+// Depth is used only by the independent backstop that can enter RECOVERY for
+// Iridium and strobe behavior if Lua is wedged. It is deliberately not a vote
+// for payload power cutoff; only Lua's repeated, fresh STATE=4 can authorize
+// that operation.
 struct DepthWindow {
     unsigned long start;
     float min;
@@ -30,7 +30,6 @@ struct DepthWindow {
     bool active;
 };
 
-static DepthWindow powerWindow;
 static DepthWindow backstopWindow;
 
 static void enterState(SystemState newState);
@@ -69,9 +68,10 @@ void StateMachine_init() {
     status.shutdownRequested = false;
     status.shutdownAcknowledged = false;
     shutdownAckTime = 0;
+    surfaceDwellStart = 0;
+    surfaceDwellActive = false;
     criticalVoltageStart = 0;
     criticalVoltageTimingActive = false;
-    depthWindowReset(&powerWindow);
     depthWindowReset(&backstopWindow);
     // A power cycle always restores Pi power. Nothing about the cutoff decision
     // is persisted, and the dive evidence behind surface qualification is RAM
@@ -122,38 +122,42 @@ void StateMachine_update() {
 }
 
 void StateMachine_updateSurfacePower() {
+    // Once BlueOS has acknowledged that storage is safe, its own shutdown will
+    // stop MAVLink. Latch this final countdown in RAM so transport loss cannot
+    // cancel the electrical cutoff. A power cycle clears the latch in init().
+    if (status.shutdownAcknowledged) {
+        if (millis() - shutdownAckTime >= POWER_SHUTDOWN_FINAL_GRACE_MS) {
+            RelayController_setPowerManagement(false);
+            status.nonessentialsPowered = false;
+        }
+        return;
+    }
+
     MissionData md;
     MissionData_get(&md);
     bool qualifiedNow =
         status.currentState == STATE_RECOVERY &&
+        status.previousState == STATE_DIVING &&
         MissionData_isDorisStateFresh() &&
         md.doris_state == 4 &&
-        MissionData_getRecoveryMessageCount() >= SURFACE_RECOVERY_MESSAGES &&
-        MissionData_isDepthFresh() &&
-        md.depth_m <= RECOVERY_DEPTH_THRESHOLD_M &&
-        md.max_depth_m >= DIVE_DEPTH_THRESHOLD_M;
+        MissionData_getRecoveryMessageCount() >= SURFACE_RECOVERY_MESSAGES;
 
     if (!qualifiedNow) {
-        depthWindowReset(&powerWindow);
+        surfaceDwellStart = 0;
+        surfaceDwellActive = false;
         status.surfaceQualified = false;
         status.shutdownRequested = false;
-        status.shutdownAcknowledged = false;
-        shutdownAckTime = 0;
         return;
     }
 
-    status.surfaceQualified =
-        depthWindowQualified(&powerWindow, md.depth_m, SURFACE_QUALIFY_MS);
-    if (!status.surfaceQualified) {
-        return;
+    status.surfaceQualified = true;
+    if (!surfaceDwellActive) {
+        surfaceDwellStart = millis();
+        surfaceDwellActive = true;
     }
 
-    status.shutdownRequested = true;
-    if (status.shutdownAcknowledged &&
-        millis() - shutdownAckTime >= POWER_SHUTDOWN_FINAL_GRACE_MS) {
-        RelayController_setPowerManagement(false);
-        status.nonessentialsPowered = false;
-    }
+    status.shutdownRequested =
+        millis() - surfaceDwellStart >= SURFACE_LOGGING_DWELL_MS;
 }
 
 bool StateMachine_updateSurfaceBackstop() {
@@ -296,14 +300,23 @@ static void enterState(SystemState newState) {
             status.surfaceQualified = false;
             status.shutdownRequested = false;
             status.shutdownAcknowledged = false;
+            shutdownAckTime = 0;
+            surfaceDwellStart = 0;
+            surfaceDwellActive = false;
             break;
         case STATE_DIVING:
             status.nonessentialsPowered = true;
             RelayController_setPowerManagement(true);
+            status.surfaceQualified = false;
+            status.shutdownRequested = false;
+            status.shutdownAcknowledged = false;
+            shutdownAckTime = 0;
+            surfaceDwellStart = 0;
+            surfaceDwellActive = false;
             break;
         case STATE_RECOVERY:
             // RECOVERY enables comms/strobe only. Pi power remains on until
-            // independent surface qualification and the BlueOS handshake.
+            // repeated fresh Lua STATE=4, the logging dwell, and BlueOS ACK.
             status.nonessentialsPowered = true;
             RelayController_setPowerManagement(true);
             break;

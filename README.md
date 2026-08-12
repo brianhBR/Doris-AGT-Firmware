@@ -15,8 +15,8 @@ Iridium, Meshtastic, and status LEDs.
 2. **Dive (underwater)** — Lua script on ArduSub controls descent / on-bottom /
    ascent. AGT silently watches for failsafe conditions.
 3. **Recovery (surfaced)** — Iridium position reports resume and the white
-   strobe activates; Relay 1 cuts power only after the qualified BlueOS
-   shutdown handshake.
+   strobe activates; Relay 1 cuts power only after Lua's three-minute surface
+   dwell and the BlueOS storage-safety handshake.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ drive the dive.
 |------------|------------------------------------------------------------------------|-----------------------------------------------------------------------|
 | `PRE_DIVE` | Boot / `reset` command / Lua state ≤ 0 (`CONFIG` / `MISSION_START`)     | GPS to MAVLink + NMEA, Iridium test on demand, armed/not-armed LEDs   |
 | `DIVING`   | Lua state 1–3 (`DESCENT` / `ON_BOTTOM` / `ASCENT`), or depth > 2 m     | LEDs off (or Lua-commanded), no Iridium TX                            |
-| `RECOVERY` | Lua state 4, or independently when ascending + sustained shallow depth | White strobe and Iridium resume; Pi remains powered pending qualification/handshake |
+| `RECOVERY` | Lua state 4, or independently when ascending + sustained shallow depth | White strobe and Iridium resume; only Lua state 4 can start the powered dwell/handshake |
 
 State transitions are driven by `NAMED_VALUE_FLOAT "STATE"` from the Lua script
 (`-1=CONFIG`, `0=MISSION_START`, `1=DESCENT`, `2=ON_BOTTOM`, `3=ASCENT`,
@@ -43,29 +43,30 @@ backstop carries no GPS term: acquisition after surfacing has taken as long as
 ArduSub sends `NAMED_VALUE_FLOAT RELAY` from source `1/1`. Only finite values
 near 0 or 1 are accepted. `RELAY=1` latches GPIO35 ON, tolerates repeats, and
 persists the active marker in EEPROM so an AGT reboot reasserts the output.
-`RELAY=0` is accepted only after `RELEASE_MIN_HOLD_SEC` (1500 s) and independent
-surface qualification. The AGT reports the output repeatedly as `REL_STAT`.
+`RELAY=0` is accepted only after `RELEASE_MIN_HOLD_SEC` (1500 s) and confirmed
+Lua recovery. The AGT reports the output repeatedly as `REL_STAT`.
 
 Manual `release_now`, valid Iridium `DORIS_CMD_RELEASE`, and guarded
 leak/critical-voltage/heartbeat failsafes while `DIVING` share this controller.
 Release never requests or implies Pi power cutoff.
 
-Pi power uses a separate fail-closed protocol. Repeated fresh Lua `STATE=4` and
-fresh shallow autopilot depth must remain true for `SURFACE_QUALIFY_MS`, and the
-depth reading must move by at least `SURFACE_DEPTH_LIVENESS_M` across that
-window — a frozen channel reads shallow and steady, which is what floating looks
-like. AGT then repeats `PWR_SHDN=1`; BlueOS acknowledges with `PWR_ACK=1` from
-`1/191`. GPIO4 cuts power only after that ACK and
-`POWER_SHUTDOWN_FINAL_GRACE_MS`. Missing/stale data or no ACK leaves Pi power on.
-Every AGT boot/reset restores Pi power.
+Pi power uses a separate fail-closed protocol whose sole surface authority is
+Lua. After a real `DIVING` state, three consecutive fresh `STATE=4` reports
+start `SURFACE_LOGGING_DWELL_MS` (three minutes). Lua continues publishing
+telemetry and BlueOS keeps recording through that dwell. AGT then repeats
+`PWR_SHDN=1`; BlueOS flushes storage and acknowledges with `PWR_ACK=1` from
+`1/191`. That ACK latches a 30-second electrical grace, so Linux shutdown
+silencing MAVLink cannot cancel GPIO4 cutoff. Stale or reverted Lua state before
+ACK cancels the request; after ACK only a power cycle cancels it. Every AGT
+boot/reset restores Pi power.
 
 No GPS fix is required anywhere in this path. Acquisition after surfacing was
 measured at 17 s, 6.8 min, 30.4 min, and 38.7 min across four dives, so gating
 power saving on a fix meant giving it up in the worst conditions.
 
 AGT also repeats `AGT_CAP`: bit 0 declares AGT release ownership and bit 1
-declares the safe surface power handshake. BlueOS must require both bits before
-enabling v0.3 safety integration.
+declares the safe surface power handshake. BlueOS requires bit 1 for shutdown;
+bit 0 is evaluated separately when checking the optional AGT release path.
 
 ### Comms
 

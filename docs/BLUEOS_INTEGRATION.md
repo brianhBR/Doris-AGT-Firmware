@@ -310,12 +310,12 @@ All names fit MAVLink's 10-byte `NAMED_VALUE_FLOAT.name` field:
 | `PWR_ACK` | BlueOS `1/191` → AGT | finite 1 (±0.1) | BlueOS has completed shutdown preparation |
 
 BlueOS must ACK only after flushing logs/filesystems and stopping services. AGT
-requires repeated fresh Lua `STATE=4`, fresh shallow autopilot depth, its own GPS
-fix, and a 30-second sustained qualification before asserting `PWR_SHDN=1`.
-After a valid ACK it waits another 30 seconds before opening the NC Pi power
-path. If any qualification input becomes stale or false before cutoff, the
-request/ACK is cancelled and power remains on. There is intentionally no
-unacknowledged timeout cutoff.
+requires an observed dive, repeated fresh Lua `STATE=4`, and a three-minute
+powered logging dwell before asserting `PWR_SHDN=1`. Depth and GPS are not
+shutdown votes. After a valid ACK it latches another 30-second grace before
+opening the NC Pi power path; expected MAVLink loss during Linux shutdown does
+not cancel that countdown. Stale/reverted Lua state before ACK cancels the
+request. There is intentionally no unacknowledged timeout cutoff.
 
 `1/191` is `MAV_COMP_ID_ONBOARD_COMPUTER`, which BlueOS's mavlink-server also
 advertises for itself. The ACK is deliberately accepted from that shared
@@ -335,8 +335,8 @@ arrives when bench-testing the handshake.
 
 Lua mirrors each request to its own Navigator relay, so a mission is viable with
 either output wired. BlueOS therefore treats bit 0 as one of two release paths
-and requires both bits only before enabling the power-cutoff handshake, which
-disables the Navigator output along with Pi power.
+and requires only bit 1 before acknowledging power cutoff. Shutdown authority is
+independent of which controller owns the release actuator.
 `AGT_CAP`, `REL_STAT`, and `PWR_SHDN` repeat at 1 Hz for routing/logging
 visibility.
 Release control is independent of this handshake. An active release marker is

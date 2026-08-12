@@ -3,8 +3,9 @@
 Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interface communication and control capabilities for an oceanographic drop camera system.
 
 > **next/0.3 safety architecture:** `RECOVERY` does not directly cut Pi power.
-> Cutoff requires repeated fresh Lua recovery reports, fresh shallow autopilot
-> depth, AGT GPS, sustained qualification, BlueOS `PWR_ACK`, and a final grace.
+> Cutoff requires repeated fresh Lua recovery reports, a three-minute powered
+> logging dwell, BlueOS `PWR_ACK`, and a latched 30-second final grace. Depth
+> can enter recovery for communications but cannot authorize power cutoff.
 > GPIO35 release is separately latched/persisted and reported as `REL_STAT`.
 
 ## Features
@@ -22,7 +23,7 @@ Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interf
 ### Advanced Features
 - Configurable reporting intervals for all communication channels
 - Programmable timed event relay (GMT or delay-based triggering)
-- Independently qualified, acknowledged graceful surface power shutdown
+- Lua-authorized, acknowledged graceful surface power shutdown
 - Depth-based automatic state transitions from MAVLink sensor data
 - Serial configuration interface with EEPROM persistence
 - RTC synchronization from GPS, forwarded to ArduPilot as SYSTEM_TIME

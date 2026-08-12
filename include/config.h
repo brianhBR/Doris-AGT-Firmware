@@ -125,13 +125,18 @@
 #define DIVE_MIN_DURATION_MS           60000  // Min time in DIVING before RECOVERY transition (60 s)
 #define DIVE_HEARTBEAT_GRACE_MS        90000  // Ignore heartbeat timeout for this long after entering DIVING
 
-// Safe surface power cutoff. A single Lua STATE=4 is never sufficient.
+// Safe surface power cutoff. Lua is the sole surface authority, but a single
+// STATE=4 packet is never sufficient: require a short consecutive sequence,
+// then keep the payload powered for surface logging before asking BlueOS to
+// shut down cleanly.
 #define SURFACE_RECOVERY_MESSAGES      3      // Consecutive fresh RECOVERY reports
-#define SURFACE_QUALIFY_MS             30000  // All independent conditions sustained
-// Minimum depth span across the qualification window. A frozen depth channel
-// reads shallow and perfectly steady, which is what floating looks like, so
-// the reading must move before depth is trusted. Measured surface windows held
-// at least 0.070 m of spread, against exactly zero for a dead channel.
+#define SURFACE_LOGGING_DWELL_MS       180000 // 3 min of powered surface logging
+// Used only by the independent depth backstop that enters RECOVERY for
+// Iridium/strobe behavior. It does not authorize payload power cutoff.
+#define SURFACE_QUALIFY_MS             30000
+// Minimum depth span across the independent recovery-backstop window. A frozen
+// depth channel reads shallow and perfectly steady, which is what floating
+// looks like, so the reading must move before the backstop trusts it.
 #define SURFACE_DEPTH_LIVENESS_M       0.02f
 #define POWER_SHUTDOWN_FINAL_GRACE_MS  30000  // Allow BlueOS systemctl poweroff to complete
 #define POWER_STATUS_INTERVAL_MS       1000   // Repeat request/status for BlueOS

@@ -15,10 +15,9 @@
 // RECOVERY  -> PRE_DIVE  manual reset only
 //
 // RECOVERY never directly cuts Pi power. The separate surface-power guard
-// requires repeated fresh recovery reports, fresh shallow depth that is also
-// moving, sustained qualification, BlueOS ACK, and final grace. A GPS fix is
-// deliberately not required: acquisition has taken over half an hour after
-// surfacing, and power saving cannot be hostage to it.
+// requires repeated fresh Lua STATE=4 reports, a powered surface-logging
+// dwell, BlueOS ACK, and a final electrical grace. The independent depth
+// backstop may enter RECOVERY for communications but cannot authorize cutoff.
 
 enum SystemState {
     STATE_PRE_DIVE,   // Surface: GPS relay, Iridium test, Meshtastic, ready
@@ -43,7 +42,7 @@ struct StateMachineStatus {
     FailsafeSource lastFailsafeSource;
     bool releaseTriggered;       // Release relay has been fired
     bool nonessentialsPowered;   // Relay 1 (Navigator/Pi, camera, lights)
-    bool surfaceQualified;
+    bool surfaceQualified;      // Fresh repeated Lua STATE=4 is confirmed
     bool shutdownRequested;
     bool shutdownAcknowledged;
 };
@@ -53,7 +52,8 @@ void StateMachine_update();
 void StateMachine_updateSurfacePower();
 
 // The AGT's own path to RECOVERY when Lua is wedged in ASCENT: sustained
-// shallow depth that is also moving, with no GPS fix required. Call every
+// shallow depth that is also moving, with no GPS fix required. This enables
+// recovery communications only and never authorizes power cutoff. Call every
 // loop; returns true on the tick it enters RECOVERY.
 bool StateMachine_updateSurfaceBackstop();
 

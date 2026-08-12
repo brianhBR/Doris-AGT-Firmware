@@ -95,9 +95,10 @@ Which mechanism owns which arrow:
   (`main.cpp:383-418`). These use the raw last-received value from
   `MissionData_getDorisState()` with **no freshness check**.
 - **AGT independent detection**: only the `DIVING` to `RECOVERY` backup at
-  `main.cpp:408-417`, which combines the autopilot's depth with the AGT's own
-  u-blox fix. Because `dorisState` at least 4 is already handled one block
-  above, this backup is only *additive* for `dorisState == 3` (ascent).
+  `main.cpp:408-417`, which requires sustained shallow, moving autopilot depth.
+  Because `dorisState` at least 4 is already handled one block above, this
+  backup is only *additive* for `dorisState == 3` (ascent), and it cannot
+  authorize payload power cutoff.
 - **Failsafes**: `StateMachine_triggerFailsafe()` (`state_machine.cpp:181-194`),
   detailed in diagram 2.
 
@@ -174,41 +175,34 @@ latches release without changing state.
 
 ## 3. Surface power-cutoff sub-state machine
 
-`StateMachine_updateSurfacePower()` is called every loop from `main.cpp`. It
-takes no arguments: the AGT's own GPS fix was removed from this gate because
-acquisition after surfacing was measured at up to 38.7 minutes, and power saving
-exists precisely to survive a long surface wait.
+`StateMachine_updateSurfacePower()` is called every loop from `main.cpp`. Lua's
+terminal state is the sole shutdown authority; neither depth nor GPS votes in
+this sub-state machine.
 
 ```mermaid
 stateDiagram-v2
     direction TB
 
-    [*] --> NOT_QUALIFIED
+    [*] --> WAITING_FOR_LUA
 
-    NOT_QUALIFIED --> QUALIFYING : all AND conditions true this loop
-    QUALIFYING --> NOT_QUALIFIED : any condition false
-    QUALIFYING --> QUALIFIED : sustained SURFACE_QUALIFY_MS, 30 s
-    QUALIFIED --> NOT_QUALIFIED : any condition false
-    QUALIFIED --> AWAITING_ACK : shutdownRequested set true, PWR_SHDN published as 1
-    AWAITING_ACK --> NOT_QUALIFIED : any condition false
+    WAITING_FOR_LUA --> LOGGING_DWELL : observed dive plus 3 consecutive fresh STATE 4 reports
+    LOGGING_DWELL --> WAITING_FOR_LUA : STATE stale or not 4
+    LOGGING_DWELL --> AWAITING_ACK : SURFACE_LOGGING_DWELL_MS elapsed, 180 s
+    AWAITING_ACK --> WAITING_FOR_LUA : STATE stale or not 4
     AWAITING_ACK --> FINAL_GRACE : PWR_ACK equal to 1 from BlueOS 1 slash 191
-    FINAL_GRACE --> NOT_QUALIFIED : any condition false
     FINAL_GRACE --> POWER_CUT : POWER_SHUTDOWN_FINAL_GRACE_MS elapsed, 30 s
     POWER_CUT --> [*]
 
-    note right of NOT_QUALIFIED
-        state_machine.cpp:97-104
-        surfaceQualificationActive = false
+    note right of WAITING_FOR_LUA
         surfaceQualified = false
         shutdownRequested = false
-        shutdownAcknowledged = false
-        shutdownAckTime = 0
         The power relay is NOT touched here
     end note
 
-    note right of QUALIFYING
-        surfaceQualifyStart latched on first qualified loop
-        state_machine.cpp:106-109
+    note right of LOGGING_DWELL
+        payload stays powered
+        Lua STATE 4 and telemetry continue
+        BlueOS MCAP remains active
     end note
 
     note right of AWAITING_ACK
@@ -218,36 +212,29 @@ stateDiagram-v2
     end note
 
     note right of POWER_CUT
-        RelayController_setPowerManagement false, state_machine.cpp:119
-        nonessentialsPowered = false, state_machine.cpp:120
+        RelayController_setPowerManagement false
+        nonessentialsPowered = false
         Power relay coil energizes, NC contact opens, loads off
     end note
 ```
 
-The single ANDed qualification expression (`state_machine.cpp:87-95`) is:
+The transport and mission-sequence checks are:
 
 1. `status.currentState == STATE_RECOVERY`;
-2. `MissionData_isDorisStateFresh()` — Lua `STATE` received within
+2. `status.previousState == STATE_DIVING` — this boot observed a real mission,
+   so replayed recovery packets after reset cannot cut power;
+3. `MissionData_isDorisStateFresh()` — Lua `STATE` received within
    `MISSION_DATA_FRESHNESS_MS` (3000 ms);
-3. `md.doris_state == 4` — exactly Lua `STATE_RECOVERY`;
-4. `MissionData_getRecoveryMessageCount()` at least `SURFACE_RECOVERY_MESSAGES`
+4. `md.doris_state == 4` — exactly Lua `STATE_RECOVERY`;
+5. `MissionData_getRecoveryMessageCount()` at least `SURFACE_RECOVERY_MESSAGES`
    (3). The counter increments only when consecutive `STATE=4` reports arrive no
    more than 3 s apart, and resets to 0 on any non-4 value
-   (`mission_data.cpp:115-132`);
-5. `MissionData_isDepthFresh()` — autopilot depth within 3 s;
-6. `md.depth_m` at most `RECOVERY_DEPTH_THRESHOLD_M` (1.5 m);
-7. `md.max_depth_m` at least `DIVE_DEPTH_THRESHOLD_M` (2.0 m) — proof that
-   *this boot* observed a real dive;
-8. depth liveness — across the qualification window the reading must span at
-   least `SURFACE_DEPTH_LIVENESS_M` (0.02 m). This replaced the GPS term. Depth
-   is now the only sensor evidence not derived from the autopilot's own
-   assertion, and a frozen channel reads shallow and steady exactly like a
-   floating vehicle, so it has to be shown to be alive.
+   (`mission_data.cpp:115-132`).
 
-Everything after step 8 is a plain fall-through in the same function, so the
-whole chain is re-evaluated every loop iteration. Any single false condition
-takes the sequence straight back to `NOT_QUALIFIED` and clears the ACK, which
-means BlueOS must acknowledge again from scratch.
+These conditions remain live through the three-minute dwell and while awaiting
+ACK. A stale/non-4 report resets the dwell before ACK. Once ACK is accepted,
+`shutdownAcknowledged` is latched in RAM and the function only advances the
+30-second final grace; expected MAVLink loss during host shutdown is ignored.
 
 MAVLink messages involved, all `NAMED_VALUE_FLOAT`:
 
@@ -264,9 +251,8 @@ ACK unless both `shutdownRequested` and `surfaceQualified` are already true, so
 a premature or replayed `PWR_ACK` cannot pre-arm the sequence. A repeated ACK
 after the first is idempotent and does not restart the grace timer.
 
-Note that once `POWER_CUT` is reached the relay is never re-closed by this
-function; losing qualification afterwards only clears the RAM flags. Power is
-restored only by `enterState` (any state entry) or by a boot.
+Once `POWER_CUT` is reached the relay is never re-closed by this function.
+Power is restored only by a reset/state entry or by a boot.
 
 ## 4. Release relay latch state machine
 
@@ -301,8 +287,8 @@ stateDiagram-v2
           rejected unless millis minus timedEventStartTime is at least
           RELEASE_MIN_HOLD_SEC times 1000, that is 1500 s or 25 minutes
           on accept, drive off, clear flag, persistRelease false
-        surfaceSafe is status.surfaceQualified, state_machine.cpp:146,
-        so the full 30 s surface qualification of diagram 3 is required
+        surfaceSafe is status.surfaceQualified,
+        so repeated fresh Lua recovery confirmation is required
     end note
 ```
 

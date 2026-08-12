@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- Lua's repeated fresh terminal `STATE=4` is now the sole payload-shutdown
+  authority. After an observed dive, three recovery reports start a
+  `SURFACE_LOGGING_DWELL_MS` three-minute powered logging window; depth/GPS and
+  the independent recovery backstop cannot vote for cutoff.
+- A valid BlueOS `PWR_ACK` now latches the 30-second final electrical grace, so
+  expected MAVLink loss during Linux shutdown cannot cancel cutoff. Stale or
+  reverted Lua state still resets the dwell before ACK, and every AGT reboot
+  restores payload power.
+
 ## [0.3.2] - 2026-08-12
 
 ### Fixed

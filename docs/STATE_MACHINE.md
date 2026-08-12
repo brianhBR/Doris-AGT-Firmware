@@ -59,50 +59,40 @@ inputs must come from system/component `1/1`.
 ### RECOVERY
 
 - Strobe and recovery communications are enabled.
-- Navigator/Pi, camera, and lights all remain powered while surface
-  qualification and graceful shutdown are pending.
-- Only after qualification, BlueOS acknowledgement, and final grace does the
-  power relay open and turn all nonessential loads off.
-- A missing ACK or stale/invalid qualification input keeps all loads powered.
+- Navigator/Pi, camera, and lights remain powered for Lua's three-minute
+  surface-logging dwell.
+- Only after that dwell, BlueOS acknowledgement, and final grace does the power
+  relay open and turn all nonessential loads off.
+- A missing ACK keeps all loads powered. Stale/reverted Lua state cancels before
+  ACK, but transport loss after ACK cannot cancel the latched final countdown.
 
 ## Safe surface power handshake
 
-A single `STATE=4` does not authorize cutoff. All of these must remain true for
-`SURFACE_QUALIFY_MS`:
+A single `STATE=4` does not authorize cutoff. The AGT must have observed the
+RAM-only `PRE_DIVE -> DIVING` mission sequence, then receive at least
+`SURFACE_RECOVERY_MESSAGES` (3) consecutive fresh Lua `STATE=4` reports. Those
+reports are the sole surface/shutdown authority. They start
+`SURFACE_LOGGING_DWELL_MS` (180 seconds), during which the payload remains
+powered and Lua continues sending telemetry into the active MCAP.
 
-- at least `SURFACE_RECOVERY_MESSAGES` consecutive fresh Lua `STATE=4` reports;
-- fresh finite autopilot depth no deeper than
-  `RECOVERY_DEPTH_THRESHOLD_M`;
-- evidence that this boot observed depth at least `DIVE_DEPTH_THRESHOLD_M`;
-- a depth reading that moved by at least `SURFACE_DEPTH_LIVENESS_M` (0.02 m)
-  across the window.
+Depth and GPS are deliberately absent from the cutoff vote. The independent
+shallow-depth/liveness backstop still enters `RECOVERY` so Iridium and the strobe
+can operate if Lua is wedged, but it cannot start the power dwell. This keeps
+surface detection and payload shutdown as separate decisions.
 
-A GPS fix is deliberately not on that list. Measured over four dives,
-acquisition after surfacing took 17 s, 6.8 min, 30.4 min, and 38.7 min, and the
-mission ended within a second of the fix every time — a fix was the only thing
-holding up the end of the dive, and the whole point of cutting power is to
-survive a long surface wait.
+After the dwell:
 
-The liveness term is what buys back the independence that gives up. Depth is now
-the only sensor evidence the AGT has that does not come from the autopilot's own
-assertion, and a stuck channel reads shallow and perfectly steady, which is
-indistinguishable from floating. Across 146 surface windows on three dives the
-quietest still held a 0.070 m standard deviation, against exactly zero for a
-dead channel, so 0.02 m clears real data with roughly triple margin.
-
-After qualification:
-
-1. AGT repeatedly publishes `PWR_SHDN=1`.
+1. AGT repeatedly publishes `PWR_SHDN=1` while fresh `STATE=4` continues.
 2. BlueOS component `1/191` finishes shutdown preparation and publishes
    `PWR_ACK=1`.
 3. AGT waits `POWER_SHUTDOWN_FINAL_GRACE_MS` (30 seconds) so BlueOS
    `systemctl poweroff` can complete.
-4. AGT opens the NC power relay only if every qualification input stayed valid.
+4. AGT opens the NC power relay. The ACK latches this countdown, so the expected
+   loss of MAVLink during Linux shutdown cannot cancel it.
 
-Premature ACKs are rejected. Any transient or stale qualification before cutoff
-cancels the request and ACK. BlueOS must acknowledge a later request again.
-Unsigned elapsed-time subtraction keeps all bounded timers safe across
-`millis()` rollover.
+Premature ACKs are rejected. Stale or reverted Lua state before ACK resets the
+dwell and cancels the request. Only a power cycle clears an accepted ACK.
+Unsigned elapsed-time subtraction keeps both timers safe across rollover.
 
 ## Iridium reporting in RECOVERY
 
@@ -139,11 +129,11 @@ coil is off, so an unpowered, reset, or crashed AGT leaves the Pi, camera, and
 lights powered. Every power cycle therefore brings the payload back up.
 
 Nothing about the cutoff decision is persisted. `MissionData_init()` clears the
-depth high-water mark and the Lua state, and `StateMachine_init()` returns to
+Lua state, and `StateMachine_init()` returns to
 `PRE_DIVE` with `surfaceQualified`, `shutdownRequested`, and
-`shutdownAcknowledged` all false. Because the proof that a dive happened is that
-RAM-only high-water mark, the vehicle must dive and reach recovery again before
-the AGT can cut power a second time.
+`shutdownAcknowledged` all false. Because the observed `DIVING -> RECOVERY`
+sequence is RAM-only, the vehicle must run another dive before the AGT can cut
+power a second time; replayed `STATE=4` after boot is insufficient.
 
 That is deliberate for the on-deck case. After a recovery the autopilot has
 already cleared `DORIS_START`, so a power cycle brings Lua up in `CONFIG`
@@ -167,7 +157,7 @@ same request. Only one of the two outputs may be wired to the actuator:
   reboot;
 - release does not automatically stop after 1500 seconds;
 - explicit Lua `RELAY=0` is accepted only after `RELEASE_MIN_HOLD_SEC` and
-  independent surface qualification;
+  confirmed Lua recovery;
 - release state never causes Pi power cutoff.
 
 During MCU reset and early boot GPIO35 is inactive until the persisted marker is
@@ -192,8 +182,9 @@ All names fit the 10-byte `NAMED_VALUE_FLOAT.name` field.
 - bit 1 (`AGT_CAP_SAFE_SURFACE_POWER`): AGT implements the safe surface
   `PWR_SHDN`/`PWR_ACK` handshake.
 
-BlueOS must verify both required bits before enabling v0.3 release or power
-integration.
+BlueOS verifies bit 1 before acknowledging shutdown. Bit 0 is evaluated
+separately when checking whether the AGT is an available release path; shutdown
+does not require AGT release ownership.
 
 ## Persistence and reset
 
