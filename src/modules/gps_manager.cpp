@@ -19,6 +19,7 @@ static unsigned long powerOnTime = 0;   // Track when GPS was powered on for TTF
 static bool ttffLogged = false;         // Only log TTFF once per power cycle
 static bool configSavedToBBR = false;   // Track whether we've saved config to BBR
 static bool pvtReceived = false;        // True after first UBX-NAV-PVT parsed
+static uint32_t pvtSequence = 0;        // Incremented after each complete PVT
 // Last millis() a UBX-NAV-PVT was successfully parsed. Drives the PVT
 // watchdog in GPSManager_update() and is reset by GPSManager_reinit() so
 // the watchdog doesn't trip on the stale value left over from a multi-
@@ -300,6 +301,7 @@ static uint16_t ubxU16(uint16_t off) {
 
 static void processPVT() {
     pvtReceived = true;
+    pvtSequence++;
     lastPVTTime = millis();
     // UBX-NAV-PVT payload offsets (u-blox M8 protocol spec)
     currentGPSData.year      = ubxU16(4);
@@ -549,6 +551,10 @@ GPSData GPSManager_getData() {
 
 bool GPSManager_hasPVT() {
     return pvtReceived;
+}
+
+uint32_t GPSManager_pvtSequence() {
+    return pvtSequence;
 }
 
 bool GPSManager_hasValidTime() {

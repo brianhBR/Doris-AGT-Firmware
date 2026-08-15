@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- GNSS time can no longer move the AGT RTC to an implausible future year or
+  apply a correction larger than five minutes after synchronization. RTC
+  discipline now processes each new UBX-NAV-PVT message once, validates real
+  calendar dates, verifies hardware readback, and reports rejected updates over
+  MAVLink instead of propagating them into BlueOS and ArduPilot log timestamps.
+
 ## [0.3.5] - 2026-08-12
 
 ### Added
