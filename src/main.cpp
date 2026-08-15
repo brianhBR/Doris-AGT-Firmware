@@ -23,6 +23,7 @@
 #include <ArduinoJson.h>
 #include <RTC.h>
 #include "apollo_rtc_time.h"
+#include "rtc_time_guard.h"
 
 #include "modules/gps_manager.h"
 #include "modules/iridium_manager.h"
@@ -62,6 +63,7 @@ void processSerialInput();
 void processCommand(const String& cmd);
 void checkStateTransitions();
 void set_leak_from_serial(const String& arg);
+static uint64_t getRTCUnixUsec();
 
 // True once the Apollo3 RTC has been set from a valid GPS time solution.
 // The RTC on this board is not coin-cell backed across power-down, so its
@@ -69,11 +71,67 @@ void set_leak_from_serial(const String& arg);
 // that as authoritative would poison SYSTEM_TIME / GPS_INPUT on MAVLink and
 // back-date ArduSub's clock and logs.
 static bool rtcSyncedFromGPS = false;
+static uint32_t lastProcessedPvtSequence = 0;
+static uint64_t lastAcceptedGpsUnixSeconds = 0;
+static unsigned long lastRtcRejectionReport = 0;
 
-// Firmware release year. Any RTC or GPS year earlier than this is, by
-// definition, not a valid time-of-day and must be rejected.
 static constexpr uint16_t RTC_MIN_VALID_YEAR = 2025;
-static constexpr uint16_t RTC_MAX_VALID_YEAR = 2099;
+static constexpr uint16_t RTC_HARDWARE_MAX_YEAR = 2099;
+static constexpr uint32_t RTC_MAX_GPS_STEP_SECONDS = 300;
+static constexpr unsigned long RTC_REJECTION_REPORT_INTERVAL_MS = 60000UL;
+
+/**
+ * Return the latest year an initial GNSS clock solution may claim.
+ *
+ * Tying this to the build prevents a falsely valid far-future GNSS date from
+ * poisoning every clock on the vehicle. Rebuilding the firmware naturally
+ * advances the bound.
+ */
+static uint16_t maximumPlausibleGpsYear() {
+    uint16_t buildYear = rtcTimeBuildYear(__DATE__);
+    if (buildYear < RTC_MIN_VALID_YEAR) {
+        buildYear = RTC_MIN_VALID_YEAR;
+    }
+    if (buildYear >= RTC_HARDWARE_MAX_YEAR) {
+        return RTC_HARDWARE_MAX_YEAR;
+    }
+    return buildYear + 1U;
+}
+
+/**
+ * Emit a throttled MAVLink diagnostic for a rejected GNSS clock update.
+ */
+static void reportRtcRejection(
+    RtcTimeValidation validation,
+    const RtcCalendarTime& candidate,
+    uint64_t candidateUnixSeconds,
+    uint64_t currentUnixSeconds) {
+    const unsigned long now = millis();
+    if (lastRtcRejectionReport != 0 &&
+        now - lastRtcRejectionReport < RTC_REJECTION_REPORT_INTERVAL_MS) {
+        return;
+    }
+    lastRtcRejectionReport = now;
+
+    char message[50];
+    if (validation == RTC_TIME_REJECT_YEAR) {
+        snprintf(message, sizeof(message), "RTC: Rejected GPS year %u", candidate.year);
+    } else if (validation == RTC_TIME_REJECT_STEP) {
+        const uint64_t difference =
+            candidateUnixSeconds > currentUnixSeconds
+                ? candidateUnixSeconds - currentUnixSeconds
+                : currentUnixSeconds - candidateUnixSeconds;
+        snprintf(
+            message,
+            sizeof(message),
+            "RTC: Rejected GPS jump %lus",
+            static_cast<unsigned long>(difference));
+    } else {
+        snprintf(message, sizeof(message), "RTC: Rejected invalid GPS date");
+    }
+    DebugPrintln(message);
+    MAVLinkInterface_sendStatusText(4, message);
+}
 
 // Seed the Apollo3 RTC from the u-blox ZOE-M8Q as soon as the module
 // reports validDate && validTime. This is the payoff from keeping the
@@ -83,17 +141,63 @@ static constexpr uint16_t RTC_MAX_VALID_YEAR = 2099;
 // time would stay at millis()-based boot time for 30-60+ seconds per
 // deployment, and SYSTEM_TIME wouldn't be sent at all until a fix.
 static void syncRTCFromGPSIfValid() {
-    if (!GPSManager_hasValidTime()) return;
-    GPSData g = GPSManager_getData();
-    bool dateOk = g.year >= RTC_MIN_VALID_YEAR && g.year <= RTC_MAX_VALID_YEAR &&
-                  g.month >= 1 && g.month <= 12 &&
-                  g.day >= 1 && g.day <= 31;
-    bool timeOk = g.hour <= 23 && g.minute <= 59 && g.second <= 59;
-    if (!dateOk || !timeOk) return;
+    const uint32_t pvtSequence = GPSManager_pvtSequence();
+    if (pvtSequence == lastProcessedPvtSequence) {
+        return;
+    }
+    lastProcessedPvtSequence = pvtSequence;
+    if (!GPSManager_hasValidTime()) {
+        return;
+    }
+
+    const GPSData gps = GPSManager_getData();
+    const RtcCalendarTime candidate = {
+        gps.year,
+        gps.month,
+        gps.day,
+        gps.hour,
+        gps.minute,
+        gps.second
+    };
+
+    uint64_t currentUnixUsec = getRTCUnixUsec();
+    if (rtcSyncedFromGPS && currentUnixUsec == 0U) {
+        rtcSyncedFromGPS = false;
+    }
+
+    const RtcTimeGuardLimits limits = {
+        RTC_MIN_VALID_YEAR,
+        maximumPlausibleGpsYear(),
+        RTC_MAX_GPS_STEP_SECONDS
+    };
+    const RtcTimeGuardState state = {
+        rtcSyncedFromGPS,
+        currentUnixUsec / 1000000ULL
+    };
+    uint64_t candidateUnixSeconds = 0U;
+    const RtcTimeValidation validation =
+        rtcTimeValidate(candidate, state, limits, &candidateUnixSeconds);
+    if (validation != RTC_TIME_VALID) {
+        reportRtcRejection(
+            validation,
+            candidate,
+            candidateUnixSeconds,
+            state.currentUnixSeconds);
+        return;
+    }
+    if (candidateUnixSeconds == lastAcceptedGpsUnixSeconds) {
+        return;
+    }
 
     ApolloRtcTime t;
     if (!apolloRtcTimeFromCalendar(
-            g.year, g.month, g.day, g.hour, g.minute, g.second, &t)) {
+            gps.year,
+            gps.month,
+            gps.day,
+            gps.hour,
+            gps.minute,
+            gps.second,
+            &t)) {
         return;
     }
     myRTC.setTime(
@@ -115,35 +219,46 @@ static void syncRTCFromGPSIfValid() {
         return;
     }
 
+    lastAcceptedGpsUnixSeconds = candidateUnixSeconds;
     if (!rtcSyncedFromGPS) {
         rtcSyncedFromGPS = true;
-        const char* src = g.time_fully_resolved ? "resolved" :
-                          GPSManager_hasFix()   ? "fix"      :
-                                                  "BBR";
+        const char* source = gps.time_fully_resolved ? "resolved" :
+                             GPSManager_hasFix()     ? "fix"      :
+                                                       "BBR";
         char msg[50];
         snprintf(msg, sizeof(msg), "RTC: Synced from GPS (%s) %04u-%02u-%02u",
-                 src, g.year, g.month, g.day);
+                 source, gps.year, gps.month, gps.day);
         DebugPrintln(msg);
         MAVLinkInterface_sendStatusText(6, msg);
     }
 }
 
 static uint64_t getRTCUnixUsec() {
-    if (!rtcSyncedFromGPS) return 0;
+    if (!rtcSyncedFromGPS) {
+        return 0;
+    }
     myRTC.getTime();
     uint16_t y = myRTC.year;
-    if (y < 100) y += 2000;
-    if (y < RTC_MIN_VALID_YEAR || y > RTC_MAX_VALID_YEAR) return 0;
-    uint8_t mo = myRTC.month, d = myRTC.dayOfMonth;
-    uint8_t h = myRTC.hour, mi = myRTC.minute, s = myRTC.seconds;
-    if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
-    if (h > 23 || mi > 59 || s > 59) return 0;
-    uint32_t days = (y - 1970) * 365UL + (y - 1969) / 4 - (y - 1901) / 100 + (y - 1601) / 400;
-    static const uint16_t daysToMonth[] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
-    days += daysToMonth[mo - 1] + (d - 1);
-    if (mo >= 3 && (y % 4 == 0) && ((y % 100 != 0) || (y % 400 == 0))) days++;
-    uint64_t sec = ((uint64_t)days * 24 + h) * 3600 + (uint64_t)mi * 60 + s;
-    return sec * 1000000ULL;
+    if (y < 100U) {
+        y += 2000U;
+    }
+    if (y < RTC_MIN_VALID_YEAR || y > RTC_HARDWARE_MAX_YEAR) {
+        return 0;
+    }
+
+    const RtcCalendarTime calendar = {
+        y,
+        static_cast<uint8_t>(myRTC.month),
+        static_cast<uint8_t>(myRTC.dayOfMonth),
+        static_cast<uint8_t>(myRTC.hour),
+        static_cast<uint8_t>(myRTC.minute),
+        static_cast<uint8_t>(myRTC.seconds)
+    };
+    uint64_t unixSeconds = 0U;
+    if (!rtcTimeToUnixSeconds(calendar, &unixSeconds)) {
+        return 0;
+    }
+    return unixSeconds * 1000000ULL;
 }
 
 void setup() {

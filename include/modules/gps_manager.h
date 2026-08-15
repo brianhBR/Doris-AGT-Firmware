@@ -55,6 +55,14 @@ GPSData GPSManager_getData();
 // True once the GPS module has delivered at least one PVT solution
 bool GPSManager_hasPVT();
 
+/**
+ * Monotonically increasing count of parsed UBX-NAV-PVT messages.
+ *
+ * Consumers can compare this with their last processed value to avoid acting
+ * repeatedly on a cached PVT payload between receiver updates.
+ */
+uint32_t GPSManager_pvtSequence();
+
 // True iff the most recent UBX-NAV-PVT has both validDate and validTime
 // flags set. This can be true BEFORE GPSManager_hasFix() on warm start
 // because u-blox seeds date/time from its coin-cell-backed internal RTC
