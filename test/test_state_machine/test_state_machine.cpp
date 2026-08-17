@@ -21,7 +21,6 @@ void test_init_clears_failsafe(void) {
     StateMachine_init();
     StateMachineStatus s = StateMachine_getStatus();
     TEST_ASSERT_EQUAL(FAILSAFE_NONE, s.lastFailsafeSource);
-    TEST_ASSERT_FALSE(s.releaseTriggered);
 }
 
 void test_init_powers_nonessentials(void) {
@@ -105,7 +104,7 @@ void test_reset_restores_nonessentials(void) {
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
-void test_reset_clears_failsafe_but_preserves_release_latch(void) {
+void test_reset_clears_failsafe(void) {
     StateMachine_init();
     StateMachine_enterDiving();
     StateMachine_triggerFailsafe(FAILSAFE_LOW_VOLTAGE);
@@ -113,7 +112,6 @@ void test_reset_clears_failsafe_but_preserves_release_latch(void) {
     StateMachine_reset();
     StateMachineStatus s = StateMachine_getStatus();
     TEST_ASSERT_EQUAL(FAILSAFE_NONE, s.lastFailsafeSource);
-    TEST_ASSERT_TRUE(s.releaseTriggered);
 }
 
 // ---------------------------------------------------------------------------
@@ -137,39 +135,14 @@ void test_failsafe_sets_source(void) {
     TEST_ASSERT_EQUAL(FAILSAFE_LEAK, s.lastFailsafeSource);
 }
 
-void test_failsafe_triggers_release_relay(void) {
-    StateMachine_init();
-    stub_relay_reset();
-    StateMachine_enterDiving();
-
-    StateMachine_triggerFailsafe(FAILSAFE_NO_HEARTBEAT);
-
-    StateMachineStatus s = StateMachine_getStatus();
-    TEST_ASSERT_TRUE(s.releaseTriggered);
-    TEST_ASSERT_TRUE(_stub_timed_event_active);
-}
-
-void test_failsafe_does_not_double_trigger_relay(void) {
-    StateMachine_init();
-    stub_relay_reset();
-    StateMachine_enterDiving();
-
-    StateMachine_triggerFailsafe(FAILSAFE_LOW_VOLTAGE);
-    int count_after_first = _stub_timed_event_trigger_count;
-
-    StateMachine_triggerFailsafe(FAILSAFE_LEAK);
-    TEST_ASSERT_EQUAL(count_after_first, _stub_timed_event_trigger_count);
-}
-
 void test_failsafe_all_sources(void) {
     FailsafeSource sources[] = {
         FAILSAFE_LOW_VOLTAGE,
         FAILSAFE_LEAK,
-        FAILSAFE_NO_HEARTBEAT,
-        FAILSAFE_MANUAL
+        FAILSAFE_NO_HEARTBEAT
     };
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         StateMachine_init();
         StateMachine_enterDiving();
         StateMachine_triggerFailsafe(sources[i]);
@@ -675,13 +648,11 @@ int main(int argc, char** argv) {
     // Reset
     RUN_TEST(test_reset_returns_to_pre_dive);
     RUN_TEST(test_reset_restores_nonessentials);
-    RUN_TEST(test_reset_clears_failsafe_but_preserves_release_latch);
+    RUN_TEST(test_reset_clears_failsafe);
 
     // Failsafe
     RUN_TEST(test_failsafe_enters_recovery);
     RUN_TEST(test_failsafe_sets_source);
-    RUN_TEST(test_failsafe_triggers_release_relay);
-    RUN_TEST(test_failsafe_does_not_double_trigger_relay);
     RUN_TEST(test_failsafe_all_sources);
 
     // Recovery behavior

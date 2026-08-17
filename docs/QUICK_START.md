@@ -26,9 +26,9 @@
    - Common GND
    - PSM powered from battery sense side
 
-5. **Relays (2x)**
-   - Relay 1 Control → GPIO4 (Navigator/Pi/camera/lights power)
-   - Relay 2 Signal → GPIO35 (electrolytic release, relay coil from battery)
+5. **AGT payload-power relay**
+   - Control → GPIO4 (Navigator/Pi/camera/lights power)
+   - Connect ballast release only to the Navigator relay; AGT GPIO35 is unused.
 
 ### Power Supply
 
@@ -156,9 +156,6 @@ save
 
 **Release Relay (Relay 2):**
 ```
-# Trigger failsafe to fire release relay and enter recovery
-release_now
-
 # Reset to start over
 reset
 ```
@@ -191,10 +188,7 @@ reset
 start_self_test
 
 # Simulate going underwater (need autopilot sending depth > 2m)
-# Or test failsafe directly:
-release_now
-
-# System fires release relay and enters RECOVERY
+# Test release through the Navigator/Lua mission procedure.
 # Strobe LEDs active, Iridium position reports
 
 # Reset when done

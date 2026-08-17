@@ -52,7 +52,6 @@ The AGT accepts text-based serial commands. All commands must be terminated with
 ```
 start_self_test                    # PRE_MISSION → SELF_TEST
 reset                              # Any → PRE_MISSION
-release_now                        # Trigger failsafe (fire release relay → RECOVERY)
 status                             # Print state machine status
 ```
 
@@ -164,7 +163,6 @@ The BlueOS extension should provide a web-based UI with:
 3. **Advanced Settings Tab**
    - Feature enable/disable toggles
    - LED brightness control
-   - Manual relay testing (`release_now`)
    - State control (`start_self_test`, `reset`)
 
 ### Communication Implementation
@@ -203,10 +201,6 @@ class AGTController:
     def start_self_test(self):
         """Start self-test sequence"""
         return self.send_command("start_self_test")
-
-    def release_now(self):
-        """Trigger failsafe release"""
-        return self.send_command("release_now")
 
     def reset(self):
         """Return to PRE_MISSION"""
@@ -274,15 +268,12 @@ PSM: V=12.45V I=1.23A P=15.32W (ADC: V=1234 I=5678)
 State: MISSION
 Time in state: 3600 s
 Nonessentials: ON
-Release triggered: NO
 =================
 ```
 
-**Relay Status:**
+**Power Status:**
 ```
-NAMED_VALUE_FLOAT REL_STAT=0|1
 NAMED_VALUE_FLOAT PWR_SHDN=0|1
-STATUSTEXT "RELAY: command accepted"
 STATUSTEXT "POWER: BlueOS shutdown ACK"
 ```
 
@@ -290,7 +281,6 @@ STATUSTEXT "POWER: BlueOS shutdown ACK"
 ```
 FAILSAFE: LOW_VOLTAGE
 FAILSAFE: LEAK
-FAILSAFE: MANUAL
 ```
 
 ## MAVLink Integration
@@ -304,8 +294,6 @@ All names fit MAVLink's 10-byte `NAMED_VALUE_FLOAT.name` field:
 | Name | Direction/source | Values | Meaning |
 |------|------------------|--------|---------|
 | `AGT_CAP` | AGT `1/192` → BlueOS | integer bitmask | Capability gating; required before enabling safety integration |
-| `RELAY` | ArduPilot `1/1` → AGT | finite 0/1 (±0.1) | Latch release ON, or request guarded OFF |
-| `REL_STAT` | AGT `1/192` → BlueOS | 0/1 | Actual latched GPIO35 release state |
 | `PWR_SHDN` | AGT `1/192` → BlueOS | 0/1 | Qualified graceful-shutdown request |
 | `PWR_ACK` | BlueOS `1/191` → AGT | finite 1 (±0.1) | BlueOS has completed shutdown preparation |
 
@@ -326,26 +314,10 @@ not been confirmed on hardware. If it is dropped, the AGT never sees an ACK and
 leaves payload power on, so the failure is safe but silent — confirm the ACK
 arrives when bench-testing the handshake.
 
-`AGT_CAP` bits:
-
-- bit 0, `AGT_CAP_RELEASE_OWNER`: this firmware drives the GPIO35 release output
-  from `RELAY`;
-- bit 1, `AGT_CAP_SAFE_SURFACE_POWER`: AGT implements the qualified
-  `PWR_SHDN`/`PWR_ACK` protocol.
-
-Lua mirrors each request to its own Navigator relay, so a mission is viable with
-either output wired. BlueOS therefore treats bit 0 as one of two release paths
-and requires only bit 1 before acknowledging power cutoff. Shutdown authority is
-independent of which controller owns the release actuator.
-`AGT_CAP`, `REL_STAT`, and `PWR_SHDN` repeat at 1 Hz for routing/logging
-visibility.
-Release control is independent of this handshake. An active release marker is
-stored in EEPROM and reasserted after AGT reboot; Pi power always initializes ON.
-
-Persistence limitation: GPIO35 is inactive during MCU reset/early boot until
-`RelayController_init()` validates and reapplies the EEPROM marker. A corrupt or
-unknown marker fails safe to release OFF. The record is written only when the
-latched state changes (not for repeated ON messages), limiting flash wear.
+`AGT_CAP=2` sets only bit 1, `AGT_CAP_SAFE_SURFACE_POWER`. Release-owner bit 0
+is clear because Lua/Navigator is the sole release path. `AGT_CAP` and
+`PWR_SHDN` repeat at 1 Hz for routing/logging visibility. Pi power always
+initializes ON.
 
 **Messages sent by AGT:**
 

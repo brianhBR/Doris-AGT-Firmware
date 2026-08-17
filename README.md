@@ -3,10 +3,10 @@
 **Oceanographic Drop Camera — Subordinate Safety Monitor & Comms Relay**
 
 Firmware for the SparkFun Artemis Global Tracker (AGT) used on the Doris deep-sea
-drop-camera platform. The AGT does **not** run the dive. It drives a GPIO35
-release output that mirrors the Navigator's own release relay, and provides
-independently guarded release and surface-power safety fallbacks alongside GPS,
-Iridium, Meshtastic, and status LEDs.
+drop-camera platform. The AGT does **not** run the dive or control ballast
+release. It provides guarded surface-power control alongside GPS, Iridium,
+Meshtastic, safety monitoring, and status LEDs. The Navigator is the sole
+release-relay controller.
 
 ## Mission Profile
 
@@ -38,17 +38,13 @@ the AGT can transition to `RECOVERY` even if the Lua script has crashed. That
 backstop carries no GPS term: acquisition after surfacing has taken as long as
 38 minutes, which is exactly when a wedged script most needs a way out.
 
-### Release and safe surface power
+### Navigator release and AGT surface power
 
-ArduSub sends `NAMED_VALUE_FLOAT RELAY` from source `1/1`. Only finite values
-near 0 or 1 are accepted. `RELAY=1` latches GPIO35 ON, tolerates repeats, and
-persists the active marker in EEPROM so an AGT reboot reasserts the output.
-`RELAY=0` is accepted only after `RELEASE_MIN_HOLD_SEC` (1500 s) and confirmed
-Lua recovery. The AGT reports the output repeatedly as `REL_STAT`.
-
-Manual `release_now`, valid Iridium `DORIS_CMD_RELEASE`, and guarded
-leak/critical-voltage/heartbeat failsafes while `DIVING` share this controller.
-Release never requests or implies Pi power cutoff.
+Lua and the Navigator exclusively control ballast release. The AGT ignores
+`NAMED_VALUE_FLOAT RELAY`, never drives GPIO35, does not persist release state,
+and does not advertise itself as a release path. AGT leak, voltage, and
+heartbeat monitors can enter `RECOVERY` for communications but cannot fire the
+physical release.
 
 Pi power uses a separate fail-closed protocol whose sole surface authority is
 Lua. After a real `DIVING` state, three consecutive fresh `STATE=4` reports
@@ -64,9 +60,8 @@ No GPS fix is required anywhere in this path. Acquisition after surfacing was
 measured at 17 s, 6.8 min, 30.4 min, and 38.7 min across four dives, so gating
 power saving on a fix meant giving it up in the worst conditions.
 
-AGT also repeats `AGT_CAP`: bit 0 declares AGT release ownership and bit 1
-declares the safe surface power handshake. BlueOS requires bit 1 for shutdown;
-bit 0 is evaluated separately when checking the optional AGT release path.
+AGT repeats `AGT_CAP=2`, advertising only bit 1: the safe surface power
+handshake. Bit 0 remains clear because the Navigator owns release.
 
 ### Comms
 
@@ -118,15 +113,11 @@ pattern.
 - WS2812B LED strip — 30 LEDs, RGBW, external 5 V
 
 ### Relays
-- **Relay 1 — Power management** (GPIO4) — controls Navigator/Pi, camera, lights.
+- **AGT payload-power relay** (GPIO4) — controls Navigator/Pi, camera, lights.
   Wired through **NC**: coil OFF = devices powered (safe default through MCU
   resets). Coil energizes only after qualified surface shutdown + BlueOS ACK.
-- **Relay 2 — Electrolytic release** (GPIO35) — wired through **NO**, active
-  HIGH. ON is persisted and latched until an explicit, guarded Lua OFF after the
-  minimum hold. Lua mirrors the same request to a Navigator relay, so both
-  controllers command a release; wire the actuator to exactly one of the two
-  outputs. Power management (Relay 1) may only be used when the actuator is
-  wired here, because cutting Pi power disables the Navigator output.
+- **Navigator release relay** — the only output connected to the ballast
+  release. GPIO35 on the AGT is unused by this firmware.
 
 ### Battery
 4S LiPo or equivalent marine battery, sized for seafloor recording + multi-day
@@ -220,7 +211,6 @@ debug                 Firmware version, RockBLOCK IMEI, and GPS diagnostics
 iridium_test          Queue a one-off Iridium test transmission
 reset                 Force state machine back to PRE_DIVE
 reboot                Soft reboot the AGT
-release_now           Latch release ON through the guarded manual path
 set_leak <0|1>        Force the leak flag (failsafe testing)
 mesh_test             Send a text message over Meshtastic
 mesh_test_gps         Send hardcoded NMEA over Meshtastic (link test)

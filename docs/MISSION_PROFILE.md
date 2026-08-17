@@ -42,7 +42,7 @@ PRE_MISSION → SELF_TEST → MISSION → RECOVERY
 - [ ] Iridium signal quality >= 2 (test in SELF_TEST state)
 - [ ] Battery voltage > 13.5V (for 4S LiPo)
 - [ ] Configuration saved to EEPROM
-- [ ] Test release relay with `release_now` (then `reset`)
+- [ ] Test the Navigator release relay through the mission/Lua procedure
 - [ ] Verify NeoPixel visibility
 - [ ] Confirm Meshtastic NMEA received by RAK (`mesh_test_gps`)
 
@@ -121,12 +121,12 @@ PRE_MISSION → SELF_TEST → MISSION → RECOVERY
 - Battery voltage monitoring via MAVLink
 - Leak detection monitoring
 - Heartbeat watchdog active
-- Relay 1 ON (Navigator/Pi powered)
-- Relay 2 OFF (release not triggered yet)
+- AGT payload-power relay ON (Navigator/Pi powered)
 
 **Critical Function:**
-- Failsafe system provides hardware-level safety independent of mission planning
-- If any failsafe triggers, release relay fires and system enters RECOVERY
+- Lua and the Navigator own physical release.
+- AGT safety monitors can enter RECOVERY for communications but cannot release
+  ballast.
 
 **Power Budget:**
 - Navigator/Pi: 5-10W
@@ -155,10 +155,8 @@ PRE_MISSION → SELF_TEST → MISSION → RECOVERY
 3. Iridium begins position reporting at configured interval
 4. Meshtastic NMEA continues
 
-If surfacing was triggered by failsafe:
-1. Release relay remains latched through ascent; explicit guarded Lua OFF is
-   allowed only after the 1500-second minimum hold and surface qualification
-2. Same RECOVERY behavior as above
+If AGT safety monitoring entered RECOVERY, the same communications behavior
+applies, but ballast release remains exclusively under Navigator/Lua control.
 
 ---
 
@@ -249,18 +247,12 @@ set_meshtastic_interval 3         # 3 seconds
 save
 ```
 
-### Timed Release (Instead of Failsafe)
-```
-# 24-hour mission, 25-minute electrolytic release
-set_timed_event delay 86400 1500
-save
-```
-
 ## Failsafe Procedures
 
 ### Failsafe Triggers During MISSION
 
-Any of these conditions automatically fire the release relay and enter RECOVERY:
+These conditions can make the AGT enter RECOVERY for communications. They do
+not fire the Navigator release relay:
 
 | Trigger | Threshold | Description |
 |---------|-----------|-------------|
@@ -268,7 +260,6 @@ Any of these conditions automatically fire the release relay and enter RECOVERY:
 | Leak | Detected | Water ingress detected |
 | Max Depth | > 200m | Exceeded safe operating depth |
 | No Heartbeat | > 30s | Lost communication with autopilot |
-| Manual | `release_now` | Operator abort |
 
 ### Lost Communication
 - AGT continues Iridium position reports at configured interval
@@ -291,7 +282,7 @@ Pre-Deployment
   [ ] Meshtastic NMEA confirmed (mesh_test_gps)
   [ ] Battery voltage >= 13.5V (4S LiPo)
   [ ] Configuration saved (config, then save)
-  [ ] Release relay tested (release_now, then reset)
+  [ ] Navigator release relay tested through mission/Lua procedure
   [ ] NeoPixels visible and functioning
 
 Hardware

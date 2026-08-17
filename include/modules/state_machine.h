@@ -29,9 +29,7 @@ enum FailsafeSource {
     FAILSAFE_NONE,
     FAILSAFE_LOW_VOLTAGE,
     FAILSAFE_LEAK,
-    FAILSAFE_NO_HEARTBEAT,
-    FAILSAFE_MANUAL,
-    FAILSAFE_IRIDIUM
+    FAILSAFE_NO_HEARTBEAT
 };
 
 struct StateMachineStatus {
@@ -40,9 +38,8 @@ struct StateMachineStatus {
     unsigned long stateEntryTime;
     unsigned long timeInState;
     FailsafeSource lastFailsafeSource;
-    bool releaseTriggered;       // Release relay has been fired
     bool nonessentialsPowered;   // Relay 1 (Navigator/Pi, camera, lights)
-    bool surfaceQualified;      // Fresh repeated Lua STATE=4 is confirmed
+    bool surfaceQualified;       // Fresh repeated Lua STATE=4 is confirmed
     bool shutdownRequested;
     bool shutdownAcknowledged;
 };
@@ -59,7 +56,6 @@ bool StateMachine_updateSurfaceBackstop();
 
 bool StateMachine_acknowledgeShutdown();
 bool StateMachine_isShutdownRequested();
-bool StateMachine_handleReleaseCommand(bool releaseOn);
 
 SystemState StateMachine_getState();
 StateMachineStatus StateMachine_getStatus();
@@ -74,7 +70,8 @@ void StateMachine_enterRecovery();
 // Reset to PRE_DIVE
 void StateMachine_reset();
 
-// Failsafe: trigger release relay and enter recovery
+// Record a failsafe and enter recovery for communications when diving.
+// Physical release remains exclusively under Navigator/Lua control.
 void StateMachine_triggerFailsafe(FailsafeSource source);
 
 // Automatic recovery transmission is allowed only after the acknowledged

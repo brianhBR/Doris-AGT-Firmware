@@ -268,7 +268,6 @@ debug                   # Version, IMEI, GPS backup battery
 mesh_test_gps           # Send test NMEA to Meshtastic
 status                  # Check state machine
 start_self_test         # Enter self-test
-release_now             # Test failsafe (fires relay, enters RECOVERY)
 reset                   # Return to PRE_MISSION
 ```
 
@@ -279,7 +278,6 @@ reset                   # Return to PRE_MISSION
 ### State Control
 ```
 start_self_test           # PRE_MISSION → SELF_TEST
-release_now               # Trigger failsafe → RECOVERY
 reset                     # Any → PRE_MISSION
 status                    # Print state info
 ```

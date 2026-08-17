@@ -31,10 +31,9 @@ PRE_DIVE ── Lua STATE=1..3 ──► DIVING
   no GPS term: this backstop exists for a wedged script, and acquisition after
   surfacing has taken as long as 38 minutes, so a fix requirement disabled it in
   exactly the conditions it was written for.
-- Leak, sustained critical voltage, and heartbeat-loss release failsafes are
-  evaluated only while `DIVING`, after the dive-entry grace.
-- `release_now` and valid Iridium release commands are explicit operator paths
-  and may latch release independently of mission state.
+- Leak, sustained critical voltage, and heartbeat-loss monitors are evaluated
+  only while `DIVING`, after the dive-entry grace. They can enter `RECOVERY`
+  for communications but cannot actuate ballast release.
 
 All trusted autopilot mission, depth, voltage, heartbeat, and release MAVLink
 inputs must come from system/component `1/1`.
@@ -160,24 +159,13 @@ The accepted cost is that an AGT reset during an unattended surface wait ends
 the power saving for that deployment: the payload comes back up and stays up,
 because the AGT can no longer prove a dive occurred.
 
-## Release controller
+## Release ownership
 
-The AGT drives GPIO35, mirroring the Navigator relay that Lua drives for the
-same request. Only one of the two outputs may be wired to the actuator:
-
-- finite `RELAY=1` from autopilot `1/1` latches release ON;
-- repeated ON commands are harmless;
-- manual, Iridium, and guarded `DIVING` failsafes use the same controller;
-- the active marker is stored in a bounded EEPROM record and reapplied after
-  reboot;
-- release does not automatically stop after 1500 seconds;
-- explicit Lua `RELAY=0` is accepted only after `RELEASE_MIN_HOLD_SEC` and
-  confirmed Lua recovery;
-- release state never causes Pi power cutoff.
-
-During MCU reset and early boot GPIO35 is inactive until the persisted marker is
-validated and reapplied. Corrupt, unknown, or out-of-bounds EEPROM records fail
-safe to release OFF.
+The Navigator is the sole ballast-release controller. Lua may continue
+publishing `RELAY` for the Navigator, but AGT firmware does not consume that
+message, drive GPIO35, persist a release latch, or advertise a release path.
+AGT sensor monitors can enter `RECOVERY` for strobe and communications behavior;
+they cannot actuate the physical release.
 
 ## MAVLink compatibility/status protocol
 
@@ -186,29 +174,18 @@ All names fit the 10-byte `NAMED_VALUE_FLOAT.name` field.
 | Name | Direction/source | Meaning |
 |------|------------------|---------|
 | `AGT_CAP` | AGT `1/192` → BlueOS | Capability bitmask for compatibility gating |
-| `REL_STAT` | AGT `1/192` → BlueOS | Actual latched GPIO35 state |
 | `PWR_SHDN` | AGT `1/192` → BlueOS | Qualified graceful-shutdown request |
 | `PWR_ACK` | BlueOS `1/191` → AGT | Shutdown preparation complete |
-| `RELAY` | autopilot `1/1` → AGT | Guarded release request |
 
-`AGT_CAP` currently defines:
-
-- bit 0 (`AGT_CAP_RELEASE_OWNER`): AGT owns GPIO35 release control;
-- bit 1 (`AGT_CAP_SAFE_SURFACE_POWER`): AGT implements the safe surface
-  `PWR_SHDN`/`PWR_ACK` handshake.
-
-BlueOS verifies bit 1 before acknowledging shutdown. Bit 0 is evaluated
-separately when checking whether the AGT is an available release path; shutdown
-does not require AGT release ownership.
+`AGT_CAP=2` sets only bit 1 (`AGT_CAP_SAFE_SURFACE_POWER`) for the
+`PWR_SHDN`/`PWR_ACK` handshake. Release-owner bit 0 is intentionally clear.
 
 ## Persistence and reset
 
 - Mission state and surface qualification are not persisted.
 - Pi power always initializes ON.
-- Active release is persisted separately and is not cleared by mission reset.
-- `NO_RELAYS` builds track the same logical state without driving relay pins and
-  use a distinct EEPROM magic value so bench simulation cannot arm a production
-  image.
+- No release state is stored by the AGT.
+- `NO_RELAYS` builds track payload-power state without driving GPIO4.
 
 ## Configuration
 

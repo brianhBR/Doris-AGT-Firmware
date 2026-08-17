@@ -11,7 +11,7 @@ static const char* stateNames[] = {
     "RECOVERY"
 };
 static const char* failsafeNames[] = {
-    "NONE", "LOW_VOLTAGE", "LEAK", "NO_HEARTBEAT", "MANUAL", "IRIDIUM"
+    "NONE", "LOW_VOLTAGE", "LEAK", "NO_HEARTBEAT"
 };
 static unsigned long shutdownAckTime = 0;
 static unsigned long surfaceDwellStart = 0;
@@ -62,7 +62,6 @@ void StateMachine_init() {
     status.stateEntryTime = millis();
     status.timeInState = 0;
     status.lastFailsafeSource = FAILSAFE_NONE;
-    status.releaseTriggered = RelayController_isReleaseActive();
     status.nonessentialsPowered = true;
     status.surfaceQualified = false;
     status.shutdownRequested = false;
@@ -83,8 +82,6 @@ void StateMachine_init() {
 
 void StateMachine_update() {
     status.timeInState = millis() - status.stateEntryTime;
-    RelayController_update();
-    status.releaseTriggered = RelayController_isReleaseActive();
 
     if (status.currentState != STATE_DIVING ||
         status.timeInState < DIVE_HEARTBEAT_GRACE_MS) {
@@ -194,17 +191,6 @@ bool StateMachine_isShutdownRequested() {
     return status.shutdownRequested;
 }
 
-bool StateMachine_handleReleaseCommand(bool releaseOn) {
-    if (releaseOn) {
-        RelayController_requestRelease();
-        status.releaseTriggered = true;
-        return true;
-    }
-    bool accepted = RelayController_requestReleaseOff(status.surfaceQualified);
-    status.releaseTriggered = RelayController_isReleaseActive();
-    return accepted;
-}
-
 SystemState StateMachine_getState() {
     return status.currentState;
 }
@@ -231,20 +217,16 @@ void StateMachine_enterRecovery() {
 
 void StateMachine_reset() {
     status.lastFailsafeSource = FAILSAFE_NONE;
-    status.releaseTriggered = RelayController_isReleaseActive();
     enterState(STATE_PRE_DIVE);
 }
 
 void StateMachine_triggerFailsafe(FailsafeSource source) {
-    bool remoteOrManual = source == FAILSAFE_MANUAL || source == FAILSAFE_IRIDIUM;
-    if (status.currentState != STATE_DIVING && !remoteOrManual) {
+    if (status.currentState != STATE_DIVING) {
         return;
     }
     status.lastFailsafeSource = source;
     DebugPrint(F("FAILSAFE: "));
     DebugPrintln(failsafeNames[source]);
-    RelayController_requestRelease();
-    status.releaseTriggered = true;
     if (status.currentState == STATE_DIVING) {
         enterState(STATE_RECOVERY);
     }
@@ -275,8 +257,6 @@ void StateMachine_printState() {
     DebugPrintln(F(" s"));
     DebugPrint(F("Nonessentials: "));
     DebugPrintln(status.nonessentialsPowered ? F("ON") : F("OFF"));
-    DebugPrint(F("Release triggered: "));
-    DebugPrintln(status.releaseTriggered ? F("YES") : F("NO"));
     if (status.lastFailsafeSource != FAILSAFE_NONE) {
         DebugPrint(F("Last failsafe: "));
         DebugPrintln(failsafeNames[status.lastFailsafeSource]);

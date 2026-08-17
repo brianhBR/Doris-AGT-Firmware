@@ -12,7 +12,7 @@ Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-ref
 | **11** | AD11 | PSM voltage | Analog IN | PSM V_OUT |
 | **12** | AD12 | PSM current | Analog IN | PSM I_OUT |
 | **32** | AD32 | NeoPixel data | OUT | WS2812B strip DIN (30 LEDs, external 5V) |
-| **35** | AD35 | Relay 2 – Drop weight | OUT | Relay module IN (ballast release; relay coil from battery) |
+| **35** | AD35 | Unused | — | Do not connect ballast release |
 | **39** | J10 pin 1 (SCL4) | Meshtastic TX (NMEA) | OUT | RAK J10 RX (external GPS UART) |
 | **40** | J10 pin 2 (SDA4) | Meshtastic RX | IN | RAK J10 TX (optional) |
 | — | J10 pin 3 | 3.3V | — | RAK VCC (if powering from AGT) |
@@ -23,7 +23,7 @@ Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-ref
 
 **Notes:**
 - **J10:** AGT TX (39) → RAK RX. Baud **9600** (NMEA via SoftwareSerial). Configure RAK for external GPS on J10.
-- **Relay 2:** Signal from GPIO35; relay coil and load powered from **battery** (12–14.8 V).
+- **Release:** Connect only to the Navigator relay; AGT GPIO35 is unused.
 - **NeoPixels:** Data from GPIO32 only; **power strip from external 5 V** (do not use AGT 3.3 V).
 - **PSM:** GND and analog only; PSM powered from battery sense side.
 
@@ -41,7 +41,7 @@ Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-ref
 | **PSM Voltage** | Breakout Pins | GPIO11 (AD11) | Analog input |
 | **PSM Current** | Breakout Pins | GPIO12 (AD12) | Analog input |
 | **Relay 1 (Power)** | Breakout Pins | GPIO4 (D4) | Navigator/Pi/Camera/Lights |
-| **Relay 2 (Drop Weight)** | Breakout Pins | GPIO35 (AD35) | Ballast release |
+| **Release relay** | Navigator | Navigator relay output | Ballast release |
 | **NeoPixel Strip** | Breakout Pins | GPIO32 (AD32) | 30 LED WS2812B strip |
 
 ## Detailed Connection Diagrams
@@ -152,37 +152,17 @@ GND            →  GND
 - MISSION: ON
 - RECOVERY: ON until sustained surface qualification + BlueOS ACK + final grace
 
-#### Relay 2 - Drop Weight Release (GPIO35/AD35)
+#### Drop Weight Release (Navigator Only)
 
-**Location:** Breakout pin labeled "AD35" on TOP_VIEW
-
-```
-AGT Breakout       Relay Module       Electrolytic Release
-──────────────────────────────────────────────────────────
-GPIO35 (AD35)  →  IN/Signal
-Battery V+     →  VCC (relay coil)  →  Positive terminal
-GND            →  GND                →  Negative terminal
-```
-
-**Controls:** Electrolytic/galvanic ballast release mechanism
-**Active:** HIGH (3.3V signal triggers relay)
-**Power Source:** Battery voltage (12-14.8V from 4S LiPo)
-**Duration:** Latched; 1500 seconds is the minimum guarded OFF hold, not an automatic timeout
-**Trigger:** Source-validated Lua `RELAY=1`, manual, Iridium, or guarded DIVING failsafe
-
-**Important:**
-- Relay coil powered by battery voltage (NOT 3.3V/5V)
-- GPIO35 provides 3.3V signal to trigger relay
-- Relay switches battery voltage to electrolytic release mechanism
-- Requires high-current relay suitable for extended activation
+Wire the ballast release to the Navigator relay configured by the Doris frame.
+Do not connect it to AGT GPIO35. The AGT does not configure GPIO35, consume
+Lua's `RELAY` named value, or provide a release output.
 
 **Configuration:**
 ```cpp
 #define RELAY_POWER_MGMT   4   // GPIO4 - CS1
-#define RELAY_TIMED_EVENT  35  // GPIO35 - CS2
 
 pinMode(RELAY_POWER_MGMT, OUTPUT);
-pinMode(RELAY_TIMED_EVENT, OUTPUT);
 ```
 
 ---
@@ -250,7 +230,7 @@ Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 │  Breakout Pins (see TOP_VIEW for locations):               │
 │  ┌───────────────────────────────────────┐                 │
 │  │  D4 (GPIO4)    ───► Relay 1 (Power)  │                 │
-│  │  AD35 (GPIO35) ───► Relay 2 (Drop)   │                 │
+│  │  AD35 (GPIO35) ───► Unused           │                 │
 │  │  AD11 (GPIO11) ◄─── PSM Voltage       │                 │
 │  │  AD12 (GPIO12) ◄─── PSM Current       │                 │
 │  │  AD32 (GPIO32) ───► NeoPixel Data     │                 │
@@ -286,8 +266,8 @@ The TOP_VIEW image shows all breakout pins with labels. Key pins for this projec
 - J10 connector (I2C Port 4): D39, D40, 3.3V, GND
 
 **For Relays:**
-- D4 (GPIO4) - Relay 1
-- AD35 (GPIO35) - Relay 2
+- D4 (GPIO4) - AGT payload power
+- Navigator relay output - ballast release
 
 **For PSM:**
 - AD11 (GPIO11) - Voltage sensing
@@ -314,7 +294,7 @@ The TOP_VIEW image shows all breakout pins with labels. Key pins for this projec
 | **RAK4603** | J10 Qwiic | 3.3V from J10 | Meshtastic mesh |
 | **PSM** | GPIO11, GPIO12 | Independent | Battery monitoring |
 | **Relay 1** | GPIO4 (D4) | External 5V/12V | High-current relay |
-| **Relay 2** | GPIO35 (AD35) | Battery voltage (12-14.8V) | Drop weight, extended activation |
+| **Release relay** | Navigator output | As required by actuator | Drop weight |
 | **NeoPixels** | GPIO32 | External 5V | 30 LED strip |
 | **Antenna** | SMA | - | Maxtena M1600HCT |
 | **Battery** | JST | 4S LiPo or similar | Main power |
@@ -354,10 +334,7 @@ The TOP_VIEW image shows all breakout pins with labels. Key pins for this projec
 ⚠️ **Relay Power:**
 - Use proper relay modules rated for your load
 - Relay 1 must handle Navigator/Pi + Camera + Lights (typically 5V/12V)
-- **Relay 2 (Drop Weight) uses battery voltage** (12-14.8V from 4S LiPo)
-  - GPIO35 provides 3.3V trigger signal only
-  - Relay coil and load powered from main battery
-  - Must handle extended activation (20+ minutes)
+- Size and power the Navigator release relay for the selected actuator.
 - Isolate high voltage/current loads from AGT
 
 ⚠️ **NeoPixel Power:**
@@ -366,9 +343,7 @@ The TOP_VIEW image shows all breakout pins with labels. Key pins for this projec
 - Connect common ground
 
 ⚠️ **Electrolytic Release:**
-- Relay 2 remains latched through ascent; validate the 1500-second minimum hold
-  and explicit surface-safe OFF behavior
-- Test timing before deployment
+- Validate Navigator/Lua activation timing before deployment.
 - Have backup release mechanism
 
 ---
@@ -380,7 +355,7 @@ Before deployment, verify:
 - [ ] RAK4603 receives NMEA on J10 (external GPS); node shows position
 - [ ] PSM voltage/current readings correct
 - [ ] Relay 1 switches Navigator/Pi power
-- [ ] Relay 2 activates drop weight mechanism
+- [ ] Navigator relay activates drop weight mechanism
 - [ ] NeoPixels show status correctly
 - [ ] GPS acquires fix
 - [ ] Iridium transmits position

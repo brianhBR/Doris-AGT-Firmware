@@ -327,9 +327,8 @@ static bool iridiumSendText(const char* message) {
                     rxBuf, rxLen, nullptr, &command);
                 if (msgId == DORIS_MSG_ID_COMMAND &&
                     command.command == DORIS_CMD_RELEASE) {
-                    StateMachine_triggerFailsafe(FAILSAFE_IRIDIUM);
                     MAVLinkInterface_sendStatusText(
-                        2, "RELAY: Iridium release accepted");
+                        4, "RELEASE: Navigator only; MT ignored");
                 }
             }
             success = true;

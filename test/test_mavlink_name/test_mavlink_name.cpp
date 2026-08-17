@@ -5,7 +5,7 @@
 // advertising "AGT_CAP\0RE", "REL_STAT\0P" and "PWR_SHDN\0v", and the BlueOS
 // extension — which strips NULs rather than truncating at one — read those as
 // unknown names and ignored them, leaving it with no AGT capability
-// advertisement and no release status.
+// advertisement.
 
 #include <unity.h>
 #include <string.h>
@@ -61,10 +61,8 @@ void test_nothing_survives_after_the_terminator(void) {
 void test_both_readings_agree_for_every_protocol_name(void) {
     const char* names[] = {
         MAVLINK_NAME_AGT_CAPABILITY,
-        MAVLINK_NAME_RELEASE_STATUS,
         MAVLINK_NAME_POWER_REQUEST,
         MAVLINK_NAME_POWER_ACK,
-        MAVLINK_NAME_RELEASE_COMMAND,
     };
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         char field[LEN];
