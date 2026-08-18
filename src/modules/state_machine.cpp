@@ -21,8 +21,7 @@ static bool criticalVoltageTimingActive = false;
 
 // Depth is used only by the independent backstop that can enter RECOVERY for
 // Iridium and strobe behavior if Lua is wedged. It is deliberately not a vote
-// for payload power cutoff; only Lua's repeated, fresh STATE=4 can authorize
-// that operation.
+// for payload power cutoff; only Lua's STATE=4 can authorize that operation.
 struct DepthWindow {
     unsigned long start;
     float min;
@@ -130,25 +129,21 @@ void StateMachine_updateSurfacePower() {
         return;
     }
 
-    MissionData md;
-    MissionData_get(&md);
-    bool qualifiedNow =
-        status.currentState == STATE_RECOVERY &&
-        status.previousState == STATE_DIVING &&
-        MissionData_isDorisStateFresh() &&
-        md.doris_state == 4 &&
-        MissionData_getRecoveryMessageCount() >= SURFACE_RECOVERY_MESSAGES;
-
-    if (!qualifiedNow) {
-        surfaceDwellStart = 0;
-        surfaceDwellActive = false;
-        status.surfaceQualified = false;
-        status.shutdownRequested = false;
-        return;
-    }
-
-    status.surfaceQualified = true;
     if (!surfaceDwellActive) {
+        MissionData md;
+        MissionData_get(&md);
+        bool authorized =
+            status.currentState == STATE_RECOVERY &&
+            status.previousState == STATE_DIVING &&
+            MissionData_isDorisStateFresh() &&
+            md.doris_state == 4;
+        if (!authorized) {
+            status.surfaceQualified = false;
+            status.shutdownRequested = false;
+            return;
+        }
+
+        status.surfaceQualified = true;
         surfaceDwellStart = millis();
         surfaceDwellActive = true;
     }
@@ -300,7 +295,7 @@ static void enterState(SystemState newState) {
             break;
         case STATE_RECOVERY:
             // RECOVERY enables comms/strobe only. Pi power remains on until
-            // repeated fresh Lua STATE=4, the logging dwell, and BlueOS ACK.
+            // Lua STATE=4, the logging dwell, and BlueOS ACK.
             status.nonessentialsPowered = true;
             RelayController_setPowerManagement(true);
             break;

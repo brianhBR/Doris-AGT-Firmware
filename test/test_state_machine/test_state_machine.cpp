@@ -255,51 +255,40 @@ static void enterDiveRecovery(void) {
 }
 
 static void confirmLuaRecovery(void) {
-    for (int i = 0; i < SURFACE_RECOVERY_MESSAGES; i++) {
-        surfaceTick();
-        if (i + 1 < SURFACE_RECOVERY_MESSAGES) {
-            stub_advance_millis(100);
-        }
-    }
+    surfaceTick();
 }
 
-static void advanceWithFreshSurfaceReports(uint32_t durationMs) {
-    uint32_t elapsed = 0;
-    while (elapsed < durationMs) {
-        uint32_t step = durationMs - elapsed;
-        if (step > 1000UL) {
-            step = 1000UL;
-        }
-        stub_advance_millis(step);
-        surfaceTick();
-        elapsed += step;
-    }
+static void advanceSurfacePower(uint32_t durationMs) {
+    stub_advance_millis(durationMs);
+    StateMachine_updateSurfacePower();
 }
 
 static void finishSurfaceDwell(void) {
-    advanceWithFreshSurfaceReports(SURFACE_LOGGING_DWELL_MS);
+    advanceSurfacePower(SURFACE_LOGGING_DWELL_MS);
 }
 
-void test_one_recovery_report_cannot_start_surface_dwell(void) {
+void test_one_recovery_report_starts_surface_dwell(void) {
     stub_set_millis(100);
     StateMachine_init();
     enterDiveRecovery();
     surfaceTick();
 
     StateMachineStatus s = StateMachine_getStatus();
-    TEST_ASSERT_FALSE(s.surfaceQualified);
+    TEST_ASSERT_TRUE(s.surfaceQualified);
     TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
-void test_repeated_fresh_recovery_starts_surface_dwell(void) {
+void test_surface_authorization_latches_after_first_recovery_report(void) {
     stub_set_millis(100);
     StateMachine_init();
     enterDiveRecovery();
     confirmLuaRecovery();
 
-    StateMachineStatus s = StateMachine_getStatus();
-    TEST_ASSERT_TRUE(s.surfaceQualified);
+    stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
+    StateMachine_updateSurfacePower();
+
+    TEST_ASSERT_TRUE(StateMachine_getStatus().surfaceQualified);
     TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
     TEST_ASSERT_FALSE(StateMachine_acknowledgeShutdown());
 }
@@ -310,10 +299,10 @@ void test_surface_power_enforces_logging_dwell_then_ack_grace(void) {
     enterDiveRecovery();
     confirmLuaRecovery();
 
-    advanceWithFreshSurfaceReports(SURFACE_LOGGING_DWELL_MS - 1);
+    advanceSurfacePower(SURFACE_LOGGING_DWELL_MS - 1);
     TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
 
-    advanceWithFreshSurfaceReports(1);
+    advanceSurfacePower(1);
     TEST_ASSERT_TRUE(StateMachine_isShutdownRequested());
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 
@@ -347,7 +336,7 @@ void test_depth_never_authorizes_payload_shutdown(void) {
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
-void test_stale_surface_state_cancels_before_ack(void) {
+void test_stale_surface_state_does_not_cancel_latched_request(void) {
     stub_set_millis(100);
     StateMachine_init();
     enterDiveRecovery();
@@ -357,12 +346,12 @@ void test_stale_surface_state_cancels_before_ack(void) {
 
     stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
     StateMachine_updateSurfacePower();
-    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
-    TEST_ASSERT_FALSE(StateMachine_acknowledgeShutdown());
+    TEST_ASSERT_TRUE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
-void test_reverted_surface_state_cancels_before_ack(void) {
+void test_reverted_surface_state_does_not_cancel_latched_request(void) {
     stub_set_millis(100);
     StateMachine_init();
     enterDiveRecovery();
@@ -372,8 +361,8 @@ void test_reverted_surface_state_cancels_before_ack(void) {
 
     MissionData_update_doris_state(3);
     StateMachine_updateSurfacePower();
-    TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
-    TEST_ASSERT_FALSE(StateMachine_acknowledgeShutdown());
+    TEST_ASSERT_TRUE(StateMachine_isShutdownRequested());
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
@@ -668,12 +657,12 @@ int main(int argc, char** argv) {
     RUN_TEST(test_previous_state_tracked);
     RUN_TEST(test_time_in_state_advances);
     RUN_TEST(test_should_shutdown_nonessentials_only_after_qualification_and_ack);
-    RUN_TEST(test_one_recovery_report_cannot_start_surface_dwell);
-    RUN_TEST(test_repeated_fresh_recovery_starts_surface_dwell);
+    RUN_TEST(test_one_recovery_report_starts_surface_dwell);
+    RUN_TEST(test_surface_authorization_latches_after_first_recovery_report);
     RUN_TEST(test_surface_power_enforces_logging_dwell_then_ack_grace);
     RUN_TEST(test_depth_never_authorizes_payload_shutdown);
-    RUN_TEST(test_stale_surface_state_cancels_before_ack);
-    RUN_TEST(test_reverted_surface_state_cancels_before_ack);
+    RUN_TEST(test_stale_surface_state_does_not_cancel_latched_request);
+    RUN_TEST(test_reverted_surface_state_does_not_cancel_latched_request);
     RUN_TEST(test_ack_latches_cutoff_through_transport_loss);
     RUN_TEST(test_repeated_ack_does_not_restart_final_grace);
     RUN_TEST(test_surface_dwell_handles_millis_rollover);

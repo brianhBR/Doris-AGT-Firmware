@@ -298,12 +298,12 @@ All names fit MAVLink's 10-byte `NAMED_VALUE_FLOAT.name` field:
 | `PWR_ACK` | BlueOS `1/191` → AGT | finite 1 (±0.1) | BlueOS has completed shutdown preparation |
 
 BlueOS must ACK only after flushing logs/filesystems and stopping services. AGT
-requires an observed dive, repeated fresh Lua `STATE=4`, and a three-minute
-powered logging dwell before asserting `PWR_SHDN=1`. Depth and GPS are not
+requires an observed dive, one fresh Lua `STATE=4`, and a three-minute powered
+logging dwell before asserting `PWR_SHDN=1`. Depth and GPS are not
 shutdown votes. After a valid ACK it latches another 30-second grace before
 opening the NC Pi power path; expected MAVLink loss during Linux shutdown does
-not cancel that countdown. Stale/reverted Lua state before ACK cancels the
-request. There is intentionally no unacknowledged timeout cutoff.
+not cancel that countdown. The first valid post-dive `STATE=4` latches the
+handshake. There is intentionally no unacknowledged timeout cutoff.
 
 `1/191` is `MAV_COMP_ID_ONBOARD_COMPUTER`, which BlueOS's mavlink-server also
 advertises for itself. The ACK is deliberately accepted from that shared

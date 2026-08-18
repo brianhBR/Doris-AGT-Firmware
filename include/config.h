@@ -124,10 +124,8 @@
 #define DIVE_HEARTBEAT_GRACE_MS        90000  // Ignore heartbeat timeout for this long after entering DIVING
 
 // Safe surface power cutoff. Lua is the sole surface authority, but a single
-// STATE=4 packet is never sufficient: require a short consecutive sequence,
-// then keep the payload powered for surface logging before asking BlueOS to
-// shut down cleanly.
-#define SURFACE_RECOVERY_MESSAGES      3      // Consecutive fresh RECOVERY reports
+// One fresh STATE=4 after an observed dive latches surface authorization, then
+// the payload remains powered for logging before BlueOS is asked to shut down.
 #define SURFACE_LOGGING_DWELL_MS       180000 // 3 min of powered surface logging
 // Used only by the independent depth backstop that enters RECOVERY for
 // Iridium/strobe behavior. It does not authorize payload power cutoff.

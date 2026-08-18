@@ -3,8 +3,8 @@
 Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interface communication and control capabilities for an oceanographic drop camera system.
 
 > **next/0.3 safety architecture:** `RECOVERY` does not directly cut Pi power.
-> Cutoff requires repeated fresh Lua recovery reports, a three-minute powered
-> logging dwell, BlueOS `PWR_ACK`, and a latched 30-second final grace. Depth
+> Cutoff requires one fresh post-dive Lua recovery report, a three-minute
+> powered logging dwell, BlueOS `PWR_ACK`, and a latched 30-second final grace. Depth
 > can enter recovery for communications but cannot authorize power cutoff.
 > Ballast release is controlled only by the Navigator; AGT GPIO35 is unused.
 

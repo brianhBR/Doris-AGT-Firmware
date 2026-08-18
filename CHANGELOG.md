@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   release.
 - `AGT_CAP` now advertises only safe surface power (`0x2`); release-owner bit 0
   is clear.
+- One fresh Lua `STATE=4` after an observed dive now latches surface
+  authorization and starts the three-minute logging dwell. Subsequent MAVLink
+  gaps or state changes do not cancel the latched shutdown handshake.
 
 ### Fixed
 - GNSS time can no longer move the AGT RTC to an implausible future year or

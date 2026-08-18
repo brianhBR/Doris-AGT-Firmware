@@ -209,23 +209,6 @@ void test_depth_freshness_expires(void) {
     TEST_ASSERT_FALSE(MissionData_isDepthFresh());
 }
 
-void test_recovery_messages_must_be_repeated_and_consecutive(void) {
-    MissionData_update_doris_state(4);
-    MissionData_update_doris_state(4);
-    TEST_ASSERT_EQUAL_UINT8(2, MissionData_getRecoveryMessageCount());
-    MissionData_update_doris_state(3);
-    TEST_ASSERT_EQUAL_UINT8(0, MissionData_getRecoveryMessageCount());
-}
-
-void test_stale_recovery_sequence_restarts_count(void) {
-    stub_set_millis(100);
-    MissionData_update_doris_state(4);
-    MissionData_update_doris_state(4);
-    stub_advance_millis(MISSION_DATA_FRESHNESS_MS + 1);
-    MissionData_update_doris_state(4);
-    TEST_ASSERT_EQUAL_UINT8(1, MissionData_getRecoveryMessageCount());
-}
-
 // ---------------------------------------------------------------------------
 // Unity entry point
 // ---------------------------------------------------------------------------
@@ -257,8 +240,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_leak_set_and_clear);
     RUN_TEST(test_get_with_null_does_not_crash);
     RUN_TEST(test_depth_freshness_expires);
-    RUN_TEST(test_recovery_messages_must_be_repeated_and_consecutive);
-    RUN_TEST(test_stale_recovery_sequence_restarts_count);
 
     return UNITY_END();
 }

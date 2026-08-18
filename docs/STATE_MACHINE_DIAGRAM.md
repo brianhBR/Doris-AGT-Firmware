@@ -160,10 +160,8 @@ stateDiagram-v2
 
     [*] --> WAITING_FOR_LUA
 
-    WAITING_FOR_LUA --> LOGGING_DWELL : observed dive plus 3 consecutive fresh STATE 4 reports
-    LOGGING_DWELL --> WAITING_FOR_LUA : STATE stale or not 4
+    WAITING_FOR_LUA --> LOGGING_DWELL : observed dive plus one fresh STATE 4 report
     LOGGING_DWELL --> AWAITING_ACK : SURFACE_LOGGING_DWELL_MS elapsed, 180 s
-    AWAITING_ACK --> WAITING_FOR_LUA : STATE stale or not 4
     AWAITING_ACK --> FINAL_GRACE : PWR_ACK equal to 1 from BlueOS 1 slash 191
     FINAL_GRACE --> POWER_CUT : POWER_SHUTDOWN_FINAL_GRACE_MS elapsed, 30 s
     POWER_CUT --> [*]
@@ -201,16 +199,13 @@ The transport and mission-sequence checks are:
    so replayed recovery packets after reset cannot cut power;
 3. `MissionData_isDorisStateFresh()` — Lua `STATE` received within
    `MISSION_DATA_FRESHNESS_MS` (3000 ms);
-4. `md.doris_state == 4` — exactly Lua `STATE_RECOVERY`;
-5. `MissionData_getRecoveryMessageCount()` at least `SURFACE_RECOVERY_MESSAGES`
-   (3). The counter increments only when consecutive `STATE=4` reports arrive no
-   more than 3 s apart, and resets to 0 on any non-4 value
-   (`mission_data.cpp:115-132`).
+4. `md.doris_state == 4` — exactly Lua `STATE_RECOVERY`.
 
-These conditions remain live through the three-minute dwell and while awaiting
-ACK. A stale/non-4 report resets the dwell before ACK. Once ACK is accepted,
-`shutdownAcknowledged` is latched in RAM and the function only advances the
-30-second final grace; expected MAVLink loss during host shutdown is ignored.
+The first report meeting those conditions latches `surfaceQualified` for the
+rest of the boot. MAVLink loss or a later non-4 report cannot reset the
+three-minute dwell or shutdown request. Once ACK is accepted,
+`shutdownAcknowledged` also latches and the function advances the 30-second
+final grace.
 
 MAVLink messages involved, all `NAMED_VALUE_FLOAT`:
 
@@ -248,7 +243,7 @@ flowchart TD
     C --> E[setup]
     E --> F[setupPins<br>D4 OUTPUT LOW<br>payload remains powered]
     F --> G[loadConfiguration, main.cpp:139]
-    G --> H[MissionData_init, main.cpp:140<br>RAM reset: max_depth_m 0, depth_valid false,<br>doris_state -1, recovery_message_count 0,<br>heartbeat_valid false, leak_detected false]
+    G --> H[MissionData_init, main.cpp:140<br>RAM reset: max_depth_m 0, depth_valid false,<br>doris_state -1,<br>heartbeat_valid false, leak_detected false]
     H --> I[RelayController_init, main.cpp:141]
     I --> J[drive payload-power relay to conduct<br>loads POWERED]
     J --> L[StateMachine_init, main.cpp:142]
@@ -263,7 +258,7 @@ What is persisted versus what is reset:
 | `SystemConfig` intervals and feature enables | EEPROM below 256 | Yes |
 | `SystemState` | RAM | No, always `PRE_DIVE` |
 | `max_depth_m` | RAM | No, reset to 0 at `mission_data.cpp:11` |
-| `doris_state`, `recovery_message_count` | RAM | No, reset to -1 and 0 |
+| `doris_state` | RAM | No, reset to -1 |
 | `surfaceQualified`, `shutdownRequested`, `shutdownAcknowledged` | RAM | No, all false |
 | `nonessentialsPowered` and the physical power relay | RAM plus GPIO | No, forced back ON three times during `setup` |
 

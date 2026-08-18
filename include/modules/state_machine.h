@@ -15,9 +15,9 @@
 // RECOVERY  -> PRE_DIVE  manual reset only
 //
 // RECOVERY never directly cuts Pi power. The separate surface-power guard
-// requires repeated fresh Lua STATE=4 reports, a powered surface-logging
-// dwell, BlueOS ACK, and a final electrical grace. The independent depth
-// backstop may enter RECOVERY for communications but cannot authorize cutoff.
+// latches one fresh Lua STATE=4 after an observed dive, then requires a powered
+// surface-logging dwell, BlueOS ACK, and a final electrical grace. The
+// independent depth backstop cannot authorize cutoff.
 
 enum SystemState {
     STATE_PRE_DIVE,   // Surface: GPS relay, Iridium test, Meshtastic, ready
@@ -39,7 +39,7 @@ struct StateMachineStatus {
     unsigned long timeInState;
     FailsafeSource lastFailsafeSource;
     bool nonessentialsPowered;   // Relay 1 (Navigator/Pi, camera, lights)
-    bool surfaceQualified;       // Fresh repeated Lua STATE=4 is confirmed
+    bool surfaceQualified;       // A valid post-dive Lua STATE=4 was received
     bool shutdownRequested;
     bool shutdownAcknowledged;
 };

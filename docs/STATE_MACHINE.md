@@ -62,15 +62,14 @@ inputs must come from system/component `1/1`.
   surface-logging dwell.
 - Only after that dwell, BlueOS acknowledgement, and final grace does the power
   relay open and turn all nonessential loads off.
-- A missing ACK keeps all loads powered. Stale/reverted Lua state cancels before
-  ACK, but transport loss after ACK cannot cancel the latched final countdown.
+- A missing ACK keeps all loads powered. Once a valid post-dive `STATE=4`
+  arrives, transport loss or a later state change cannot cancel the handshake.
 
 ## Safe surface power handshake
 
-A single `STATE=4` does not authorize cutoff. The AGT must have observed the
-RAM-only `PRE_DIVE -> DIVING` mission sequence, then receive at least
-`SURFACE_RECOVERY_MESSAGES` (3) consecutive fresh Lua `STATE=4` reports. Those
-reports are the sole surface/shutdown authority. They start
+A single fresh `STATE=4` authorizes the dwell only after the AGT has observed
+the RAM-only `PRE_DIVE -> DIVING` mission sequence. That report is the sole
+surface/shutdown authority and latches
 `SURFACE_LOGGING_DWELL_MS` (180 seconds), during which the payload remains
 powered and Lua continues sending telemetry into the active MCAP.
 
@@ -83,7 +82,7 @@ payload shutdown as separate decisions.
 
 After the dwell:
 
-1. AGT repeatedly publishes `PWR_SHDN=1` while fresh `STATE=4` continues.
+1. AGT repeatedly publishes `PWR_SHDN=1`.
 2. BlueOS component `1/191` finishes shutdown preparation and publishes
    `PWR_ACK=1`.
 3. AGT waits `POWER_SHUTDOWN_FINAL_GRACE_MS` (30 seconds) so BlueOS
@@ -91,9 +90,9 @@ After the dwell:
 4. AGT opens the NC power relay. The ACK latches this countdown, so the expected
    loss of MAVLink during Linux shutdown cannot cancel it.
 
-Premature ACKs are rejected. Stale or reverted Lua state before ACK resets the
-dwell and cancels the request. Only a power cycle clears an accepted ACK.
-Unsigned elapsed-time subtraction keeps both timers safe across rollover.
+Premature ACKs are rejected. Once the valid `STATE=4` latches authorization,
+only a reset clears it. Unsigned elapsed-time subtraction keeps both timers
+safe across rollover.
 
 ## Iridium reporting in RECOVERY
 
