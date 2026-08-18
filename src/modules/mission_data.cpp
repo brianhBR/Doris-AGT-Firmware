@@ -26,7 +26,6 @@ void MissionData_init(void) {
     data.doris_state = -1;
     data.doris_state_ms = 0;
     data.doris_state_valid = false;
-    data.recovery_message_count = 0;
     data.prearm_status = -1;
     missionReady = false;
 }
@@ -139,19 +138,6 @@ void MissionData_update_doris_state(int state) {
         data.temperature_valid = false;
     }
 
-    if (state == 4) {
-        bool sequenceFresh = data.doris_state_valid &&
-                             data.doris_state == 4 &&
-                             millis() - data.doris_state_ms <=
-                                 MISSION_DATA_FRESHNESS_MS;
-        if (!sequenceFresh) {
-            data.recovery_message_count = 1;
-        } else if (data.recovery_message_count < UINT8_MAX) {
-            data.recovery_message_count++;
-        }
-    } else {
-        data.recovery_message_count = 0;
-    }
     data.doris_state = state;
     data.doris_state_ms = millis();
     data.doris_state_valid = true;
@@ -178,10 +164,6 @@ bool MissionData_isDorisStateFresh(void) {
 bool MissionData_isAutopilotVoltageFresh(void) {
     return data.voltage_from_autopilot &&
            (millis() - data.voltage_ms) <= MISSION_DATA_FRESHNESS_MS;
-}
-
-uint8_t MissionData_getRecoveryMessageCount(void) {
-    return data.recovery_message_count;
 }
 
 void MissionData_update_prearm_status(int status) {

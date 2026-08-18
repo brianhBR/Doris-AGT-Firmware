@@ -31,10 +31,9 @@ PRE_DIVE ── Lua STATE=1..3 ──► DIVING
   no GPS term: this backstop exists for a wedged script, and acquisition after
   surfacing has taken as long as 38 minutes, so a fix requirement disabled it in
   exactly the conditions it was written for.
-- Leak, sustained critical voltage, and heartbeat-loss release failsafes are
-  evaluated only while `DIVING`, after the dive-entry grace.
-- `release_now` and valid Iridium release commands are explicit operator paths
-  and may latch release independently of mission state.
+- Leak, sustained critical voltage, and heartbeat-loss monitors are evaluated
+  only while `DIVING`, after the dive-entry grace. They can enter `RECOVERY`
+  for communications but cannot actuate ballast release.
 
 All trusted autopilot mission, depth, voltage, heartbeat, and release MAVLink
 inputs must come from system/component `1/1`.
@@ -63,15 +62,14 @@ inputs must come from system/component `1/1`.
   surface-logging dwell.
 - Only after that dwell, BlueOS acknowledgement, and final grace does the power
   relay open and turn all nonessential loads off.
-- A missing ACK keeps all loads powered. Stale/reverted Lua state cancels before
-  ACK, but transport loss after ACK cannot cancel the latched final countdown.
+- A missing ACK keeps all loads powered. Once a valid post-dive `STATE=4`
+  arrives, transport loss or a later state change cannot cancel the handshake.
 
 ## Safe surface power handshake
 
-A single `STATE=4` does not authorize cutoff. The AGT must have observed the
-RAM-only `PRE_DIVE -> DIVING` mission sequence, then receive at least
-`SURFACE_RECOVERY_MESSAGES` (3) consecutive fresh Lua `STATE=4` reports. Those
-reports are the sole surface/shutdown authority. They start
+A single fresh `STATE=4` authorizes the dwell only after the AGT has observed
+the RAM-only `PRE_DIVE -> DIVING` mission sequence. That report is the sole
+surface/shutdown authority and latches
 `SURFACE_LOGGING_DWELL_MS` (180 seconds), during which the payload remains
 powered and Lua continues sending telemetry into the active MCAP.
 
@@ -84,7 +82,7 @@ payload shutdown as separate decisions.
 
 After the dwell:
 
-1. AGT repeatedly publishes `PWR_SHDN=1` while fresh `STATE=4` continues.
+1. AGT repeatedly publishes `PWR_SHDN=1`.
 2. BlueOS component `1/191` finishes shutdown preparation and publishes
    `PWR_ACK=1`.
 3. AGT waits `POWER_SHUTDOWN_FINAL_GRACE_MS` (30 seconds) so BlueOS
@@ -92,9 +90,9 @@ After the dwell:
 4. AGT opens the NC power relay. The ACK latches this countdown, so the expected
    loss of MAVLink during Linux shutdown cannot cancel it.
 
-Premature ACKs are rejected. Stale or reverted Lua state before ACK resets the
-dwell and cancels the request. Only a power cycle clears an accepted ACK.
-Unsigned elapsed-time subtraction keeps both timers safe across rollover.
+Premature ACKs are rejected. Once the valid `STATE=4` latches authorization,
+only a reset clears it. Unsigned elapsed-time subtraction keeps both timers
+safe across rollover.
 
 ## Iridium reporting in RECOVERY
 
@@ -160,24 +158,13 @@ The accepted cost is that an AGT reset during an unattended surface wait ends
 the power saving for that deployment: the payload comes back up and stays up,
 because the AGT can no longer prove a dive occurred.
 
-## Release controller
+## Release ownership
 
-The AGT drives GPIO35, mirroring the Navigator relay that Lua drives for the
-same request. Only one of the two outputs may be wired to the actuator:
-
-- finite `RELAY=1` from autopilot `1/1` latches release ON;
-- repeated ON commands are harmless;
-- manual, Iridium, and guarded `DIVING` failsafes use the same controller;
-- the active marker is stored in a bounded EEPROM record and reapplied after
-  reboot;
-- release does not automatically stop after 1500 seconds;
-- explicit Lua `RELAY=0` is accepted only after `RELEASE_MIN_HOLD_SEC` and
-  confirmed Lua recovery;
-- release state never causes Pi power cutoff.
-
-During MCU reset and early boot GPIO35 is inactive until the persisted marker is
-validated and reapplied. Corrupt, unknown, or out-of-bounds EEPROM records fail
-safe to release OFF.
+The Navigator is the sole ballast-release controller. Lua may continue
+publishing `RELAY` for the Navigator, but AGT firmware does not consume that
+message, drive GPIO35, persist a release latch, or advertise a release path.
+AGT sensor monitors can enter `RECOVERY` for strobe and communications behavior;
+they cannot actuate the physical release.
 
 ## MAVLink compatibility/status protocol
 
@@ -186,29 +173,18 @@ All names fit the 10-byte `NAMED_VALUE_FLOAT.name` field.
 | Name | Direction/source | Meaning |
 |------|------------------|---------|
 | `AGT_CAP` | AGT `1/192` → BlueOS | Capability bitmask for compatibility gating |
-| `REL_STAT` | AGT `1/192` → BlueOS | Actual latched GPIO35 state |
 | `PWR_SHDN` | AGT `1/192` → BlueOS | Qualified graceful-shutdown request |
 | `PWR_ACK` | BlueOS `1/191` → AGT | Shutdown preparation complete |
-| `RELAY` | autopilot `1/1` → AGT | Guarded release request |
 
-`AGT_CAP` currently defines:
-
-- bit 0 (`AGT_CAP_RELEASE_OWNER`): AGT owns GPIO35 release control;
-- bit 1 (`AGT_CAP_SAFE_SURFACE_POWER`): AGT implements the safe surface
-  `PWR_SHDN`/`PWR_ACK` handshake.
-
-BlueOS verifies bit 1 before acknowledging shutdown. Bit 0 is evaluated
-separately when checking whether the AGT is an available release path; shutdown
-does not require AGT release ownership.
+`AGT_CAP=2` sets only bit 1 (`AGT_CAP_SAFE_SURFACE_POWER`) for the
+`PWR_SHDN`/`PWR_ACK` handshake. Release-owner bit 0 is intentionally clear.
 
 ## Persistence and reset
 
 - Mission state and surface qualification are not persisted.
 - Pi power always initializes ON.
-- Active release is persisted separately and is not cleared by mission reset.
-- `NO_RELAYS` builds track the same logical state without driving relay pins and
-  use a distinct EEPROM magic value so bench simulation cannot arm a production
-  image.
+- No release state is stored by the AGT.
+- `NO_RELAYS` builds track payload-power state without driving GPIO4.
 
 ## Configuration
 

@@ -133,45 +133,20 @@ flowchart TD
     K -- no --> M[no action this loop]
 ```
 
-The two operator-initiated failsafe sources take a different route and are not
-gated by the grace timer or by the current state:
-
-```mermaid
-flowchart TD
-    S1[Serial command release_now<br>main.cpp:512-516] --> T
-    S2[Iridium MT binary command<br>msg id 7 DORIS_MSG_ID_COMMAND<br>command 2 DORIS_CMD_RELEASE<br>iridium_manager.cpp:324-332] --> T
-    T[StateMachine_triggerFailsafe<br>state_machine.cpp:181]
-    T --> U{source is MANUAL or IRIDIUM}
-    U -- no --> V{currentState is DIVING}
-    V -- no --> W[return, no effect<br>line 183-185]
-    V -- yes --> X
-    U -- yes --> X[record lastFailsafeSource<br>RelayController_requestRelease<br>releaseTriggered = true<br>line 186-190]
-    X --> Y{currentState is DIVING}
-    Y -- yes --> Z[enterState RECOVERY<br>line 191-193]
-    Y -- no --> AA[state unchanged<br>release latched only]
-```
-
 Per-source summary:
 
-| `FailsafeSource` | Fires in | Qualifying condition | Timer | Effect on release relay | Effect on state |
-|------------------|----------|----------------------|-------|-------------------------|-----------------|
-| `FAILSAFE_NONE` | n/a | sentinel only, never triggered | n/a | none | none |
-| `FAILSAFE_LEAK` | `DIVING` only | `md.leak_detected` true | 90 s dive-entry grace, then immediate | latch ON | to `RECOVERY` |
-| `FAILSAFE_LOW_VOLTAGE` | `DIVING` only | fresh autopilot voltage, greater than 0, at most `BATTERY_CRITICAL_VOLTAGE` 11.0 V | 90 s grace, then sustained 10 s | latch ON | to `RECOVERY` |
-| `FAILSAFE_NO_HEARTBEAT` | `DIVING` only | at least one heartbeat ever received, then age at least 120 s | 90 s grace | latch ON | to `RECOVERY` |
-| `FAILSAFE_MANUAL` | any state | serial `release_now` | none | latch ON | to `RECOVERY` only if already `DIVING` |
-| `FAILSAFE_IRIDIUM` | any state | valid MT command frame with `DORIS_CMD_RELEASE` | none | latch ON | to `RECOVERY` only if already `DIVING` |
+| `FailsafeSource` | Fires in | Qualifying condition | Timer | Effect on state |
+|------------------|----------|----------------------|-------|-----------------|
+| `FAILSAFE_NONE` | n/a | sentinel only, never triggered | n/a | none |
+| `FAILSAFE_LEAK` | `DIVING` only | `md.leak_detected` true | 90 s dive-entry grace, then immediate | to `RECOVERY` |
+| `FAILSAFE_LOW_VOLTAGE` | `DIVING` only | fresh autopilot voltage, greater than 0, at most `BATTERY_CRITICAL_VOLTAGE` 11.0 V | 90 s grace, then sustained 10 s | to `RECOVERY` |
+| `FAILSAFE_NO_HEARTBEAT` | `DIVING` only | at least one heartbeat ever received, then age at least 120 s | 90 s grace | to `RECOVERY` |
 
 `md.leak_detected` is only ever set by the serial test command `set_leak`
 (`main.cpp:552-557`). No MAVLink message writes it.
 
-The Iridium MT path only runs inside `iridiumSendText()`, i.e. as the return
-leg of an outbound SBD session (`iridium_manager.cpp:319-333`). Because
-outbound periodic sends are gated on `StateMachine_canTransmitIridium()`
-(`main.cpp:289`), which is true only in `RECOVERY`, the practical reachable
-contexts are a `RECOVERY` periodic report or a manually queued
-`iridium_test`. In both cases the AGT is not `DIVING`, so `FAILSAFE_IRIDIUM`
-latches release without changing state.
+Legacy Iridium MT release commands are acknowledged as unsupported and ignored;
+the Navigator is the only release authority.
 
 ## 3. Surface power-cutoff sub-state machine
 
@@ -185,10 +160,8 @@ stateDiagram-v2
 
     [*] --> WAITING_FOR_LUA
 
-    WAITING_FOR_LUA --> LOGGING_DWELL : observed dive plus 3 consecutive fresh STATE 4 reports
-    LOGGING_DWELL --> WAITING_FOR_LUA : STATE stale or not 4
+    WAITING_FOR_LUA --> LOGGING_DWELL : observed dive plus one fresh STATE 4 report
     LOGGING_DWELL --> AWAITING_ACK : SURFACE_LOGGING_DWELL_MS elapsed, 180 s
-    AWAITING_ACK --> WAITING_FOR_LUA : STATE stale or not 4
     AWAITING_ACK --> FINAL_GRACE : PWR_ACK equal to 1 from BlueOS 1 slash 191
     FINAL_GRACE --> POWER_CUT : POWER_SHUTDOWN_FINAL_GRACE_MS elapsed, 30 s
     POWER_CUT --> [*]
@@ -226,16 +199,13 @@ The transport and mission-sequence checks are:
    so replayed recovery packets after reset cannot cut power;
 3. `MissionData_isDorisStateFresh()` — Lua `STATE` received within
    `MISSION_DATA_FRESHNESS_MS` (3000 ms);
-4. `md.doris_state == 4` — exactly Lua `STATE_RECOVERY`;
-5. `MissionData_getRecoveryMessageCount()` at least `SURFACE_RECOVERY_MESSAGES`
-   (3). The counter increments only when consecutive `STATE=4` reports arrive no
-   more than 3 s apart, and resets to 0 on any non-4 value
-   (`mission_data.cpp:115-132`).
+4. `md.doris_state == 4` — exactly Lua `STATE_RECOVERY`.
 
-These conditions remain live through the three-minute dwell and while awaiting
-ACK. A stale/non-4 report resets the dwell before ACK. Once ACK is accepted,
-`shutdownAcknowledged` is latched in RAM and the function only advances the
-30-second final grace; expected MAVLink loss during host shutdown is ignored.
+The first report meeting those conditions latches `surfaceQualified` for the
+rest of the boot. MAVLink loss or a later non-4 report cannot reset the
+three-minute dwell or shutdown request. Once ACK is accepted,
+`shutdownAcknowledged` also latches and the function advances the 30-second
+final grace.
 
 MAVLink messages involved, all `NAMED_VALUE_FLOAT`:
 
@@ -244,8 +214,7 @@ MAVLink messages involved, all `NAMED_VALUE_FLOAT`:
 | `STATE` | inbound | autopilot `1/1` | Lua mission state | `mavlink_interface.cpp:470-475` |
 | `PWR_SHDN` | outbound | AGT `1/192` | 1 while `shutdownRequested`, republished every `POWER_STATUS_INTERVAL_MS` (1 s) | `mavlink_interface.cpp:315-316` |
 | `PWR_ACK` | inbound | BlueOS `1/191` only | value in 0.9..1.1 calls `StateMachine_acknowledgeShutdown()` | `mavlink_interface.cpp:491-499` |
-| `REL_STAT` | outbound | AGT `1/192` | actual latched GPIO35 state | `mavlink_interface.cpp:313-314` |
-| `AGT_CAP` | outbound | AGT `1/192` | capability bitmask `0x3` | `mavlink_interface.cpp:312` |
+| `AGT_CAP` | outbound | AGT `1/192` | capability bitmask `0x2` (safe surface power only) | `mavlink_interface.cpp` |
 
 `StateMachine_acknowledgeShutdown()` (`state_machine.cpp:124-134`) rejects an
 ACK unless both `shutdownRequested` and `surfaceQualified` are already true, so
@@ -258,88 +227,26 @@ point where `StateMachine_canTransmitIridium()` becomes true. This ordering
 prevents a blocking satellite session from delaying the logging dwell,
 BlueOS ACK, or electrical cutoff.
 
-## 4. Release relay latch state machine
+## 4. Release ownership
 
-The release output is GPIO35 (`RELAY_TIMED_EVENT`), wired through the
-**normally-open** contact (`RELAY_TIMED_EVENT_NC` is `false`, `config.h:155`).
-Coil off means release inactive.
-
-```mermaid
-stateDiagram-v2
-    direction LR
-
-    [*] --> OFF : boot with no valid persisted ON record
-    [*] --> LATCHED_ON : boot with valid persisted ON record
-
-    OFF --> LATCHED_ON : RelayController_requestRelease
-    LATCHED_ON --> LATCHED_ON : repeated requestRelease, re-drives pin, idempotent
-    LATCHED_ON --> OFF : requestReleaseOff accepted
-    LATCHED_ON --> LATCHED_ON : requestReleaseOff rejected by guard
-
-    note left of OFF
-        relay_controller.cpp:180-191 requestRelease
-          timedEventActive = true
-          timedEventStartTime = millis
-          persistRelease true, EEPROM address 256
-          driveRelay conduct true, coil energized, NO contact closes
-    end note
-
-    note right of LATCHED_ON
-        relay_controller.cpp:193-206 requestReleaseOff surfaceSafe
-          returns true immediately if not latched
-          rejected unless surfaceSafe is true
-          rejected unless millis minus timedEventStartTime is at least
-          RELEASE_MIN_HOLD_SEC times 1000, that is 1500 s or 25 minutes
-          on accept, drive off, clear flag, persistRelease false
-        surfaceSafe is status.surfaceQualified,
-        so repeated fresh Lua recovery confirmation is required
-    end note
-```
-
-Callers:
-
-- ON: `StateMachine_triggerFailsafe` (`state_machine.cpp:189`) and
-  `StateMachine_handleReleaseCommand(true)` (`state_machine.cpp:142`), the
-  latter driven by Lua `RELAY=1` from `1/1`
-  (`mavlink_interface.cpp:478-490`).
-- OFF: only `StateMachine_handleReleaseCommand(false)`
-  (`state_machine.cpp:146`), driven by Lua `RELAY=0`. The result is echoed to
-  the link as a `STATUSTEXT` of `RELAY: command accepted` or
-  `RELAY: OFF rejected (guard)`.
-
-EEPROM persistence (`relay_controller.cpp:14-59`):
-
-- record lives at byte 256, past `SystemConfig`, enforced by a `static_assert`;
-- magic is `REL1` for production builds and `REL0` for `NO_RELAYS` builds, so a
-  bench-simulated latch cannot arm a production image;
-- the record carries the flag, its bitwise inverse, and a check word; any
-  mismatch, wrong magic, or out-of-bounds address fails safe to OFF.
-
-Across an AGT reboot with a persisted latch: `setupPins()` drives GPIO35 LOW
-first (`main.cpp:321-322`), so release is momentarily inactive, then
-`RelayController_init()` reads the record and re-asserts the pin
-(`relay_controller.cpp:148-150`). Critically, `timedEventStartTime` is reset to
-`millis()` at line 149, so the 25-minute minimum hold restarts from the reboot,
-not from the original latch.
+The Navigator is the only ballast-release controller. AGT firmware ignores
+Lua's `RELAY` named value, never configures GPIO35, stores no release latch in
+EEPROM, and leaves release-owner capability bit 0 clear. AGT failsafe monitoring
+may enter `RECOVERY` for communications but cannot actuate release.
 
 ## 5. Boot and power-cycle behavior
 
 ```mermaid
 flowchart TD
-    A[Battery reattached or AGT held in reset] --> B[GPIO4 and GPIO35 undriven]
+    A[Battery reattached or AGT held in reset] --> B[GPIO4 undriven]
     B --> C[Power relay coil de-energized<br>NC contact closed<br>Pi, camera and lights POWERED]
-    B --> D[Release relay coil de-energized<br>NO contact open<br>release INACTIVE]
-
-    C --> E[setup, main.cpp:122]
-    D --> E
-    E --> F[setupPins, main.cpp:317-323<br>D4 OUTPUT LOW, D35 OUTPUT LOW<br>coils off, loads still powered, release still off]
+    C --> E[setup]
+    E --> F[setupPins<br>D4 OUTPUT LOW<br>payload remains powered]
     F --> G[loadConfiguration, main.cpp:139]
-    G --> H[MissionData_init, main.cpp:140<br>RAM reset: max_depth_m 0, depth_valid false,<br>doris_state -1, recovery_message_count 0,<br>heartbeat_valid false, leak_detected false]
+    G --> H[MissionData_init, main.cpp:140<br>RAM reset: max_depth_m 0, depth_valid false,<br>doris_state -1,<br>heartbeat_valid false, leak_detected false]
     H --> I[RelayController_init, main.cpp:141]
-    I --> J[driveRelay power mgmt conduct true<br>relay_controller.cpp:147<br>loads POWERED]
-    I --> K[loadPersistedRelease from EEPROM 256<br>relay_controller.cpp:148-150<br>re-assert GPIO35 if a valid ON record exists<br>timedEventStartTime reset to millis]
+    I --> J[drive payload-power relay to conduct<br>loads POWERED]
     J --> L[StateMachine_init, main.cpp:142]
-    K --> L
     L --> M[currentState PRE_DIVE<br>nonessentialsPowered true<br>setPowerManagement true again<br>surfaceQualified, shutdownRequested,<br>shutdownAcknowledged all false<br>state_machine.cpp:24-42]
     M --> N[Normal loop]
 ```
@@ -348,14 +255,12 @@ What is persisted versus what is reset:
 
 | Item | Storage | Survives power cycle |
 |------|---------|----------------------|
-| Release latch | EEPROM record at 256 | **Yes**, re-asserted at `relay_controller.cpp:148-150` |
 | `SystemConfig` intervals and feature enables | EEPROM below 256 | Yes |
 | `SystemState` | RAM | No, always `PRE_DIVE` |
 | `max_depth_m` | RAM | No, reset to 0 at `mission_data.cpp:11` |
-| `doris_state`, `recovery_message_count` | RAM | No, reset to -1 and 0 |
+| `doris_state` | RAM | No, reset to -1 |
 | `surfaceQualified`, `shutdownRequested`, `shutdownAcknowledged` | RAM | No, all false |
 | `nonessentialsPowered` and the physical power relay | RAM plus GPIO | No, forced back ON three times during `setup` |
-| Release minimum-hold elapsed time | RAM | No, restarts from boot |
 
 Relay wiring implications while the AGT is unpowered or held in reset
 (`config.h:145-155`):
@@ -364,12 +269,9 @@ Relay wiring implications while the AGT is unpowered or held in reset
   undriven or LOW GPIO4 leaves the coil off, the normally-closed contact
   closed, and the Pi, camera and lights **powered**. Cutting power is an active
   operation that requires a live AGT holding GPIO4 HIGH.
-- `RELAY_TIMED_EVENT_NC` is `false`. An undriven or LOW GPIO35 leaves the
-  normally-open contact open, so release is **inactive**. Firing release is
-  likewise an active operation.
 
-Both defaults are fail-safe in the intended direction: an AGT crash, brownout
-or reset restores payload power and de-asserts release.
+An AGT crash, brownout, or reset therefore restores payload power. Release is
+outside the AGT firmware and remains the Navigator's responsibility.
 
 ## 6. Per-state side effects
 
@@ -380,8 +282,8 @@ or reset restores payload power and de-asserts release.
 | NeoPixel mode | `LED_MODE_READY` if `MissionData_isArmed()`, else `LED_MODE_ERROR` (`main.cpp:375-380`) | `LED_MODE_LUA` if a Lua LED command is fresh, else `LED_MODE_DIVING` (`main.cpp:366-373`) | `LED_MODE_RECOVERY` strobe (`main.cpp:361-364`) |
 | Power relay on state entry | Driven to conduct (`state_machine.cpp:242`) | Driven to conduct (`state_machine.cpp:249`) | Driven to conduct (`state_machine.cpp:255`) |
 | Power relay can be opened | No | No | Only through diagram 3 |
-| Release relay | Independent, latch preserved, `release_now` and Iridium MT can latch it | Independent, plus all three automatic failsafes after the 90 s grace | Independent, `RELAY=0` can clear it once surface-qualified and past the 25 min hold |
-| MAVLink outbound | Heartbeat 1 Hz, `AGT_CAP`, `REL_STAT`, `PWR_SHDN` 1 Hz, GPS 5 Hz | Same | Same |
+| Release relay | Navigator only; AGT has no release output | Navigator only | Navigator only |
+| MAVLink outbound | Heartbeat 1 Hz, `AGT_CAP`, `PWR_SHDN` 1 Hz, GPS 5 Hz | Same | Same |
 | Failsafe evaluation | Skipped (`state_machine.cpp:49-53`) | Active after `DIVE_HEARTBEAT_GRACE_MS` | Skipped |
 
 ## Findings
@@ -406,12 +308,6 @@ Reported for awareness only; nothing here has been changed.
    only the heartbeat timeout. The early return at `state_machine.cpp:49-53`
    suppresses the leak and critical-voltage failsafes as well, so no failsafe
    of any kind can fire during the first 90 s of a dive.
-5. **`docs/STATE_MACHINE.md:100`** states `release does not automatically stop
-   after 1500 seconds`, which is correct, but the adjacent bullet does not
-   mention that `RELEASE_MIN_HOLD_SEC` is expressed in seconds and multiplied
-   by 1000 at `relay_controller.cpp:198`, giving a 25-minute floor rather than
-   the 1500 ms a reader might assume.
-
 ### Dead or unreachable code
 
 6. **`DIVE_MIN_DURATION_MS`** (`config.h:119`) is defined but referenced
@@ -423,10 +319,6 @@ Reported for awareness only; nothing here has been changed.
 8. **`MAVLinkInterface_update()`** (`mavlink_interface.cpp:575-587`) is never
    called; `main.cpp` uses `processSerialInput()` instead, which does its own
    `mavlink_parse_char` loop.
-9. **`RelayController_emergencyDisable()`** (`relay_controller.cpp:212`) and
-   **`RelayController_triggerTimedEvent()`** (`relay_controller.cpp:168`) are
-   never called from `src/`. `triggerTimedEvent` also stores
-   `timedEventDurationSeconds`, which nothing ever reads.
 10. **`StateMachine_shouldShutdownNonessentials()`** and
     **`StateMachine_isRecoveryStrobe()`** are referenced only by
     `test/test_state_machine/`. Production LED selection reads
@@ -440,9 +332,8 @@ Reported for awareness only; nothing here has been changed.
     are never called; the binary `doris_protocol` include is commented out at
     `main.cpp:36`. As a result `DORIS_CMD_SEND_REPORT`, `DORIS_CMD_RESET_STATE`,
     `DORIS_CMD_REBOOT`, `DORIS_CMD_ENABLE_IRIDIUM` and
-    `DORIS_CMD_DISABLE_IRIDIUM` have no handler anywhere. Only
-    `DORIS_CMD_RELEASE` is acted on, and only inside the text-mode
-    `iridiumSendText()` return leg (`iridium_manager.cpp:324-332`).
+    `DORIS_CMD_DISABLE_IRIDIUM` have no active handler. `DORIS_CMD_RELEASE` is
+    explicitly ignored because release is Navigator-owned.
 13. **`DorisMissionState`** in `doris_protocol.h:36-41` enumerates a four-value
     mission state including `DORIS_STATE_FAILSAFE` that does not correspond to
     the current `SystemState`. It is never populated.
@@ -451,20 +342,14 @@ Reported for awareness only; nothing here has been changed.
     selects it, so it is visible only for the first loop iteration.
 15. **`SUPPRESS_DEBUG_TEXT` is defined** (`config.h:13`), so every
     `DebugPrint`/`DebugPrintln` compiles to a no-op. The entire serial command
-    console — `help`, `status`, `gps`, `debug`, and the confirmation text for
-    `release_now`, `reset` and `set_leak` — produces no output in the default
+    console — `help`, `status`, `gps`, `debug`, `reset`, and `set_leak` —
+    produces no output in the default
     build. The commands still execute.
 
 ### Behavioral gaps worth reviewing
 
-16. **`STATUSTEXT` flood on the `RELAY` path.** Lua publishes the `RELAY` named
-    float unconditionally every 500 ms (`doris.lua:70`, `doris.lua:728`). The
-    AGT handler at `mavlink_interface.cpp:478-490` emits a `STATUSTEXT` for
-    every single one, so the link carries 2 messages per second of either
-    `RELAY: command accepted` or `RELAY: OFF rejected (guard)` for the entire
-    mission. In particular, Lua calls `deactivate_relay()` on entering its
-    `STATE_RECOVERY` (`doris.lua:1581`, `doris.lua:1601`), which after a latched
-    release produces a continuous 2 Hz stream of guard-rejection warnings.
+16. **Resolved: `RELAY` path flood.** AGT no longer handles Lua's Navigator
+    release named value, so it emits no release `STATUSTEXT` traffic.
 17. **`checkStateTransitions()` never checks freshness.** It reads
     `MissionData_getDorisState()` raw (`main.cpp:384`). If the autopilot link
     dies while the last received value was 4, the AGT stays in `RECOVERY`
@@ -499,10 +384,6 @@ Reported for awareness only; nothing here has been changed.
     `STATE=-1` while the Pi is coming back up — the power relay closes again.
     This is presumably intentional as a recovery mechanism, but it means the
     cut is not one-way within a single boot.
-24. **`RELEASE_MIN_HOLD_SEC` restarts at every reboot.**
-    `relay_controller.cpp:149` sets `timedEventStartTime = millis()` before the
-    persisted state is even applied, so an AGT reset extends the earliest
-    possible release-off by another 25 minutes.
 25. **`status.previousState` is written but never read** outside
     `StateMachine_getStatus()`, which no production caller inspects for that
     field.

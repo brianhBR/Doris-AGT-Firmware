@@ -5,7 +5,7 @@
  *   - GPS -> ArduSub via MAVLink (GPS_INPUT for navigation)
  *   - GPS -> Meshtastic via NMEA (surface tracking)
  *   - Iridium SBD reporting (pre-dive test + recovery)
- *   - Safety failsafes: voltage, leak, heartbeat -> release relay
+ *   - Safety monitoring: voltage, leak, and heartbeat diagnostics
  *   - Status LEDs / strobe in recovery
  *   - Power relay: low-power mode in recovery
  *
@@ -475,8 +475,6 @@ void setupPins() {
 #ifndef NO_RELAYS
     pinMode(RELAY_POWER_MGMT, OUTPUT);
     digitalWrite(RELAY_POWER_MGMT, LOW);
-    pinMode(RELAY_TIMED_EVENT, OUTPUT);
-    digitalWrite(RELAY_TIMED_EVENT, LOW);
 #endif
 
     pinMode(IRIDIUM_PWR_EN, OUTPUT);
@@ -629,7 +627,6 @@ void processCommand(const String& cmd) {
         DebugPrintln(F("version           Print firmware version"));
         DebugPrintln(F("status / gps      State and GPS"));
         DebugPrintln(F("debug             Version, IMEI, and GPS diagnostics"));
-        DebugPrintln(F("release_now       Trigger release relay (failsafe)"));
         DebugPrintln(F("reset             Back to PRE_DIVE"));
         DebugPrintln(F("iridium_test      Send Iridium test message"));
         DebugPrintln(F("reboot            Software reboot"));
@@ -669,11 +666,6 @@ void processCommand(const String& cmd) {
             DebugPrintln(F("IMEI: unknown (Iridium not powered yet)"));
         }
         GPSManager_printDiagnostics();
-        return;
-    }
-    if (cmd == "release_now") {
-        StateMachine_triggerFailsafe(FAILSAFE_MANUAL);
-        DebugPrintln(F("Release latched ON (manual)"));
         return;
     }
     if (cmd == "iridium_test") {

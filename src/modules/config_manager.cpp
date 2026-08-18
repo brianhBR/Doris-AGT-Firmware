@@ -78,7 +78,7 @@ void ConfigManager_setDefaults(SystemConfig* config) {
     config->timedEvent.enabled = false;
     config->timedEvent.useAbsoluteTime = false;
     config->timedEvent.triggerTime = 0;
-    config->timedEvent.durationSeconds = RELEASE_RELAY_DURATION_SEC;
+    config->timedEvent.durationSeconds = LEGACY_TIMED_EVENT_DURATION_SEC;
 
     // Power management
     config->powerSaveVoltage = DEFAULT_POWER_SAVE_VOLTAGE;

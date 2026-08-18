@@ -6,12 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- Navigator/Lua is now the sole ballast-release authority. AGT safety monitors
+  may still enter `RECOVERY` for communications, but they cannot actuate
+  release.
+- `AGT_CAP` now advertises only safe surface power (`0x2`); release-owner bit 0
+  is clear.
+- One fresh Lua `STATE=4` after an observed dive now latches surface
+  authorization and starts the three-minute logging dwell. Subsequent MAVLink
+  gaps or state changes do not cancel the latched shutdown handshake.
+
 ### Fixed
 - GNSS time can no longer move the AGT RTC to an implausible future year or
   apply a correction larger than five minutes after synchronization. RTC
   discipline now processes each new UBX-NAV-PVT message once, validates real
   calendar dates, verifies hardware readback, and reports rejected updates over
   MAVLink instead of propagating them into BlueOS and ArduPilot log timestamps.
+
+### Removed
+- AGT GPIO35 release output, `RELAY` command handling, `REL_STAT` publication,
+  manual `release_now`, and release-latch EEPROM writes. A pool test showed AGT
+  telemetry stopping within about 60 ms of the Navigator's `RELAY=1` command,
+  before Lua reached surface recovery; removing the unused AGT path prevents
+  Navigator-owned releases from entering that failure path.
 
 ## [0.3.5] - 2026-08-12
 

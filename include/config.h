@@ -34,14 +34,12 @@
 #define SUPERCAP_CHG_EN      27  // LTC3225 super capacitor charger enable
 #define SUPERCAP_PGOOD       28  // LTC3225 PGOOD signal input
 #define BUS_VOLTAGE_MON_EN   34  // Bus voltage monitor enable
-#define SPI_CS2              35  // D35 - RELAY_TIMED_EVENT
 #define IRIDIUM_RI           41  // Iridium 9603N Ring Indicator
 #define GNSS_BCKP_BAT_CHG_EN 44  // GNSS backup battery charge enable
 
 // Custom pin assignments
 #define NEOPIXEL_PIN         32  // NeoPixel data pin (GPIO32/AD32)
 #define RELAY_POWER_MGMT     4   // Relay 1: Power management (Navigator/Pi, Camera, Lights)
-#define RELAY_TIMED_EVENT    35  // Relay 2: Drop weight release
 
 // Blue Robotics PSM analog inputs
 #define PSM_VOLTAGE_PIN      11  // GPIO11 (AD11) - PSM voltage analog output
@@ -126,10 +124,8 @@
 #define DIVE_HEARTBEAT_GRACE_MS        90000  // Ignore heartbeat timeout for this long after entering DIVING
 
 // Safe surface power cutoff. Lua is the sole surface authority, but a single
-// STATE=4 packet is never sufficient: require a short consecutive sequence,
-// then keep the payload powered for surface logging before asking BlueOS to
-// shut down cleanly.
-#define SURFACE_RECOVERY_MESSAGES      3      // Consecutive fresh RECOVERY reports
+// One fresh STATE=4 after an observed dive latches surface authorization, then
+// the payload remains powered for logging before BlueOS is asked to shut down.
 #define SURFACE_LOGGING_DWELL_MS       180000 // 3 min of powered surface logging
 // Used only by the independent depth backstop that enters RECOVERY for
 // Iridium/strobe behavior. It does not authorize payload power cutoff.
@@ -146,14 +142,11 @@
 #define BLUEOS_COMPONENT_ID            191    // MAV_COMP_ID_ONBOARD_COMPUTER; shared with mavlink-server so an operator laptop can also ACK
 #define MAVLINK_NAME_POWER_REQUEST     "PWR_SHDN" // AGT -> BlueOS, 1=request
 #define MAVLINK_NAME_POWER_ACK         "PWR_ACK"  // BlueOS -> AGT, 1=ready
-#define MAVLINK_NAME_RELEASE_COMMAND   "RELAY"    // Lua -> AGT, 0=off, 1=on
-#define MAVLINK_NAME_RELEASE_STATUS    "REL_STAT" // AGT -> BlueOS, 0=off, 1=on
 #define MAVLINK_NAME_AGT_CAPABILITY    "AGT_CAP"  // AGT -> BlueOS, capability bitmask
 
 // AGT_CAP bits are represented exactly in NAMED_VALUE_FLOAT for this small mask.
-#define AGT_CAP_RELEASE_OWNER          (1UL << 0) // AGT drives GPIO35 from RELAY
 #define AGT_CAP_SAFE_SURFACE_POWER     (1UL << 1) // Qualified PWR_SHDN/PWR_ACK handshake
-#define AGT_CAPABILITIES               (AGT_CAP_RELEASE_OWNER | AGT_CAP_SAFE_SURFACE_POWER)
+#define AGT_CAPABILITIES               AGT_CAP_SAFE_SURFACE_POWER
 
 // ============================================================================
 // RELAY CONFIGURATION
@@ -166,11 +159,9 @@
 // Timed event (drop weight) relay uses NO (Normally Open) wiring:
 //   Coil OFF (pin LOW / floating) = NO open   = release INACTIVE (safe default)
 //   Coil ON  (pin HIGH)           = NO closes = release ACTIVE
-#define RELAY_COIL_ACTIVE_HIGH       true   // Both relay modules energize on HIGH
+#define RELAY_COIL_ACTIVE_HIGH       true   // Power relay module energizes on HIGH
 #define RELAY_POWER_MGMT_NC          true   // Power relay wired through NC terminal
-#define RELAY_TIMED_EVENT_NC         false  // Timed relay wired through NO terminal
-#define RELEASE_MIN_HOLD_SEC         1500   // Earliest explicit surface-safe RELAY=0 may turn it off
-#define RELEASE_RELAY_DURATION_SEC   7200   // Legacy/timed-event compatibility; Lua mission hold is 2 h
+#define LEGACY_TIMED_EVENT_DURATION_SEC 7200 // Retained only for stored-config compatibility
 
 // ============================================================================
 // IRIDIUM CONFIGURATION

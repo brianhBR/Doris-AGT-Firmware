@@ -1,7 +1,6 @@
 #include "modules/mavlink_interface.h"
 #include "modules/mission_data.h"
 #include "modules/neopixel_controller.h"
-#include "modules/relay_controller.h"
 #include "modules/state_machine.h"
 #include "config.h"
 #include "mavlink_name_field.h"
@@ -25,11 +24,6 @@ static uint8_t systemId = MAVLINK_SYSTEM_ID;
 static uint8_t componentId = MAVLINK_COMPONENT_ID;
 static unsigned long lastHeartbeat = 0;
 static unsigned long lastSafetyStatus = 0;
-// Lua republishes RELAY at 2 Hz for the whole mission, so the outcome is
-// announced only when it changes instead of flooding the link.
-static bool releaseOutcomeReported = false;
-static bool lastReleaseRequestOn = false;
-static bool lastReleaseAccepted = false;
 static_assert(sizeof(MAVLINK_NAME_AGT_CAPABILITY) - 1 <= 10,
               "AGT_CAP name exceeds MAVLink field");
 static_assert(AGT_CAPABILITIES <= 0x00FFFFFFUL,
@@ -321,8 +315,6 @@ void MAVLinkInterface_sendSafetyStatus() {
         return;
     }
     sendNamedFloat(MAVLINK_NAME_AGT_CAPABILITY, (float)AGT_CAPABILITIES);
-    sendNamedFloat(MAVLINK_NAME_RELEASE_STATUS,
-                   RelayController_isReleaseActive() ? 1.0f : 0.0f);
     sendNamedFloat(MAVLINK_NAME_POWER_REQUEST,
                    StateMachine_isShutdownRequested() ? 1.0f : 0.0f);
     lastSafetyStatus = now;
@@ -488,31 +480,6 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
                 MissionData_update_prearm_status((int)nv.value);
             } else if (fromAutopilot && namedValueIs(nv.name, "MIN_TEMP")) {
                 MissionData_update_minimum_temperature(nv.value);
-            } else if (fromAutopilot &&
-                       namedValueIs(nv.name, MAVLINK_NAME_RELEASE_COMMAND)) {
-                bool validOff = nv.value >= -0.1f && nv.value <= 0.1f;
-                bool validOn = nv.value >= 0.9f && nv.value <= 1.1f;
-                if (validOn || validOff) {
-                    bool accepted =
-                        StateMachine_handleReleaseCommand(validOn);
-                    if (!releaseOutcomeReported ||
-                        lastReleaseRequestOn != validOn ||
-                        lastReleaseAccepted != accepted) {
-                        releaseOutcomeReported = true;
-                        lastReleaseRequestOn = validOn;
-                        lastReleaseAccepted = accepted;
-                        const char* text;
-                        if (!accepted) {
-                            text = "RELAY: OFF rejected (guard)";
-                        } else if (validOn) {
-                            text = "RELAY: ON latched";
-                        } else {
-                            text = "RELAY: OFF accepted";
-                        }
-                        MAVLinkInterface_sendStatusText(accepted ? 6 : 4, text);
-                        MAVLinkInterface_sendSafetyStatus();
-                    }
-                }
             } else if (fromBlueOS &&
                        namedValueIs(nv.name, MAVLINK_NAME_POWER_ACK) &&
                        nv.value >= 0.9f && nv.value <= 1.1f) {

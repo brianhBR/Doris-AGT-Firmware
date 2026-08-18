@@ -3,10 +3,10 @@
 Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interface communication and control capabilities for an oceanographic drop camera system.
 
 > **next/0.3 safety architecture:** `RECOVERY` does not directly cut Pi power.
-> Cutoff requires repeated fresh Lua recovery reports, a three-minute powered
-> logging dwell, BlueOS `PWR_ACK`, and a latched 30-second final grace. Depth
+> Cutoff requires one fresh post-dive Lua recovery report, a three-minute
+> powered logging dwell, BlueOS `PWR_ACK`, and a latched 30-second final grace. Depth
 > can enter recovery for communications but cannot authorize power cutoff.
-> GPIO35 release is separately latched/persisted and reported as `REL_STAT`.
+> Ballast release is controlled only by the Navigator; AGT GPIO35 is unused.
 
 ## Features
 
@@ -17,12 +17,11 @@ Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interf
 - **MAVLink Interface** - GPS, battery, and system time forwarding to ArduPilot Navigator via USB
 - **Battery Monitoring** - Blue Robotics PSM via analog inputs (GPIO11/12)
 - **NeoPixel Status Display** - 30 LED status indicators with recovery strobe mode
-- **Relay Control** - Power management relay + electrolytic release relay
-- **Failsafe System** - Automatic release on low voltage, leak, max depth, or lost heartbeat
+- **Relay Control** - GPIO4 payload-power management relay
+- **Safety Monitoring** - Low voltage, leak, and heartbeat recovery diagnostics
 
 ### Advanced Features
 - Configurable reporting intervals for all communication channels
-- Programmable timed event relay (GMT or delay-based triggering)
 - Lua-authorized, acknowledged graceful surface power shutdown
 - Depth-based automatic state transitions from MAVLink sensor data
 - Serial configuration interface with EEPROM persistence
@@ -39,17 +38,16 @@ Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interf
 2. **ArduPilot Navigator** - Connected via USB (Serial, 57600 baud)
 3. **NeoPixel LED Strip** - 30 LEDs connected to GPIO32
 4. **Blue Robotics PSM** - Analog inputs: GPIO11 (voltage), GPIO12 (current)
-5. **Relays** (2x):
-   - Relay 1 (GPIO4): Power management for nonessential systems
-   - Relay 2 (GPIO35): Electrolytic release mechanism
+5. **Payload-power relay** (GPIO4): Power management for nonessential systems
+6. **Navigator release relay**: Ballast release; not connected to the AGT
 
 ### Pin Assignments
 
 | Function | Pin | Description |
 |----------|-----|-------------|
 | NeoPixel Data | GPIO32 | WS2812 LED strip control |
-| Relay 1 | GPIO4 | Power management relay |
-| Relay 2 | GPIO35 | Release relay |
+| Payload power | GPIO4 | Power management relay |
+| GPIO35 | Unused | Do not connect the ballast release |
 | Meshtastic TX | D39 (J10 pin 1) | NMEA to RAK4603 J10 RX |
 | Meshtastic RX | D40 (J10 pin 2) | From RAK4603 J10 TX (optional) |
 | MAVLink | USB Serial | To/from Navigator (57600 baud) |
@@ -114,14 +112,13 @@ Connect to the AGT via USB serial (57600 baud) and use these commands:
 | `status` | Show state machine status | `status` |
 | `gps` | Show GPS position or satellite count | `gps` |
 | `debug` | Firmware version, RockBLOCK IMEI, and GPS diagnostics | `debug` |
-| `release_now` | Trigger failsafe (fire release relay) | `release_now` |
 | `set_leak <0\|1>` | Set/clear leak flag for testing | `set_leak 1` |
 | `set_iridium_interval <seconds>` | Set Iridium reporting interval | `set_iridium_interval 600` |
 | `set_meshtastic_interval <seconds>` | Set Meshtastic update interval | `set_meshtastic_interval 3` |
 | `set_mavlink_interval <ms>` | Set MAVLink update interval | `set_mavlink_interval 1000` |
 | `enable_<feature>` | Enable a feature | `enable_mavlink` |
 | `disable_<feature>` | Disable a feature | `disable_iridium` |
-| `set_timed_event <gmt\|delay> <time> <duration_s>` | Configure timed relay event | See below |
+| `set_timed_event <gmt\|delay> <time> <duration_s>` | Update legacy stored fields; no AGT output | See below |
 | `set_power_save_voltage <volts>` | Set low voltage threshold | `set_power_save_voltage 11.5` |
 | `mesh_test` | Send test text to Meshtastic | `mesh_test` |
 | `mesh_test_gps` | Send test NMEA coordinates | `mesh_test_gps` |
@@ -137,9 +134,8 @@ Connect to the AGT via USB serial (57600 baud) and use these commands:
 ### Timed Event Configuration
 
 The legacy timed-event fields remain readable for configuration compatibility,
-but next/0.3 release output is latched and does not automatically turn off at a
-configured duration. Use Lua `RELAY=1/0` and the guarded release protocol for
-missions.
+but they do not drive an AGT output. Configure release timing through Lua and
+the Navigator.
 
 **GMT Mode** (absolute time):
 ```
@@ -178,14 +174,11 @@ Timed Event:          Legacy/disabled (compatibility hold 7200s)
 
 ### System States
 
-| State | Relay 1 | Relay 2 | Description |
-|-------|---------|---------|-------------|
-| PRE_MISSION | ON | OFF | Initial setup, waiting for operator |
-| SELF_TEST | ON | OFF | System verification, Iridium can TX |
-| MISSION | ON | OFF* | Underwater, failsafe monitoring active |
-| RECOVERY | ON pending handshake | Latched independently | Surface, strobe, Iridium; power cuts only after qualification + BlueOS ACK |
-
-*Relay 2 fires on failsafe trigger during MISSION.
+| State | Payload power | Description |
+|-------|---------------|-------------|
+| PRE_DIVE | ON | Initial setup, waiting for operator |
+| DIVING | ON | Underwater, safety monitoring active |
+| RECOVERY | ON pending handshake | Surface strobe; power cuts only after qualification + BlueOS ACK |
 
 ### Failsafe System
 
@@ -197,12 +190,10 @@ During MISSION state, the AGT monitors these conditions:
 | Leak | Detected | MAVLink or `set_leak` command |
 | Max Depth | > 200m | MAVLink (SCALED_PRESSURE/VFR_HUD) |
 | No Heartbeat | > 30s without | MAVLink HEARTBEAT |
-| Manual | `release_now` | Serial command |
 
-When triggered while diving: release relay latches ON and system enters
-RECOVERY. It remains ON through ascent and can only be cleared by an explicit
-Lua `RELAY=0` after the 1500-second minimum hold and surface qualification.
-The active marker is persisted across AGT reboot.
+When triggered while diving, the AGT records the source and enters `RECOVERY`
+for strobe and communications behavior. It does not fire ballast release;
+release remains exclusively under Lua/Navigator control.
 
 ### NeoPixel Status
 
@@ -316,10 +307,8 @@ The AGT receives and processes:
 - Verify PSM is powered from battery sense side
 
 ### Release Relay Not Firing
-- Relay only fires during MISSION state on failsafe trigger
-- Test with `release_now` command (triggers failsafe → RECOVERY)
-- Check GPIO35 wiring
-- Verify relay coil powered from battery (not AGT 3.3V)
+- Diagnose the Navigator relay configuration and Lua mission command.
+- Confirm the release is not connected to AGT GPIO35.
 
 ## File Structure
 

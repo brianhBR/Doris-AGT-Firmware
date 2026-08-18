@@ -147,34 +147,12 @@
   surface qualification, BlueOS `PWR_ACK`, and the final grace period.
 - AGT boot/reset always drives the powered state.
 
-### 8. Relay Module 2 (Release — Drop Weight)
+### 8. Release Relay (Navigator Only)
 
-| Relay Module | AGT Pin | Signal | Notes |
-|--------------|---------|--------|-------|
-| Signal IN | GPIO35 (AD35) | Control | 3.3V trigger signal |
-| Relay Coil VCC | Battery + | Power | 12-14.8V from 4S LiPo |
-| Relay Coil GND | Battery - | Ground | High voltage ground |
-| Load | Electrolytic Release | Switched | Battery voltage to release mechanism |
-
-**Load:** Electrolytic/galvanic drop weight ballast release mechanism
-
-**Control Logic:**
-- The AGT drives GPIO35 on source-validated Lua `RELAY=1`. Lua drives its own
-  Navigator relay from the same request, so wire the actuator to exactly one of
-  the two outputs — never both, since two independent outputs into one relay
-  input is not a supported configuration. Cutting Pi power with Relay 1 is only
-  permitted when the actuator is wired here.
-- ON latches, tolerates repeated commands, and is persisted across AGT reboot.
-- `RELAY=0` can clear it only after the 1500-second minimum hold and independent
-  surface-safe qualification; it does not stop automatically at 1500 seconds.
-- Manual, Iridium, and carefully gated DIVING failsafes use the same controller.
-- Release state is independent from GPIO4 Pi power control.
-
-**IMPORTANT:**
-- GPIO35 provides LOW POWER 3.3V trigger signal only
-- Relay coil must be powered by BATTERY VOLTAGE (12-14.8V)
-- Relay switches high current battery voltage to electrolytic release
-- Use relay rated for extended activation and high current
+Connect the electrolytic/galvanic ballast release only to the Navigator relay
+output configured by the Doris frame. Do not connect a release relay input to
+AGT GPIO35. AGT firmware neither configures nor drives GPIO35 and does not
+mirror Lua's `RELAY` command.
 
 ## Power System
 
@@ -305,8 +283,8 @@ IMPORTANT NOTES:
 - [ ] NeoPixels display status correctly
 - [ ] Meshtastic receives NMEA (`mesh_test_gps`)
 - [ ] Navigator receives MAVLink GPS (57600 baud)
-- [ ] Relay 1 switches with state changes
-- [ ] Relay 2 triggers on `release_now`
+- [ ] AGT payload-power relay switches with the shutdown handshake
+- [ ] Navigator release relay triggers through the mission/Lua procedure
 - [ ] Configuration saves to EEPROM
 - [ ] System survives power cycle
 

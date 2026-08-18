@@ -41,7 +41,9 @@ void test_defaults_timed_event_disabled(void) {
     SystemConfig cfg;
     ConfigManager_setDefaults(&cfg);
     TEST_ASSERT_FALSE(cfg.timedEvent.enabled);
-    TEST_ASSERT_EQUAL(RELEASE_RELAY_DURATION_SEC, cfg.timedEvent.durationSeconds);
+    TEST_ASSERT_EQUAL(
+        LEGACY_TIMED_EVENT_DURATION_SEC,
+        cfg.timedEvent.durationSeconds);
 }
 
 void test_defaults_power_save_voltage(void) {
@@ -82,9 +84,8 @@ void test_defaults_checksum_is_valid(void) {
 
 void test_agt_capability_bits_are_stable(void) {
     TEST_ASSERT_TRUE(sizeof(MAVLINK_NAME_AGT_CAPABILITY) - 1 <= 10);
-    TEST_ASSERT_EQUAL_UINT32(1UL, AGT_CAP_RELEASE_OWNER);
     TEST_ASSERT_EQUAL_UINT32(2UL, AGT_CAP_SAFE_SURFACE_POWER);
-    TEST_ASSERT_EQUAL_UINT32(3UL, AGT_CAPABILITIES);
+    TEST_ASSERT_EQUAL_UINT32(2UL, AGT_CAPABILITIES);
 }
 
 // ---------------------------------------------------------------------------
