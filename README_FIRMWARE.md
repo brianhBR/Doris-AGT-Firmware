@@ -358,7 +358,7 @@ Doris-AGT-Firmware/
 
 Edit [config.h](include/config.h):
 ```cpp
-#define IRIDIUM_SEND_INTERVAL_MS   600000  // 10 minutes
+#define DEFAULT_IRIDIUM_INTERVAL   300000  // 5 minutes
 #define MESHTASTIC_UPDATE_MS       1000    // 1 second
 #define MAVLINK_UPDATE_MS          1000    // 1 Hz
 ```

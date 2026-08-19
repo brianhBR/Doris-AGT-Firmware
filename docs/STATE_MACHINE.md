@@ -102,11 +102,14 @@ Iridium session can block firmware execution for many minutes in poor
 conditions; running it first previously delayed the three-minute dwell and
 clean shutdown. Manual operator tests remain available before cutoff.
 
-The schedule continues aging while shutdown completes. After cutoff, a located
-report that is already due goes out immediately, then repeats every
-`iridiumInterval`. Without a fix, the first unlocated report becomes due
-`IRIDIUM_NOFIX_FIRST_MS` (2 minutes) after entering `RECOVERY`, and repeats
-every `IRIDIUM_NOFIX_REPEAT_MS` (30 minutes).
+After cutoff, the first report goes out immediately whether or not GPS has a
+fix. Located and unlocated reports then repeat on the same configured
+`iridiumInterval`. A fix arriving after an unlocated report triggers an
+immediate located upgrade.
+
+Each reporting session makes at most two 90-second SBD attempts. The interval
+is measured from the end of the session, so a long transaction does not cause
+an immediate catch-up transmission.
 
 Both report types use DORIS ASCII protocol B:
 
