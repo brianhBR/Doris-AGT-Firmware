@@ -23,6 +23,7 @@
 #include <Wire.h>
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #include <IridiumSBD.h>
+#include "config.h"
 #include "utils/SoftwareSerial.h"
 
 // ============================================================================
@@ -535,7 +536,7 @@ void setup() {
     pinMode(iridiumNA, INPUT);
     Serial1.begin(19200);
     pModem->setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
-    pModem->adjustSendReceiveTimeout(180);
+    pModem->adjustSendReceiveTimeout(IRIDIUM_SEND_TIMEOUT_SECONDS);
     Serial.println(F("[Iridium] Pins configured, init deferred until first send"));
 
     // Meshtastic NMEA output on SoftwareSerial

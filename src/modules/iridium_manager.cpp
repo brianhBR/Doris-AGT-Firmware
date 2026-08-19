@@ -177,7 +177,7 @@ void IridiumManager_configure(IridiumSBD* modem) {
     pinMode(IRIDIUM_RI, INPUT);
     pinMode(IRIDIUM_NA, INPUT);
     modemPtr->setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
-    modemPtr->adjustSendReceiveTimeout(180);
+    modemPtr->adjustSendReceiveTimeout(IRIDIUM_SEND_TIMEOUT_SECONDS);
     modemPtr->endSerialPort();
     modemConfigured = true;
 }
@@ -209,7 +209,7 @@ bool IridiumManager_init(IridiumSBD* modem) {
     MAVLinkInterface_serviceDelay(1000);
 
     modemPtr->setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
-    modemPtr->adjustSendReceiveTimeout(180);
+    modemPtr->adjustSendReceiveTimeout(IRIDIUM_SEND_TIMEOUT_SECONDS);
 
     DebugPrintln(F("Iridium: Starting modem..."));
     int err = modemPtr->begin();
@@ -299,14 +299,6 @@ static bool iridiumSendText(const char* message) {
     }
     modemReady = true;
     cacheIMEI();
-
-    int csq = -1;
-    err = modemPtr->getSignalQuality(csq);
-    if (err == ISBD_SUCCESS) {
-        DebugPrint(F("Iridium: Signal quality (CSQ): "));
-        DebugPrint(csq);
-        DebugPrintln(F("/5"));
-    }
 
     bool success = false;
     for (int attempt = 1; attempt <= MAX_IRIDIUM_RETRY; attempt++) {
@@ -543,14 +535,6 @@ bool IridiumManager_sendDorisReport(const DorisReport* report,
     }
     modemReady = true;
     cacheIMEI();
-
-    int csq = -1;
-    err = modemPtr->getSignalQuality(csq);
-    if (err == ISBD_SUCCESS) {
-        DebugPrint(F("Iridium: Signal (CSQ): "));
-        DebugPrint(csq);
-        DebugPrintln(F("/5"));
-    }
 
     DebugPrint(F("Iridium: Sending Doris report ("));
     DebugPrint(txLen);

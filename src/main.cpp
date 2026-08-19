@@ -427,10 +427,10 @@ void loop() {
         }
     }
 
-    // Iridium reporting (RECOVERY only). A position report goes out as soon as
-    // there is a fix. Without one the vehicle used to stay silent for as long
-    // as acquisition took, so an unlocated report still tells the operator it
-    // surfaced, with health but no position.
+    // Iridium reporting (RECOVERY only). The first post-cutoff report is due
+    // immediately, with or without a position. Both report types then use the
+    // configured interval, and a newly acquired fix upgrades an unlocated
+    // report immediately.
     if (sysConfig.enableIridium && modemPtr && StateMachine_canTransmitIridium()) {
         bool haveFix = GPSManager_hasFix();
         bool located = haveFix &&
@@ -438,7 +438,7 @@ void loop() {
                                        sysConfig.iridiumInterval);
         bool unlocated = !haveFix &&
             IridiumSchedule_unlocatedDue(&iridiumSchedule, now,
-                                         StateMachine_getTimeInState());
+                                         sysConfig.iridiumInterval);
 
         if (located || unlocated) {
             if (sysConfig.enableNeoPixels) {

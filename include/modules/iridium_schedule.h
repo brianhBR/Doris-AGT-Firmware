@@ -5,12 +5,10 @@
 
 // When to send an Iridium report during RECOVERY.
 //
-// A position report goes out as soon as there is a fix. Without one the
-// vehicle used to stay silent for as long as acquisition took, measured at up
-// to 38 minutes after surfacing, so an unlocated report carries state and
-// health instead. Repeats of that report are deliberately far apart: Iridium
-// and GPS share one antenna, so every session interrupts acquisition and a
-// chatty schedule would make the fix take longer still.
+// The first report goes out as soon as post-cutoff transmission is allowed,
+// whether or not a position is available. Both report types then use the same
+// configured interval. A fix arriving after an unlocated report upgrades it
+// immediately.
 struct IridiumSchedule {
     unsigned long lastReportMs;
     bool sentSinceRecovery;
@@ -28,10 +26,8 @@ void IridiumSchedule_noteSent(IridiumSchedule* s, unsigned long now,
 bool IridiumSchedule_locatedDue(const IridiumSchedule* s, unsigned long now,
                                 unsigned long intervalMs);
 
-// True when an unlocated report is due, assuming no fix is available. The
-// first one is timed from entry to RECOVERY so a failsafe surfacing reports on
-// the same schedule as a normal one.
+// True when an unlocated report is due, assuming no fix is available.
 bool IridiumSchedule_unlocatedDue(const IridiumSchedule* s, unsigned long now,
-                                  uint32_t secondsInRecovery);
+                                  unsigned long intervalMs);
 
 #endif // IRIDIUM_SCHEDULE_H

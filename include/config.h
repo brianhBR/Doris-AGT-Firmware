@@ -71,13 +71,6 @@
 // TIMING CONFIGURATION
 // ============================================================================
 #define GPS_FIX_TIMEOUT_MS         180000  // 3 minutes
-#define IRIDIUM_SEND_INTERVAL_MS   600000  // 10 minutes
-// Unlocated reports while waiting for a fix in RECOVERY. The repeat is
-// deliberately long: Iridium and GPS share one antenna, so every SBD session
-// interrupts acquisition. Reporting every few minutes through a 38-minute wait
-// would interrupt it repeatedly and could make the fix take longer still.
-#define IRIDIUM_NOFIX_FIRST_MS     120000  // First "surfaced, no fix" report
-#define IRIDIUM_NOFIX_REPEAT_MS    1800000 // 30 minutes between repeats
 #define MESHTASTIC_UPDATE_MS       10000   // 10 seconds (Meshtastic mesh relay, low rate OK)
 #define MAVLINK_UPDATE_MS          200     // 5 Hz
 #define PSM_UPDATE_MS              5000    // 5 seconds
@@ -167,8 +160,8 @@
 // IRIDIUM CONFIGURATION
 // ============================================================================
 #define IRIDIUM_SLEEP_ENABLED    true
-#define MAX_IRIDIUM_RETRY        3
-#define IRIDIUM_SIGNAL_TIMEOUT   180  // seconds
+#define MAX_IRIDIUM_RETRY        2
+#define IRIDIUM_SEND_TIMEOUT_SECONDS 90
 
 // ============================================================================
 // GPS CONFIGURATION

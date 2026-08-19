@@ -25,8 +25,7 @@ bool IridiumSchedule_locatedDue(const IridiumSchedule* s, unsigned long now,
 }
 
 bool IridiumSchedule_unlocatedDue(const IridiumSchedule* s, unsigned long now,
-                                  uint32_t secondsInRecovery) {
-    if (secondsInRecovery < IRIDIUM_NOFIX_FIRST_MS / 1000UL) return false;
+                                  unsigned long intervalMs) {
     if (!s->sentSinceRecovery) return true;
-    return now - s->lastReportMs >= IRIDIUM_NOFIX_REPEAT_MS;
+    return now - s->lastReportMs >= intervalMs;
 }

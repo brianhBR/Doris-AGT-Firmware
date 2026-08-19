@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - One fresh Lua `STATE=4` after an observed dive now latches surface
   authorization and starts the three-minute logging dwell. Subsequent MAVLink
   gaps or state changes do not cancel the latched shutdown handshake.
+- Located and unlocated recovery reports now transmit immediately after payload
+  cutoff and repeat on the same configured interval. A newly acquired fix still
+  triggers an immediate located upgrade.
+- Automatic Iridium sessions now make at most two 90-second SBD attempts and
+  skip the unused signal-quality query before transmission.
 
 ### Fixed
 - GNSS time can no longer move the AGT RTC to an implausible future year or
