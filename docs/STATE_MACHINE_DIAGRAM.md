@@ -222,10 +222,12 @@ a premature or replayed `PWR_ACK` cannot pre-arm the sequence. A repeated ACK
 after the first is idempotent and does not restart the grace timer.
 
 Once `POWER_CUT` is reached the relay is never re-closed by this function.
-Power is restored only by a reset/state entry or by a boot. It is also the
-point where `StateMachine_canTransmitIridium()` becomes true. This ordering
-prevents a blocking satellite session from delaying the logging dwell,
-BlueOS ACK, or electrical cutoff.
+Power is restored only by a reset/state entry or by a boot.
+
+`StateMachine_canTransmitIridium()` is true throughout `RECOVERY`, including
+before cutoff. During a blocking SBD session, `ISBDCallback` parses `PWR_ACK`
+and calls `StateMachine_updateSurfacePower()` so the handshake can still
+complete. Failed sessions do not advance the reporting interval.
 
 ## 4. Release ownership
 

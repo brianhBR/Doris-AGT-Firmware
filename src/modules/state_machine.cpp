@@ -228,11 +228,9 @@ void StateMachine_triggerFailsafe(FailsafeSource source) {
 }
 
 bool StateMachine_canTransmitIridium() {
-    // Automatic recovery reports use a blocking modem transaction. Starting
-    // one before cutoff can postpone the logging dwell and shutdown handshake
-    // for many minutes when satellite acquisition is poor.
-    return status.currentState == STATE_RECOVERY &&
-           !status.nonessentialsPowered;
+    // Locating is independent of payload cutoff. ISBDCallback keeps the
+    // shutdown handshake alive during a blocking SBD session.
+    return status.currentState == STATE_RECOVERY;
 }
 
 bool StateMachine_shouldShutdownNonessentials() {

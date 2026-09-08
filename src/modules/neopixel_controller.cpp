@@ -305,6 +305,12 @@ void NeoPixelController_update() {
         case LED_MODE_RECOVERY:
             blinkOn = blinkPattern(RECOVERY_STROBE_PERIOD_MS, RECOVERY_STROBE_ON_MS, true, 0xFFFFFF, true);
             break;
+
+        case LED_MODE_IRIDIUM:
+            // Faster than the recovery beacon so a send is visually distinct
+            // while ISBDCallback keeps NeoPixelController_update() running.
+            blinkOn = blinkPattern(400, 80, true, 0xFFFFFF, true);
+            break;
     }
 
     if (blinkOn != lastBlinkOn) needsShow = true;
@@ -342,14 +348,4 @@ void NeoPixelController_setBrightness(uint8_t b) {
 void NeoPixelController_clear() {
     memset(ledBuffer, 0, sizeof(ledBuffer));
     ws_show();
-}
-
-void NeoPixelController_setSolidWhite() {
-    for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
-        uint16_t off = (i + 1) * BYTES_PER_LED;
-        ledBuffer[off] = 0; ledBuffer[off+1] = 0;
-        ledBuffer[off+2] = 0; ledBuffer[off+3] = 255;
-    }
-    ws_show();
-    currentMode = LED_MODE_RECOVERY;
 }

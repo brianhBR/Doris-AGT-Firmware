@@ -15,9 +15,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - One fresh Lua `STATE=4` after an observed dive now latches surface
   authorization and starts the three-minute logging dwell. Subsequent MAVLink
   gaps or state changes do not cancel the latched shutdown handshake.
-- Located and unlocated recovery reports now transmit immediately after payload
-  cutoff and repeat on the same configured interval. A newly acquired fix still
-  triggers an immediate located upgrade.
 - Automatic Iridium sessions now make at most two 90-second SBD attempts and
   skip the unused signal-quality query before transmission.
 
@@ -34,6 +31,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   telemetry stopping within about 60 ms of the Navigator's `RELAY=1` command,
   before Lua reached surface recovery; removing the unused AGT path prevents
   Navigator-owned releases from entering that failure path.
+
+## [0.3.11] - 2026-09-08
+
+### Changed
+- Automatic Iridium reporting now starts in `RECOVERY` even while the payload
+  is still powered. Pi cutoff remains ack-gated.
+- `ISBDCallback` now parses inbound MAVLink (so `PWR_ACK`/`STATE` can complete
+  the handshake during an SBD session), republishes `PWR_SHDN`, and keeps the
+  NeoPixel recovery strobe animating. A faster white strobe (`LED_MODE_IRIDIUM`)
+  replaces the frozen solid-white freeze during a send.
+- Failed automatic Iridium sessions retry after `IRIDIUM_RETRY_BACKOFF_MS`
+  instead of being marked as sent for a full reporting interval.
+- `AGT_DEBUG` now reports `enableIridium` and the reporting interval.
+- Located and unlocated recovery reports now transmit immediately on entering
+  `RECOVERY` and repeat on the same configured interval. A newly acquired fix
+  still triggers an immediate located upgrade.
 
 ## [0.3.5] - 2026-08-12
 

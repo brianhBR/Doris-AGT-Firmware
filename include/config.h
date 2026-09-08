@@ -162,6 +162,9 @@
 #define IRIDIUM_SLEEP_ENABLED    true
 #define MAX_IRIDIUM_RETRY        2
 #define IRIDIUM_SEND_TIMEOUT_SECONDS 90
+// After a failed automatic session, wait this long before trying again.
+// Success still uses sysConfig.iridiumInterval.
+#define IRIDIUM_RETRY_BACKOFF_MS 30000
 
 // ============================================================================
 // GPS CONFIGURATION

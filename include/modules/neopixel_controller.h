@@ -12,6 +12,7 @@
 // DIVING:    LEDs off               — underwater, save power
 // LUA:       Lua-commanded pattern  — Lua can override during dive if needed
 // RECOVERY:  Flashing white beacon  — surface recovery strobe
+// IRIDIUM:   Faster white strobe    — 9603 session in progress
 
 enum LEDMode {
     LED_MODE_STANDBY,
@@ -19,7 +20,8 @@ enum LEDMode {
     LED_MODE_ERROR,
     LED_MODE_DIVING,
     LED_MODE_LUA,
-    LED_MODE_RECOVERY
+    LED_MODE_RECOVERY,
+    LED_MODE_IRIDIUM
 };
 
 // Patterns available via Lua LED commands
@@ -44,10 +46,5 @@ bool NeoPixelController_isLuaActive();
 
 void NeoPixelController_setBrightness(uint8_t brightness);
 void NeoPixelController_clear();
-
-// Set all LEDs to solid full-brightness white and latch immediately.
-// Used before blocking operations (e.g. Iridium send) so the LEDs
-// remain lit while the main loop is frozen.
-void NeoPixelController_setSolidWhite();
 
 #endif // NEOPIXEL_CONTROLLER_H

@@ -76,9 +76,9 @@ powered and Lua continues sending telemetry into the active MCAP.
 Depth and GPS are deliberately absent from the cutoff vote. The independent
 shallow-depth/liveness backstop still enters `RECOVERY` so the strobe can
 operate if Lua is wedged, but it cannot start the power dwell. Automatic
-Iridium reporting now waits for payload cutoff, so a backstop-only recovery
-does not start a blocking modem session. This keeps surface detection and
-payload shutdown as separate decisions.
+Iridium reporting starts in `RECOVERY` regardless of cutoff, so a backstop-only
+or deck abort still locates the vehicle. Payload shutdown remains a separate
+ack-gated decision.
 
 After the dwell:
 
@@ -96,16 +96,18 @@ safe across rollover.
 
 ## Iridium reporting in RECOVERY
 
-Automatic Iridium reporting starts only after the BlueOS handshake, final
-30-second grace, and physical payload-relay cutoff are complete. A synchronous
-Iridium session can block firmware execution for many minutes in poor
-conditions; running it first previously delayed the three-minute dwell and
-clean shutdown. Manual operator tests remain available before cutoff.
+Automatic Iridium reporting starts as soon as the AGT is in `RECOVERY`,
+whether or not the payload-power handshake has completed. Payload cutoff
+remains ack-gated: no `PWR_ACK` means the Pi stays up. `ISBDCallback` parses
+inbound MAVLink (`PWR_ACK`, `STATE`, voltage, leak bookkeeping), republishes
+`PWR_SHDN`, and keeps the recovery/Iridium LED animation running during a
+blocking SBD session.
 
-After cutoff, the first report goes out immediately whether or not GPS has a
-fix. Located and unlocated reports then repeat on the same configured
-`iridiumInterval`. A fix arriving after an unlocated report triggers an
-immediate located upgrade.
+The first report goes out immediately whether or not GPS has a fix. Successful
+located and unlocated reports then repeat on the same configured
+`iridiumInterval`. A failed session retries after `IRIDIUM_RETRY_BACKOFF_MS`
+and is not treated as sent. A fix arriving after an unlocated report triggers
+an immediate located upgrade.
 
 Each reporting session makes at most two 90-second SBD attempts. The interval
 is measured from the end of the session, so a long transaction does not cause

@@ -74,8 +74,8 @@ void StateMachine_reset();
 // Physical release remains exclusively under Navigator/Lua control.
 void StateMachine_triggerFailsafe(FailsafeSource source);
 
-// Automatic recovery transmission is allowed only after the acknowledged
-// payload-power cutoff. Manual operator tests are gated separately.
+// Automatic recovery transmission is allowed in RECOVERY even while the
+// payload is still powered. Cutoff remains ack-gated and independent.
 bool StateMachine_canTransmitIridium();
 
 // Recovery queries

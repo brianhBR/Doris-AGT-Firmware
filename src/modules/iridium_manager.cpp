@@ -3,8 +3,11 @@
 #include "modules/iridium_message.h"
 #include "modules/mavlink_interface.h"
 #include "modules/state_machine.h"
+#include "modules/neopixel_controller.h"
 #include "config.h"
 #include <Arduino.h>
+
+extern SystemConfig sysConfig;
 
 static IridiumSBD* modemPtr = nullptr;
 static bool modemConfigured = false;
@@ -73,10 +76,11 @@ bool ISBDCallback() {
         digitalWrite(LED_WHITE, HIGH);
     else
         digitalWrite(LED_WHITE, LOW);
-    // The IridiumSBD library calls this repeatedly while it blocks (modem
-    // startup, signal poll, SBDIX). Service the MAVLink/USB link so its RX
-    // buffer can't overflow during the session (which would wedge command
-    // handling afterwards) and the GCS keeps seeing heartbeats.
+    if (sysConfig.enableNeoPixels) {
+        NeoPixelController_update();
+    }
+    // Keep heartbeats, PWR_SHDN, and inbound PWR_ACK/STATE flowing while the
+    // 9603 blocks. GPS/antenna commands are denied until this returns.
     MAVLinkInterface_serviceLink();
     return true;
 }

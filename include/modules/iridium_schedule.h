@@ -5,12 +5,13 @@
 
 // When to send an Iridium report during RECOVERY.
 //
-// The first report goes out as soon as post-cutoff transmission is allowed,
-// whether or not a position is available. Both report types then use the same
-// configured interval. A fix arriving after an unlocated report upgrades it
-// immediately.
+// The first report goes out as soon as RECOVERY transmission is allowed,
+// whether or not a position is available. Successful reports then use the
+// configured interval. A failed session retries after IRIDIUM_RETRY_BACKOFF_MS.
+// A fix arriving after an unlocated report upgrades it immediately.
 struct IridiumSchedule {
     unsigned long lastReportMs;
+    unsigned long lastAttemptMs;
     bool sentSinceRecovery;
     bool lastReportLocated;
 };
@@ -18,9 +19,12 @@ struct IridiumSchedule {
 // Call on every entry to RECOVERY, whichever path got there.
 void IridiumSchedule_reset(IridiumSchedule* s);
 
-// Record a report of either kind.
+// Record a successful report of either kind.
 void IridiumSchedule_noteSent(IridiumSchedule* s, unsigned long now,
                               bool located);
+
+// Record a failed session so the next retry waits IRIDIUM_RETRY_BACKOFF_MS.
+void IridiumSchedule_noteFailed(IridiumSchedule* s, unsigned long now);
 
 // True when a position report is due, assuming a fix is available.
 bool IridiumSchedule_locatedDue(const IridiumSchedule* s, unsigned long now,

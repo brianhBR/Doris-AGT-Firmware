@@ -191,7 +191,7 @@ void test_diving_keeps_nonessentials_powered(void) {
 // Iridium transmission rules
 // ---------------------------------------------------------------------------
 
-void test_iridium_blocked_until_recovery_payload_cutoff(void) {
+void test_iridium_blocked_until_recovery(void) {
     StateMachine_init();
     TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
 
@@ -199,7 +199,8 @@ void test_iridium_blocked_until_recovery_payload_cutoff(void) {
     TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
 
     StateMachine_enterRecovery();
-    TEST_ASSERT_FALSE(StateMachine_canTransmitIridium());
+    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
+    TEST_ASSERT_TRUE(RelayController_getPowerManagement());
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +418,9 @@ void test_boot_at_surface_cannot_request_shutdown(void) {
     finishSurfaceDwell();
     TEST_ASSERT_FALSE(StateMachine_isShutdownRequested());
     TEST_ASSERT_TRUE(RelayController_getPowerManagement());
+    // Locating is independent of the ack-gated cutoff: a deck abort still
+    // transmits even though the Pi stays powered.
+    TEST_ASSERT_TRUE(StateMachine_canTransmitIridium());
 }
 
 // ---------------------------------------------------------------------------
@@ -650,7 +654,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_diving_keeps_nonessentials_powered);
 
     // Transmission rules
-    RUN_TEST(test_iridium_blocked_until_recovery_payload_cutoff);
+    RUN_TEST(test_iridium_blocked_until_recovery);
     RUN_TEST(test_iridium_allowed_after_recovery_payload_cutoff);
 
     // State tracking

@@ -37,15 +37,15 @@ void MAVLinkInterface_sendStatusText(uint8_t severity, const char* text);
 // once it has been cached. Called at boot and by MAVLinkInterface_sendDebug().
 void MAVLinkInterface_sendVersion();
 
-// Dump AGT debug info as STATUSTEXT: firmware version, RockBLOCK IMEI, and the
-// GPS diagnostics. Triggered on demand via MAVLINK_CMD_AGT_DEBUG.
+// Dump AGT debug info as STATUSTEXT: firmware version, RockBLOCK IMEI,
+// Iridium enable/interval, and GPS diagnostics. Triggered on demand via
+// MAVLINK_CMD_AGT_DEBUG. Do not call from ISBDCallback (GPS I2C / antenna).
 void MAVLinkInterface_sendDebug();
 
-// Service the MAVLink/USB link during a long blocking operation. Drains (and
-// discards) inbound bytes so the UART RX buffer can't overflow and wedge the
-// receiver, and emits a throttled heartbeat. Commands are intentionally NOT
-// dispatched here (see note in the .cpp). Call this frequently (<~50 ms apart)
-// from any code that blocks the main loop, e.g. the Iridium SBD path.
+// Service the MAVLink/USB link during a long blocking operation (Iridium SBD).
+// Parses inbound MAVLink so PWR_ACK/STATE can complete the shutdown handshake,
+// emits heartbeat + PWR_SHDN (existing 1 s cadence), and advances payload-power
+// timers. COMMAND_LONG is denied except LED_CONTROL until the session ends.
 void MAVLinkInterface_serviceLink();
 
 // Blocking delay of `ms` milliseconds that keeps the link serviced throughout

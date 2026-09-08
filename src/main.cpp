@@ -47,7 +47,7 @@ SystemConfig sysConfig;
 extern Apollo3RTC rtc;
 Apollo3RTC& myRTC = rtc;
 
-static IridiumSchedule iridiumSchedule = {0, false, true};
+static IridiumSchedule iridiumSchedule = {0, 0, false, true};
 static SystemState lastSeenState = STATE_PRE_DIVE;
 unsigned long lastMeshtasticUpdate = 0;
 unsigned long lastMAVLinkUpdate = 0;
@@ -377,7 +377,7 @@ void loop() {
             MAVLinkInterface_sendStatusText(6, "IRIDIUM: Test starting");
 
             if (sysConfig.enableNeoPixels) {
-                NeoPixelController_setSolidWhite();
+                NeoPixelController_setMode(LED_MODE_IRIDIUM);
             }
 
             GPSData gpsData = GPSManager_getData();
@@ -385,7 +385,11 @@ void loop() {
             MissionData_get(&mission);
 
             bool ok = IridiumManager_sendMissionReport(&gpsData, &mission);
-            IridiumSchedule_noteSent(&iridiumSchedule, millis(), true);
+            if (ok) {
+                IridiumSchedule_noteSent(&iridiumSchedule, millis(), true);
+            } else {
+                IridiumSchedule_noteFailed(&iridiumSchedule, millis());
+            }
 
             if (ok) {
                 DebugPrintln(F("==================================="));
@@ -427,10 +431,11 @@ void loop() {
         }
     }
 
-    // Iridium reporting (RECOVERY only). The first post-cutoff report is due
-    // immediately, with or without a position. Both report types then use the
-    // configured interval, and a newly acquired fix upgrades an unlocated
-    // report immediately.
+    // Iridium reporting (RECOVERY only, independent of payload cutoff). The
+    // first report is due immediately, with or without a position. Both report
+    // types then use the configured interval, and a newly acquired fix upgrades
+    // an unlocated report immediately. Failed sessions wait
+    // IRIDIUM_RETRY_BACKOFF_MS instead of the full interval.
     if (sysConfig.enableIridium && modemPtr && StateMachine_canTransmitIridium()) {
         bool haveFix = GPSManager_hasFix();
         bool located = haveFix &&
@@ -442,20 +447,25 @@ void loop() {
 
         if (located || unlocated) {
             if (sysConfig.enableNeoPixels) {
-                NeoPixelController_setSolidWhite();
+                NeoPixelController_setMode(LED_MODE_IRIDIUM);
             }
 
             MissionData mission;
             MissionData_get(&mission);
 
+            bool ok;
             if (located) {
                 GPSData gpsData = GPSManager_getData();
-                IridiumManager_sendMissionReport(&gpsData, &mission);
+                ok = IridiumManager_sendMissionReport(&gpsData, &mission);
             } else {
-                IridiumManager_sendStatusReport(
+                ok = IridiumManager_sendStatusReport(
                     &mission, StateMachine_getTimeInState() / 60UL);
             }
-            IridiumSchedule_noteSent(&iridiumSchedule, millis(), located);
+            if (ok) {
+                IridiumSchedule_noteSent(&iridiumSchedule, millis(), located);
+            } else {
+                IridiumSchedule_noteFailed(&iridiumSchedule, millis());
+            }
 
             DebugPrintln(F("GPS: Re-initializing after Iridium send..."));
             MAVLinkInterface_serviceDelay(2000);

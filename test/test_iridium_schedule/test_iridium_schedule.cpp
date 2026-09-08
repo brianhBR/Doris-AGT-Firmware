@@ -83,6 +83,23 @@ void test_losing_the_fix_after_a_report_does_not_retransmit(void) {
 // Rollover
 // ---------------------------------------------------------------------------
 
+void test_failed_session_retries_after_backoff(void) {
+    IridiumSchedule_reset(&sched);
+    IridiumSchedule_noteFailed(&sched, 1000UL);
+
+    TEST_ASSERT_FALSE(IridiumSchedule_unlocatedDue(
+        &sched, 1000UL + IRIDIUM_RETRY_BACKOFF_MS - 1, REPORT_INTERVAL_MS));
+    TEST_ASSERT_TRUE(IridiumSchedule_unlocatedDue(
+        &sched, 1000UL + IRIDIUM_RETRY_BACKOFF_MS, REPORT_INTERVAL_MS));
+}
+
+void test_failed_session_does_not_count_as_sent(void) {
+    IridiumSchedule_reset(&sched);
+    IridiumSchedule_noteFailed(&sched, 1000UL);
+
+    TEST_ASSERT_FALSE(sched.sentSinceRecovery);
+}
+
 void test_scheduling_survives_millis_rollover(void) {
     IridiumSchedule_reset(&sched);
     unsigned long before = ULONG_MAX - 1000UL;
@@ -114,6 +131,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_a_fix_upgrades_an_unlocated_report_at_once);
     RUN_TEST(test_the_upgrade_happens_only_once);
     RUN_TEST(test_losing_the_fix_after_a_report_does_not_retransmit);
+
+    RUN_TEST(test_failed_session_retries_after_backoff);
+    RUN_TEST(test_failed_session_does_not_count_as_sent);
 
     RUN_TEST(test_scheduling_survives_millis_rollover);
 

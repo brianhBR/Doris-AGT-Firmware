@@ -24,6 +24,10 @@ static uint8_t systemId = MAVLINK_SYSTEM_ID;
 static uint8_t componentId = MAVLINK_COMPONENT_ID;
 static unsigned long lastHeartbeat = 0;
 static unsigned long lastSafetyStatus = 0;
+// True only while ISBDCallback/serviceLink is running a blocking SBD session.
+static bool s_iridiumSession = false;
+
+extern SystemConfig sysConfig;
 static_assert(sizeof(MAVLINK_NAME_AGT_CAPABILITY) - 1 <= 10,
               "AGT_CAP name exceeds MAVLink field");
 static_assert(AGT_CAPABILITIES <= 0x00FFFFFFUL,
@@ -352,29 +356,33 @@ void MAVLinkInterface_sendVersion() {
 
 void MAVLinkInterface_sendDebug() {
     MAVLinkInterface_sendVersion();     // firmware version + IMEI
+    char cfg[50];
+    snprintf(cfg, sizeof(cfg), "IRIDIUM: enable=%d interval=%lus",
+             sysConfig.enableIridium ? 1 : 0,
+             (unsigned long)(sysConfig.iridiumInterval / 1000UL));
+    MAVLinkInterface_sendStatusText(6, cfg);
     GPSManager_printDiagnostics();      // GPS BBR / antenna / coin-cell health
 }
 
 void MAVLinkInterface_serviceLink() {
     if (!initialized || !MAVLINK_SERIAL) return;
 
-    // Drain and discard inbound bytes. During a long Iridium session the main
-    // loop is blocked for tens of seconds to minutes; without this the UART RX
-    // buffer overflows and the receiver wedges, so afterwards the AGT keeps
-    // transmitting (heartbeats) but never sees inbound COMMAND_LONGs again.
-    //
-    // We deliberately do NOT dispatch commands here: the GPS is powered down
-    // and the shared antenna is switched to Iridium during these ops, so
-    // running a handler like AGT_DEBUG (which does blocking GPS I2C) could
-    // stall or corrupt the in-progress SBD session. Commands resume normally
-    // as soon as the blocking operation returns control to the main loop.
+    // Parse inbound MAVLink so the shutdown handshake (PWR_ACK, STATE) can
+    // complete during a blocking SBD session. Restricted COMMAND_LONG
+    // dispatch is in handleMessage while s_iridiumSession is set.
+    s_iridiumSession = true;
+    mavlink_message_t msg;
+    mavlink_status_t status;
     while (MAVLINK_SERIAL.available()) {
-        (void)MAVLINK_SERIAL.read();
+        uint8_t c = MAVLINK_SERIAL.read();
+        if (mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &status)) {
+            MAVLinkInterface_handleMessage(&msg);
+        }
     }
-
-    // Keep heartbeats flowing so the GCS / MAVLink router doesn't drop the
-    // AGT's route during the session.
     MAVLinkInterface_sendHeartbeat();
+    MAVLinkInterface_sendSafetyStatus();
+    StateMachine_updateSurfacePower();
+    s_iridiumSession = false;
 }
 
 void MAVLinkInterface_serviceDelay(unsigned long ms) {
@@ -495,6 +503,23 @@ void MAVLinkInterface_handleMessage(void* msgPtr) {
         case MAVLINK_MSG_ID_COMMAND_LONG: {
             mavlink_command_long_t cmd;
             mavlink_msg_command_long_decode(msg, &cmd);
+
+            // During a blocking SBD session the antenna and GPS I2C are
+            // Iridium-side. HEARTBEAT / SYS_STATUS / BATTERY_STATUS /
+            // VFR_HUD / GLOBAL_POSITION_INT / NAMED_VALUE_FLOAT still run
+            // (handshake + bookkeeping). COMMAND_LONG is refused except
+            // LED_CONTROL (GPIO only). AGT_DEBUG, IRIDIUM_TEST, REBOOT,
+            // and MISSION_STATUS wait until the session ends.
+            if (s_iridiumSession && cmd.command != MAVLINK_CMD_LED_CONTROL) {
+                mavlink_message_t ack;
+                uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+                mavlink_msg_command_ack_pack(systemId, componentId, &ack,
+                    cmd.command, MAV_RESULT_DENIED, 0, 0,
+                    msg->sysid, msg->compid);
+                uint16_t ackLen = mavlink_msg_to_send_buffer(buf, &ack);
+                MAVLINK_SERIAL.write(buf, ackLen);
+                break;
+            }
 
             if (cmd.command == MAVLINK_CMD_LED_CONTROL) {
                 uint8_t pattern   = (uint8_t)cmd.param1;
