@@ -111,17 +111,17 @@ Each reporting session makes at most two 90-second SBD attempts. The interval
 is measured from the end of the session, so a long transaction does not cause
 an immediate catch-up transmission.
 
-Both report types use DORIS ASCII protocol B:
+Both report types use DORIS Iridium P/1 (45-byte SBD payload):
 
 ```text
-B,+033.12345,-118.12345,07,245,2238,14.8,3.2,00
+P,1,+033.12345,-118.12345,07,245,2238,14.8,<0x00><0x00>
 ```
 
-The fields are protocol version, signed latitude and longitude with five
-decimals, ground speed in decimeters per second, course in degrees, maximum
-mission depth in meters, battery voltage, minimum pressure-sensor temperature,
-and a status byte. Speed, course, and depth are rounded to integers. The status
-byte is reserved as `00` until its bit assignments are defined.
+The fields are type/version, signed latitude and longitude with five decimals,
+ground speed in decimeters per second, course in degrees, maximum mission
+depth in meters, battery voltage, and two reserved flag bytes. Speed, course,
+and depth are rounded to integers. Flags are sent as raw `0x00 0x00` until
+their bit assignments are defined.
 
 Without a fix, the navigation fields are
 `+000.00000,+000.00000,00,000`; no stale pre-dive position is used. When a fix

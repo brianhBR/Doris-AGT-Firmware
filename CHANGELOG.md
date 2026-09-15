@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   triggers an immediate located upgrade.
 - Automatic Iridium sessions now make at most two 90-second SBD attempts and
   skip the unused signal-quality query before transmission.
+- Located and unlocated recovery reports now use DORIS Iridium P/1: type
+  `P`, version `1`, signed coordinates, speed, course, max depth, battery
+  voltage, and two raw reserved flag bytes. Temperature is no longer in the
+  SBD payload. Reports are sent with the binary SBD API so `0x00` flags are
+  not truncated.
 
 ### Fixed
 - GNSS time can no longer move the AGT RTC to an implausible future year or

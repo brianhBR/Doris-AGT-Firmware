@@ -10,22 +10,25 @@ const unsigned long MAX_LATITUDE_SCALED = 90UL * COORDINATE_SCALE;
 const unsigned long MAX_LONGITUDE_SCALED = 180UL * COORDINATE_SCALE;
 const unsigned long MAX_SPEED_DECIMETERS_PER_SECOND = 99UL;
 const unsigned long MAX_DEPTH_METERS = 9999UL;
-const long MAX_ONE_DECIMAL_VALUE = 999L;
+const long MAX_BATTERY_TENTHS = 999L;
 
 struct BufferWriter {
-    char* destination;
+    uint8_t* destination;
     size_t capacity;
     size_t length;
     bool valid;
 };
 
-void appendCharacter(BufferWriter& writer, char value) {
-    if (!writer.valid || writer.length + 1 >= writer.capacity) {
+void appendByte(BufferWriter& writer, uint8_t value) {
+    if (!writer.valid || writer.length >= writer.capacity) {
         writer.valid = false;
         return;
     }
     writer.destination[writer.length++] = value;
-    writer.destination[writer.length] = '\0';
+}
+
+void appendCharacter(BufferWriter& writer, char value) {
+    appendByte(writer, static_cast<uint8_t>(value));
 }
 
 void appendLiteral(BufferWriter& writer, const char* value) {
@@ -80,30 +83,17 @@ void appendCoordinate(
     appendPaddedUnsigned(writer, scaled % COORDINATE_SCALE, 5);
 }
 
-void appendOneDecimal(BufferWriter& writer, double value, bool allowNegative) {
-    double minimum = allowNegative ? -99.9 : 0.0;
-    double clamped = clampDouble(value, minimum, 99.9);
-    long tenths = static_cast<long>(
-        clamped < 0.0 ? ceil(clamped * 10.0 - 0.5)
-                      : floor(clamped * 10.0 + 0.5));
-    if (tenths > MAX_ONE_DECIMAL_VALUE) {
-        tenths = MAX_ONE_DECIMAL_VALUE;
-    } else if (tenths < -MAX_ONE_DECIMAL_VALUE) {
-        tenths = -MAX_ONE_DECIMAL_VALUE;
-    }
-
-    if (tenths < 0) {
-        appendCharacter(writer, '-');
-        tenths = -tenths;
+void appendBatteryVoltage(BufferWriter& writer, double voltage) {
+    double clamped = clampDouble(voltage, 0.0, 99.9);
+    long tenths = static_cast<long>(floor(clamped * 10.0 + 0.5));
+    if (tenths > MAX_BATTERY_TENTHS) {
+        tenths = MAX_BATTERY_TENTHS;
+    } else if (tenths < 0) {
+        tenths = 0;
     }
 
     unsigned long magnitude = static_cast<unsigned long>(tenths);
-    unsigned long integerPart = magnitude / 10UL;
-    if (integerPart >= 10UL) {
-        appendPaddedUnsigned(writer, integerPart, 2);
-    } else {
-        appendPaddedUnsigned(writer, integerPart, 1);
-    }
+    appendPaddedUnsigned(writer, magnitude / 10UL, 2);
     appendCharacter(writer, '.');
     appendPaddedUnsigned(writer, magnitude % 10UL, 1);
 }
@@ -122,16 +112,15 @@ unsigned long normalizedCourse(float courseDegrees) {
 
 } // namespace
 
-bool IridiumMessage_formatProtocolB(
-    char* destination,
+size_t IridiumMessage_formatP1(
+    uint8_t* destination,
     size_t destinationSize,
-    const IridiumProtocolBFields& fields) {
-    if (destination == nullptr || destinationSize == 0) {
-        return false;
+    const IridiumP1Fields& fields) {
+    if (destination == nullptr || destinationSize < IRIDIUM_P1_PAYLOAD_SIZE) {
+        return 0;
     }
 
     BufferWriter writer = {destination, destinationSize, 0, true};
-    destination[0] = '\0';
 
     bool coordinatesValid =
         fields.gpsValid &&
@@ -158,12 +147,8 @@ bool IridiumMessage_formatProtocolB(
     double voltage = isfinite(fields.batteryVoltage)
                          ? fields.batteryVoltage
                          : 0.0;
-    double temperature =
-        fields.temperatureValid && isfinite(fields.minimumTemperatureCelsius)
-            ? fields.minimumTemperatureCelsius
-            : 0.0;
 
-    appendLiteral(writer, "B,");
+    appendLiteral(writer, "P,1,");
     appendCoordinate(writer, latitude, MAX_LATITUDE_SCALED);
     appendCharacter(writer, ',');
     appendCoordinate(writer, longitude, MAX_LONGITUDE_SCALED);
@@ -182,10 +167,13 @@ bool IridiumMessage_formatProtocolB(
     appendCharacter(writer, ',');
     appendPaddedUnsigned(writer, depthMeters, 4);
     appendCharacter(writer, ',');
-    appendOneDecimal(writer, voltage, false);
+    appendBatteryVoltage(writer, voltage);
     appendCharacter(writer, ',');
-    appendOneDecimal(writer, temperature, true);
-    appendLiteral(writer, ",00");
+    appendByte(writer, 0x00);
+    appendByte(writer, 0x00);
 
-    return writer.valid;
+    if (!writer.valid || writer.length != IRIDIUM_P1_PAYLOAD_SIZE) {
+        return 0;
+    }
+    return writer.length;
 }

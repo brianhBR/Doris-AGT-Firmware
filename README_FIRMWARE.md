@@ -230,16 +230,17 @@ Automatic recovery messages are sent only after the acknowledged payload-power
 cutoff, so a blocking satellite session cannot delay clean shutdown. Manual
 operator tests remain available before cutoff.
 
-Located and no-fix reports use DORIS ASCII protocol B:
+Located and no-fix reports use DORIS Iridium P/1 (45 bytes): ASCII fields, a
+trailing comma, then two raw status-flag bytes (`0x00 0x00`):
 
 ```
-B,+033.12345,-118.12345,07,245,2238,14.8,3.2,00
+P,1,+033.12345,-118.12345,07,245,2238,14.8,<0x00><0x00>
 ```
 
-Fields are version, signed latitude, signed longitude, speed in decimeters per
-second, course in degrees, maximum depth in meters, battery voltage, minimum
-dive temperature, and status. The status byte is reserved as `00`. Reports
-without a GPS fix use zero navigation fields.
+Fields are type `P`, version `1`, signed latitude, signed longitude, speed in
+decimeters per second, course in degrees, maximum depth in meters, battery
+voltage, and reserved flags. Reports without a GPS fix use zero navigation
+fields. The payload is sent as binary SBD so the flag bytes are not truncated.
 
 ## MAVLink Integration
 

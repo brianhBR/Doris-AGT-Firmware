@@ -277,7 +277,7 @@ outside the AGT firmware and remains the Navigator's responsibility.
 
 | | `PRE_DIVE` | `DIVING` | `RECOVERY` |
 |---|---|---|---|
-| Iridium periodic report | Blocked | Blocked | Blocked while payload power is on; after cutoff, protocol B sends the already-due located or zero-navigation report, then follows `IridiumSchedule_*` |
+| Iridium periodic report | Blocked | Blocked | Blocked while payload power is on; after cutoff, P/1 sends the already-due located or zero-navigation report, then follows `IridiumSchedule_*` |
 | Iridium manual test | Allowed via `iridium_test` or MAVLink 31013, not state gated (`main.cpp:225`) | Allowed, not state gated | Allowed |
 | NeoPixel mode | `LED_MODE_READY` if `MissionData_isArmed()`, else `LED_MODE_ERROR` (`main.cpp:375-380`) | `LED_MODE_LUA` if a Lua LED command is fresh, else `LED_MODE_DIVING` (`main.cpp:366-373`) | `LED_MODE_RECOVERY` strobe (`main.cpp:361-364`) |
 | Power relay on state entry | Driven to conduct (`state_machine.cpp:242`) | Driven to conduct (`state_machine.cpp:249`) | Driven to conduct (`state_machine.cpp:255`) |

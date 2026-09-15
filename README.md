@@ -68,7 +68,7 @@ handshake. Bit 0 remains clear because the Navigator owns release.
 - **MAVLink (USB, 57600 baud)** — `GPS_INPUT` to ArduSub for navigation,
   `SYSTEM_TIME` once the RTC has been synced from a valid GPS fix, periodic
   heartbeats. Component ID 192 (`MAV_COMP_ID_ONBOARD_COMPUTER2`).
-- **Iridium 9603N** — DORIS ASCII protocol B recovery reports plus binary MT
+- **Iridium 9603N** — DORIS P/1 SBD recovery reports plus binary MT
   command support. Automatic reports transmit only after recovery payload
   cutoff; `iridium_test` remains available on demand.
 - **Meshtastic RAK4603** — NMEA 0183 (`GPGGA` + `GPRMC`) via SoftwareSerial on

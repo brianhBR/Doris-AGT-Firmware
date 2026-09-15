@@ -5,6 +5,7 @@
 #include "modules/state_machine.h"
 #include "config.h"
 #include <Arduino.h>
+#include <string.h>
 
 static IridiumSBD* modemPtr = nullptr;
 static bool modemConfigured = false;
@@ -237,38 +238,17 @@ bool IridiumManager_init(IridiumSBD* modem) {
 }
 
 // ============================================================================
-// Helper: format float as integer.fraction for Apollo3 (no %f in snprintf)
-// ============================================================================
-static int appendFloat(char* buf, int pos, int maxLen, double val, int decimals) {
-    bool negative = (val < 0.0);
-    double absVal = negative ? -val : val;
-    long intPart = (long)absVal;
-    double fracVal = absVal - intPart;
-    long multiplier = 1;
-    for (int i = 0; i < decimals; i++) multiplier *= 10;
-    long fracPart = (long)(fracVal * multiplier + 0.5);
-    if (fracPart >= multiplier) { fracPart = 0; intPart++; }
-    // Apollo3 newlib-nano doesn't zero-pad %0Nld; extract digits manually
-    char fracStr[8];
-    long fp = fracPart;
-    for (int j = decimals - 1; j >= 0; j--) {
-        fracStr[j] = '0' + (int)(fp % 10);
-        fp /= 10;
-    }
-    fracStr[decimals] = '\0';
-    int written = snprintf(buf + pos, maxLen - pos, "%s%ld.%s",
-                           negative ? "-" : "", intPart, fracStr);
-    return (written > 0) ? pos + written : pos;
-}
-
-// ============================================================================
 // SEND — full antenna switch cycle:
 //   GPS off -> supercap charge -> modem wake -> send -> modem sleep -> GPS on
 // Returns true on success. Caller must re-init GPS after (power was cycled).
+// P/1 includes raw 0x00 flag bytes, so this must use the binary SBD API.
 // ============================================================================
-static bool iridiumSendText(const char* message) {
+static bool iridiumSendPayload(uint8_t* data, size_t length) {
     if (modemPtr == nullptr || !modemConfigured) {
         DebugPrintln(F("Iridium: Not configured"));
+        return false;
+    }
+    if (data == nullptr || length == 0 || length > 340) {
         return false;
     }
 
@@ -309,7 +289,7 @@ static bool iridiumSendText(const char* message) {
 
         uint8_t rxBuf[270];
         size_t rxLen = sizeof(rxBuf);
-        err = modemPtr->sendReceiveSBDText(message, rxBuf, rxLen);
+        err = modemPtr->sendReceiveSBDBinary(data, length, rxBuf, rxLen);
         if (err == ISBD_SUCCESS) {
             DebugPrintln(F("Iridium: >>> Message sent! <<<"));
             modemPtr->clearBuffers(ISBD_CLEAR_MO);
@@ -338,29 +318,30 @@ static bool iridiumSendText(const char* message) {
     return success;
 }
 
+static bool sendP1Report(const IridiumP1Fields& fields) {
+    uint8_t payload[IRIDIUM_SBD_MO_SIZE];
+    size_t length = IridiumMessage_formatP1(payload, sizeof(payload), fields);
+    if (length == 0) {
+        DebugPrintln(F("Iridium: P/1 payload buffer too small"));
+        return false;
+    }
+    return iridiumSendPayload(payload, length);
+}
+
 bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData) {
-    if (!gpsData->valid) {
+    if (gpsData == nullptr || !gpsData->valid) {
         DebugPrintln(F("Iridium: GPS data not valid"));
         return false;
     }
 
-    char message[340];
-    int pos = 0;
-    pos += snprintf(message + pos, sizeof(message) - pos, "LAT:");
-    pos = appendFloat(message, pos, sizeof(message), gpsData->latitude, 6);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",LON:");
-    pos = appendFloat(message, pos, sizeof(message), gpsData->longitude, 6);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",ALT:");
-    pos = appendFloat(message, pos, sizeof(message), gpsData->altitude, 1);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",SPD:");
-    pos = appendFloat(message, pos, sizeof(message), gpsData->speed, 1);
-    pos += snprintf(message + pos, sizeof(message) - pos, ",SAT:%d,BATT:", gpsData->satellites);
-    pos = appendFloat(message, pos, sizeof(message), battData->voltage, 2);
-    pos += snprintf(message + pos, sizeof(message) - pos, "V,");
-    pos = appendFloat(message, pos, sizeof(message), battData->current, 2);
-    snprintf(message + pos, sizeof(message) - pos, "A");
-
-    return iridiumSendText(message);
+    IridiumP1Fields fields = {};
+    fields.gpsValid = true;
+    fields.latitudeDegrees = gpsData->latitude;
+    fields.longitudeDegrees = gpsData->longitude;
+    fields.groundSpeedMetersPerSecond = gpsData->speed;
+    fields.courseDegrees = gpsData->course;
+    fields.batteryVoltage = battData != nullptr ? battData->voltage : getBusVoltage();
+    return sendP1Report(fields);
 }
 
 bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
@@ -369,7 +350,7 @@ bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
     }
     float vbat = getBusVoltage();
 
-    IridiumProtocolBFields fields = {};
+    IridiumP1Fields fields = {};
     fields.gpsValid = true;
     fields.latitudeDegrees = gpsData->latitude;
     fields.longitudeDegrees = gpsData->longitude;
@@ -380,18 +361,7 @@ bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission) {
         mission != nullptr && mission->battery_voltage > 0.0f
             ? mission->battery_voltage
             : vbat;
-    fields.temperatureValid =
-        mission != nullptr && mission->temperature_valid;
-    fields.minimumTemperatureCelsius =
-        mission != nullptr ? mission->minimum_temperature_c : 0.0f;
-
-    char message[96];
-    if (!IridiumMessage_formatProtocolB(message, sizeof(message), fields)) {
-        DebugPrintln(F("Iridium: Protocol B payload buffer too small"));
-        return false;
-    }
-
-    return iridiumSendText(message);
+    return sendP1Report(fields);
 }
 
 bool IridiumManager_sendStatusReport(MissionData* mission,
@@ -399,29 +369,23 @@ bool IridiumManager_sendStatusReport(MissionData* mission,
     (void)minutesInRecovery;
     float vbat = getBusVoltage();
 
-    IridiumProtocolBFields fields = {};
+    IridiumP1Fields fields = {};
     fields.gpsValid = false;
     fields.maximumDepthMeters = mission != nullptr ? mission->max_depth_m : 0.0f;
     fields.batteryVoltage =
         mission != nullptr && mission->battery_voltage > 0.0f
             ? mission->battery_voltage
             : vbat;
-    fields.temperatureValid =
-        mission != nullptr && mission->temperature_valid;
-    fields.minimumTemperatureCelsius =
-        mission != nullptr ? mission->minimum_temperature_c : 0.0f;
-
-    char message[96];
-    if (!IridiumMessage_formatProtocolB(message, sizeof(message), fields)) {
-        DebugPrintln(F("Iridium: Protocol B payload buffer too small"));
-        return false;
-    }
-
-    return iridiumSendText(message);
+    return sendP1Report(fields);
 }
 
 bool IridiumManager_sendMessage(const char* message) {
-    return iridiumSendText(message);
+    if (message == nullptr) {
+        return false;
+    }
+    return iridiumSendPayload(
+        reinterpret_cast<uint8_t*>(const_cast<char*>(message)),
+        strlen(message));
 }
 
 bool IridiumManager_sendBinary(uint8_t* data, size_t length) {
