@@ -25,6 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   voltage, and two raw reserved flag bytes. Temperature is no longer in the
   SBD payload. Reports are sent with the binary SBD API so `0x00` flags are
   not truncated.
+- The safe-shutdown protocol now publishes `PWR_STAGE` so BlueOS can confirm
+  that the AGT accepted `PWR_ACK` before halting. Stages distinguish waiting
+  for the ACK, the final electrical grace, and completed payload cutoff.
 
 ### Fixed
 - GNSS time can no longer move the AGT RTC to an implausible future year or
@@ -32,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   discipline now processes each new UBX-NAV-PVT message once, validates real
   calendar dates, verifies hardware readback, and reports rejected updates over
   MAVLink instead of propagating them into BlueOS and ArduPilot log timestamps.
+- Failed automatic Iridium sessions now retry after the configured reporting
+  interval instead of being recorded as successful or immediately looping into
+  another blocking modem session.
 
 ### Removed
 - AGT GPIO35 release output, `RELAY` command handling, `REL_STAT` publication,

@@ -135,6 +135,7 @@
 #define BLUEOS_COMPONENT_ID            191    // MAV_COMP_ID_ONBOARD_COMPUTER; shared with mavlink-server so an operator laptop can also ACK
 #define MAVLINK_NAME_POWER_REQUEST     "PWR_SHDN" // AGT -> BlueOS, 1=request
 #define MAVLINK_NAME_POWER_ACK         "PWR_ACK"  // BlueOS -> AGT, 1=ready
+#define MAVLINK_NAME_POWER_STAGE       "PWR_STAGE" // AGT -> BlueOS, PowerShutdownStage
 #define MAVLINK_NAME_AGT_CAPABILITY    "AGT_CAP"  // AGT -> BlueOS, capability bitmask
 
 // AGT_CAP bits are represented exactly in NAMED_VALUE_FLOAT for this small mask.

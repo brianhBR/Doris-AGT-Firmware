@@ -51,7 +51,8 @@ Lua. After a real `DIVING` state, one fresh `STATE=4` report latches
 authorization and starts `SURFACE_LOGGING_DWELL_MS` (three minutes). Lua continues publishing
 telemetry and BlueOS keeps recording through that dwell. AGT then repeats
 `PWR_SHDN=1`; BlueOS flushes storage and acknowledges with `PWR_ACK=1` from
-`1/191`. That ACK latches a 30-second electrical grace, so Linux shutdown
+`1/191` until `PWR_STAGE=2` confirms receipt. That ACK latches a 30-second
+electrical grace, so Linux shutdown
 silencing MAVLink cannot cancel GPIO4 cutoff. The first valid post-dive
 `STATE=4` latches the sequence; only a power cycle cancels it. Every AGT
 boot/reset restores Pi power.

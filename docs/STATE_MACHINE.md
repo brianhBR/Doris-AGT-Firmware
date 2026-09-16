@@ -109,7 +109,8 @@ immediate located upgrade.
 
 Each reporting session makes at most two 90-second SBD attempts. The interval
 is measured from the end of the session, so a long transaction does not cause
-an immediate catch-up transmission.
+an immediate catch-up transmission. Failed sessions remain eligible for
+another attempt after that interval and are not recorded as successful sends.
 
 Both report types use DORIS Iridium P/1 (45-byte SBD payload):
 
@@ -178,9 +179,12 @@ All names fit the 10-byte `NAMED_VALUE_FLOAT.name` field.
 | `AGT_CAP` | AGT `1/192` → BlueOS | Capability bitmask for compatibility gating |
 | `PWR_SHDN` | AGT `1/192` → BlueOS | Qualified graceful-shutdown request |
 | `PWR_ACK` | BlueOS `1/191` → AGT | Shutdown preparation complete |
+| `PWR_STAGE` | AGT `1/192` → BlueOS | `0` idle, `1` awaiting ACK, `2` ACK accepted, `3` payload off |
 
 `AGT_CAP=2` sets only bit 1 (`AGT_CAP_SAFE_SURFACE_POWER`) for the
 `PWR_SHDN`/`PWR_ACK` handshake. Release-owner bit 0 is intentionally clear.
+BlueOS repeats `PWR_ACK=1` until stage 2 confirms receipt, then requests host
+poweroff while the AGT's 30-second electrical grace continues.
 
 ## Persistence and reset
 
