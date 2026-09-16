@@ -316,6 +316,27 @@ void test_surface_power_enforces_logging_dwell_then_ack_grace(void) {
     TEST_ASSERT_TRUE(StateMachine_shouldShutdownNonessentials());
 }
 
+void test_power_stage_confirms_each_shutdown_phase(void) {
+    stub_set_millis(100);
+    StateMachine_init();
+    TEST_ASSERT_EQUAL(POWER_STAGE_IDLE,
+                      StateMachine_getPowerShutdownStage());
+
+    enterDiveRecovery();
+    confirmLuaRecovery();
+    finishSurfaceDwell();
+    TEST_ASSERT_EQUAL(POWER_STAGE_AWAITING_ACK,
+                      StateMachine_getPowerShutdownStage());
+
+    TEST_ASSERT_TRUE(StateMachine_acknowledgeShutdown());
+    TEST_ASSERT_EQUAL(POWER_STAGE_ACKNOWLEDGED,
+                      StateMachine_getPowerShutdownStage());
+
+    advanceSurfacePower(POWER_SHUTDOWN_FINAL_GRACE_MS);
+    TEST_ASSERT_EQUAL(POWER_STAGE_PAYLOAD_OFF,
+                      StateMachine_getPowerShutdownStage());
+}
+
 void test_depth_never_authorizes_payload_shutdown(void) {
     stub_set_millis(100);
     StateMachine_init();
@@ -660,6 +681,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_one_recovery_report_starts_surface_dwell);
     RUN_TEST(test_surface_authorization_latches_after_first_recovery_report);
     RUN_TEST(test_surface_power_enforces_logging_dwell_then_ack_grace);
+    RUN_TEST(test_power_stage_confirms_each_shutdown_phase);
     RUN_TEST(test_depth_never_authorizes_payload_shutdown);
     RUN_TEST(test_stale_surface_state_does_not_cancel_latched_request);
     RUN_TEST(test_reverted_surface_state_does_not_cancel_latched_request);

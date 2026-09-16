@@ -32,6 +32,13 @@ enum FailsafeSource {
     FAILSAFE_NO_HEARTBEAT
 };
 
+enum PowerShutdownStage {
+    POWER_STAGE_IDLE = 0,
+    POWER_STAGE_AWAITING_ACK = 1,
+    POWER_STAGE_ACKNOWLEDGED = 2,
+    POWER_STAGE_PAYLOAD_OFF = 3
+};
+
 struct StateMachineStatus {
     SystemState currentState;
     SystemState previousState;
@@ -56,6 +63,7 @@ bool StateMachine_updateSurfaceBackstop();
 
 bool StateMachine_acknowledgeShutdown();
 bool StateMachine_isShutdownRequested();
+PowerShutdownStage StateMachine_getPowerShutdownStage();
 
 SystemState StateMachine_getState();
 StateMachineStatus StateMachine_getStatus();

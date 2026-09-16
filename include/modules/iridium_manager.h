@@ -13,13 +13,13 @@ void IridiumManager_configure(IridiumSBD* modem);
 // Full init with power-on test (handles antenna switch)
 bool IridiumManager_init(IridiumSBD* modem);
 
-// Send position report (legacy text format)
+// Send a located P/1 position report
 bool IridiumManager_sendPosition(GPSData* gpsData, BatteryData* battData);
 
-// Send a located DORIS protocol B mission report
+// Send a located DORIS P/1 mission report
 bool IridiumManager_sendMissionReport(GPSData* gpsData, MissionData* mission);
 
-// Send protocol B with zero navigation fields when no GPS fix is available
+// Send P/1 with zero navigation fields when no GPS fix is available
 bool IridiumManager_sendStatusReport(MissionData* mission,
                                      uint32_t minutesInRecovery);
 

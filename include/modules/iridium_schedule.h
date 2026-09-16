@@ -10,9 +10,10 @@
 // configured interval. A fix arriving after an unlocated report upgrades it
 // immediately.
 struct IridiumSchedule {
-    unsigned long lastReportMs;
+    unsigned long lastAttemptMs;
+    bool attemptedSinceRecovery;
     bool sentSinceRecovery;
-    bool lastReportLocated;
+    bool locatedUpgradePending;
 };
 
 // Call on every entry to RECOVERY, whichever path got there.
@@ -21,6 +22,11 @@ void IridiumSchedule_reset(IridiumSchedule* s);
 // Record a report of either kind.
 void IridiumSchedule_noteSent(IridiumSchedule* s, unsigned long now,
                               bool located);
+
+// Record a failed attempt so retries use the configured interval instead of
+// immediately starting another blocking modem session.
+void IridiumSchedule_noteAttempt(IridiumSchedule* s, unsigned long now,
+                                 bool located);
 
 // True when a position report is due, assuming a fix is available.
 bool IridiumSchedule_locatedDue(const IridiumSchedule* s, unsigned long now,

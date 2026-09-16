@@ -181,12 +181,19 @@ stateDiagram-v2
     note right of AWAITING_ACK
         shutdownRequested = true, state_machine.cpp:116
         PWR_SHDN republished at 1 Hz by
-        MAVLinkInterface_sendSafetyStatus, mavlink_interface.cpp:315-316
+        MAVLinkInterface_sendSafetyStatus
+        PWR_STAGE = 1
+    end note
+
+    note right of FINAL_GRACE
+        shutdownAcknowledged = true
+        PWR_STAGE = 2 confirms ACK receipt
     end note
 
     note right of POWER_CUT
         RelayController_setPowerManagement false
         nonessentialsPowered = false
+        PWR_STAGE = 3
         Power relay coil energizes, NC contact opens, loads off
         Automatic Iridium reporting is now allowed
     end note
@@ -214,6 +221,7 @@ MAVLink messages involved, all `NAMED_VALUE_FLOAT`:
 | `STATE` | inbound | autopilot `1/1` | Lua mission state | `mavlink_interface.cpp:470-475` |
 | `PWR_SHDN` | outbound | AGT `1/192` | 1 while `shutdownRequested`, republished every `POWER_STATUS_INTERVAL_MS` (1 s) | `mavlink_interface.cpp:315-316` |
 | `PWR_ACK` | inbound | BlueOS `1/191` only | value in 0.9..1.1 calls `StateMachine_acknowledgeShutdown()` | `mavlink_interface.cpp:491-499` |
+| `PWR_STAGE` | outbound | AGT `1/192` | 0 idle, 1 awaiting ACK, 2 ACK accepted, 3 payload off | `mavlink_interface.cpp` |
 | `AGT_CAP` | outbound | AGT `1/192` | capability bitmask `0x2` (safe surface power only) | `mavlink_interface.cpp` |
 
 `StateMachine_acknowledgeShutdown()` (`state_machine.cpp:124-134`) rejects an
@@ -277,13 +285,13 @@ outside the AGT firmware and remains the Navigator's responsibility.
 
 | | `PRE_DIVE` | `DIVING` | `RECOVERY` |
 |---|---|---|---|
-| Iridium periodic report | Blocked | Blocked | Blocked while payload power is on; after cutoff, protocol B sends the already-due located or zero-navigation report, then follows `IridiumSchedule_*` |
+| Iridium periodic report | Blocked | Blocked | Blocked while payload power is on; after cutoff, P/1 sends the already-due located or zero-navigation report, then follows `IridiumSchedule_*` |
 | Iridium manual test | Allowed via `iridium_test` or MAVLink 31013, not state gated (`main.cpp:225`) | Allowed, not state gated | Allowed |
 | NeoPixel mode | `LED_MODE_READY` if `MissionData_isArmed()`, else `LED_MODE_ERROR` (`main.cpp:375-380`) | `LED_MODE_LUA` if a Lua LED command is fresh, else `LED_MODE_DIVING` (`main.cpp:366-373`) | `LED_MODE_RECOVERY` strobe (`main.cpp:361-364`) |
 | Power relay on state entry | Driven to conduct (`state_machine.cpp:242`) | Driven to conduct (`state_machine.cpp:249`) | Driven to conduct (`state_machine.cpp:255`) |
 | Power relay can be opened | No | No | Only through diagram 3 |
 | Release relay | Navigator only; AGT has no release output | Navigator only | Navigator only |
-| MAVLink outbound | Heartbeat 1 Hz, `AGT_CAP`, `PWR_SHDN` 1 Hz, GPS 5 Hz | Same | Same |
+| MAVLink outbound | Heartbeat 1 Hz, `AGT_CAP`, `PWR_SHDN`, `PWR_STAGE` 1 Hz, GPS 5 Hz | Same | Same |
 | Failsafe evaluation | Skipped (`state_machine.cpp:49-53`) | Active after `DIVE_HEARTBEAT_GRACE_MS` | Skipped |
 
 ## Findings

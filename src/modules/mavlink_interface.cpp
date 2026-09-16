@@ -317,6 +317,8 @@ void MAVLinkInterface_sendSafetyStatus() {
     sendNamedFloat(MAVLINK_NAME_AGT_CAPABILITY, (float)AGT_CAPABILITIES);
     sendNamedFloat(MAVLINK_NAME_POWER_REQUEST,
                    StateMachine_isShutdownRequested() ? 1.0f : 0.0f);
+    sendNamedFloat(MAVLINK_NAME_POWER_STAGE,
+                   (float)StateMachine_getPowerShutdownStage());
     lastSafetyStatus = now;
 }
 

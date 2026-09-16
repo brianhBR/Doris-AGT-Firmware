@@ -385,7 +385,11 @@ void loop() {
             MissionData_get(&mission);
 
             bool ok = IridiumManager_sendMissionReport(&gpsData, &mission);
-            IridiumSchedule_noteSent(&iridiumSchedule, millis(), true);
+            if (ok) {
+                IridiumSchedule_noteSent(&iridiumSchedule, millis(), true);
+            } else {
+                IridiumSchedule_noteAttempt(&iridiumSchedule, millis(), true);
+            }
 
             if (ok) {
                 DebugPrintln(F("==================================="));
@@ -448,14 +452,21 @@ void loop() {
             MissionData mission;
             MissionData_get(&mission);
 
+            bool sent;
             if (located) {
                 GPSData gpsData = GPSManager_getData();
-                IridiumManager_sendMissionReport(&gpsData, &mission);
+                sent = IridiumManager_sendMissionReport(&gpsData, &mission);
             } else {
-                IridiumManager_sendStatusReport(
+                sent = IridiumManager_sendStatusReport(
                     &mission, StateMachine_getTimeInState() / 60UL);
             }
-            IridiumSchedule_noteSent(&iridiumSchedule, millis(), located);
+            if (sent) {
+                IridiumSchedule_noteSent(
+                    &iridiumSchedule, millis(), located);
+            } else {
+                IridiumSchedule_noteAttempt(
+                    &iridiumSchedule, millis(), located);
+            }
 
             DebugPrintln(F("GPS: Re-initializing after Iridium send..."));
             MAVLinkInterface_serviceDelay(2000);

@@ -63,6 +63,7 @@ void test_both_readings_agree_for_every_protocol_name(void) {
         MAVLINK_NAME_AGT_CAPABILITY,
         MAVLINK_NAME_POWER_REQUEST,
         MAVLINK_NAME_POWER_ACK,
+        MAVLINK_NAME_POWER_STAGE,
     };
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         char field[LEN];

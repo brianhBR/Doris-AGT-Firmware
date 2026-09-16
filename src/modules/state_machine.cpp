@@ -186,6 +186,19 @@ bool StateMachine_isShutdownRequested() {
     return status.shutdownRequested;
 }
 
+PowerShutdownStage StateMachine_getPowerShutdownStage() {
+    if (!status.nonessentialsPowered) {
+        return POWER_STAGE_PAYLOAD_OFF;
+    }
+    if (status.shutdownAcknowledged) {
+        return POWER_STAGE_ACKNOWLEDGED;
+    }
+    if (status.shutdownRequested) {
+        return POWER_STAGE_AWAITING_ACK;
+    }
+    return POWER_STAGE_IDLE;
+}
+
 SystemState StateMachine_getState() {
     return status.currentState;
 }

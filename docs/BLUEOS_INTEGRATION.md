@@ -274,6 +274,7 @@ Nonessentials: ON
 **Power Status:**
 ```
 NAMED_VALUE_FLOAT PWR_SHDN=0|1
+NAMED_VALUE_FLOAT PWR_STAGE=0|1|2|3
 STATUSTEXT "POWER: BlueOS shutdown ACK"
 ```
 
@@ -296,8 +297,10 @@ All names fit MAVLink's 10-byte `NAMED_VALUE_FLOAT.name` field:
 | `AGT_CAP` | AGT `1/192` → BlueOS | integer bitmask | Capability gating; required before enabling safety integration |
 | `PWR_SHDN` | AGT `1/192` → BlueOS | 0/1 | Qualified graceful-shutdown request |
 | `PWR_ACK` | BlueOS `1/191` → AGT | finite 1 (±0.1) | BlueOS has completed shutdown preparation |
+| `PWR_STAGE` | AGT `1/192` → BlueOS | 0–3 | Idle, awaiting ACK, ACK accepted, or payload off |
 
-BlueOS must ACK only after flushing logs/filesystems and stopping services. AGT
+BlueOS must ACK only after flushing logs/filesystems and stopping services,
+then repeat the ACK until `PWR_STAGE=2` confirms AGT receipt. AGT
 requires an observed dive, one fresh Lua `STATE=4`, and a three-minute powered
 logging dwell before asserting `PWR_SHDN=1`. Depth and GPS are not
 shutdown votes. After a valid ACK it latches another 30-second grace before
@@ -316,7 +319,7 @@ arrives when bench-testing the handshake.
 
 `AGT_CAP=2` sets only bit 1, `AGT_CAP_SAFE_SURFACE_POWER`. Release-owner bit 0
 is clear because Lua/Navigator is the sole release path. `AGT_CAP` and
-`PWR_SHDN` repeat at 1 Hz for routing/logging visibility. Pi power always
+`PWR_SHDN` and `PWR_STAGE` repeat at 1 Hz for routing/logging visibility. Pi power always
 initializes ON.
 
 **Messages sent by AGT:**
