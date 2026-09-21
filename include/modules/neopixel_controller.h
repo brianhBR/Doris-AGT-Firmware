@@ -7,8 +7,8 @@
 // LED DISPLAY MODES
 // ============================================================================
 // STANDBY:   Slow spinning white   — booting / waiting for systems
-// READY:     Spinning green         — GPS + MAVLink + mission all good
-// ERROR:     Pulsing red            — something is wrong / not ready
+// READY:     Spinning green         — PRE_DIVE, armed, live autopilot HEARTBEAT
+// ERROR:     Pulsing red            — not ready, or companion HEARTBEAT lost
 // DIVING:    LEDs off               — underwater, save power
 // LUA:       Lua-commanded pattern  — Lua can override during dive if needed
 // RECOVERY:  Flashing white beacon  — surface recovery strobe

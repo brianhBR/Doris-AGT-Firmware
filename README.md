@@ -239,8 +239,8 @@ for 10 s the AGT reclaims LED authority.
 | Mode       | Pattern                | When                                            |
 |------------|------------------------|-------------------------------------------------|
 | `STANDBY`  | Slow spinning white    | Booting / waiting for systems                   |
-| `READY`    | Spinning green         | `PRE_DIVE`, mission armed (GPS + autopilot OK)  |
-| `ERROR`    | Pulsing red            | `PRE_DIVE`, not armed — do not deploy           |
+| `READY`    | Spinning green         | `PRE_DIVE`, armed and a HEARTBEAT in the last 5 s |
+| `ERROR`    | Pulsing red            | `PRE_DIVE`, disarmed or companion link lost       |
 | `DIVING`   | Off                    | Underwater, save power                          |
 | `LUA`      | Lua-commanded          | Lua override during dive                        |
 | `RECOVERY` | Flashing white beacon  | Surface recovery strobe                         |

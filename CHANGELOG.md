@@ -30,6 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   for the ACK, the final electrical grace, and completed payload cutoff.
 
 ### Fixed
+- PRE_DIVE mast LEDs no longer stay spinning green after the companion dies.
+  `MissionData_isArmed()` now requires a HEARTBEAT in the last 5 s, so a
+  latched armed bit cannot keep `READY` up when the Pi is gone.
 - GNSS time can no longer move the AGT RTC to an implausible future year or
   apply a correction larger than five minutes after synchronization. RTC
   discipline now processes each new UBX-NAV-PVT message once, validates real

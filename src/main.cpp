@@ -538,7 +538,8 @@ void updateLEDState() {
         return;
     }
 
-    // PRE_DIVE: Green = armed (ready to deploy), Red = not armed (do not deploy)
+    // PRE_DIVE: green only while HEARTBEAT says armed *and* is still
+    // arriving. A dead Pi must not leave the mast flashing ready.
     if (MissionData_isArmed()) {
         NeoPixelController_setMode(LED_MODE_READY);
     } else {

@@ -201,6 +201,27 @@ void test_get_with_null_does_not_crash(void) {
     TEST_PASS();
 }
 
+void test_is_armed_requires_live_heartbeat(void) {
+    stub_set_millis(1000);
+    MissionData_update_heartbeat();
+    MissionData_update_autopilot_state(3, 0x80);
+    TEST_ASSERT_TRUE(MissionData_isArmed());
+
+    stub_advance_millis(PI_HEARTBEAT_TIMEOUT_MS + 1);
+    TEST_ASSERT_FALSE(MissionData_isArmed());
+
+    MissionData md;
+    MissionData_get(&md);
+    TEST_ASSERT_TRUE(md.armed);
+}
+
+void test_is_armed_false_when_disarmed_with_live_heartbeat(void) {
+    stub_set_millis(1000);
+    MissionData_update_heartbeat();
+    MissionData_update_autopilot_state(3, 0x00);
+    TEST_ASSERT_FALSE(MissionData_isArmed());
+}
+
 void test_depth_freshness_expires(void) {
     stub_set_millis(100);
     MissionData_update_depth(0.5f);
@@ -239,6 +260,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_heartbeat_updates_on_subsequent_calls);
     RUN_TEST(test_leak_set_and_clear);
     RUN_TEST(test_get_with_null_does_not_crash);
+    RUN_TEST(test_is_armed_requires_live_heartbeat);
+    RUN_TEST(test_is_armed_false_when_disarmed_with_live_heartbeat);
     RUN_TEST(test_depth_freshness_expires);
 
     return UNITY_END();
