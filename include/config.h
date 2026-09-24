@@ -39,7 +39,12 @@
 
 // Custom pin assignments
 #define NEOPIXEL_PIN         32  // NeoPixel data pin (GPIO32/AD32)
-#define RELAY_POWER_MGMT     4   // Relay 1: Power management (Navigator/Pi, Camera, Lights)
+#define RELAY_POWER_MGMT     4   // GPIO4: NC relay coil, or Pololu OFF pulse
+// GPIO35 (AD35) is the AGT SPI-header breakout only. The schematic net
+// ARTEMIS_D35 has no onboard load or pull-up, and this firmware does not
+// start SPI. Iridium UART stays on GPIO24/25.
+#define PAYLOAD_POWER_ON_PIN 35  // Pololu 2813 ON pulse (PAYLOAD_POWER_POLULU)
+#define PAYLOAD_POWER_OFF_PIN RELAY_POWER_MGMT
 
 // Blue Robotics PSM analog inputs
 #define PSM_VOLTAGE_PIN      11  // GPIO11 (AD11) - PSM voltage analog output
@@ -156,6 +161,11 @@
 #define RELAY_COIL_ACTIVE_HIGH       true   // Power relay module energizes on HIGH
 #define RELAY_POWER_MGMT_NC          true   // Power relay wired through NC terminal
 #define LEGACY_TIMED_EVENT_DURATION_SEC 7200 // Retained only for stored-config compatibility
+
+// Pololu 2813 ON and OFF are separate active-high pulses. Both pins idle LOW.
+// CTRL is not connected. PAYLOAD_POWER_POLULU selects this driver; without
+// that flag the NC relay above is unchanged.
+#define PAYLOAD_POWER_PULSE_MS       100
 
 // ============================================================================
 // IRIDIUM CONFIGURATION

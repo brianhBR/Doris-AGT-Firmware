@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Optional `PAYLOAD_POWER_POLULU` driver (`pio run -e pololu`) for the Pololu
+  2813 power switch. GPIO35 pulses ON and GPIO4 pulses OFF; both idle low.
+  The default build is still the GPIO4 normally-closed relay.
+
 ### Changed
 - Navigator/Lua is now the sole ballast-release authority. AGT safety monitors
   may still enter `RECOVERY` for communications, but they cannot actuate

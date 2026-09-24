@@ -88,7 +88,9 @@ After the dwell:
 3. AGT waits `POWER_SHUTDOWN_FINAL_GRACE_MS` (30 seconds) so BlueOS
    `systemctl poweroff` can complete.
 4. AGT opens the NC power relay. The ACK latches this countdown, so the expected
-   loss of MAVLink during Linux shutdown cannot cancel it.
+   loss of MAVLink during Linux shutdown cannot cancel it. On the `pololu`
+   build this step pulses OFF instead of holding GPIO4 high. The dwell, ACK,
+   and 30-second grace are unchanged.
 
 Premature ACKs are rejected. Once the valid `STATE=4` latches authorization,
 only a reset clears it. Unsigned elapsed-time subtraction keeps both timers
@@ -162,11 +164,33 @@ The accepted cost is that an AGT reset during an unattended surface wait ends
 the power saving for that deployment: the payload comes back up and stays up,
 because the AGT can no longer prove a dive occurred.
 
+### Pololu 2813 build
+
+`pio run -e pololu` (`PAYLOAD_POWER_POLULU`) replaces the NC coil driver. The
+public relay API, MAVLink handshake, and state-machine timers are the same.
+GPIO35 pulses Pololu ON and GPIO4 pulses Pololu OFF. Both pins idle low.
+Pulse width is `PAYLOAD_POWER_PULSE_MS` (100 ms). CTRL is not used. A repeated
+request for the state already selected does not pulse again, so the extra
+`setPowerManagement(true)` calls during boot and state entry do not re-pulse.
+
+- The Pololu latch retains state across an AGT USB reset or firmware flash if Pololu VIN remains continuously powered.
+- The Pololu typically defaults OFF after its own VIN is removed and reapplied.
+- Firmware startup pulses ON.
+- As with the current NC relay, an AGT reboot after surface cutoff will restore payload power.
+- There is no hardware readback confirming the Pololu's physical state.
+
+Initialization pulses ON and never pulses OFF, including when the Pololu is
+already on. The output latches are cleared before the pins become outputs so
+an AGT reset cannot glitch the OFF input high. The default build does not
+define `PAYLOAD_POWER_POLULU` and still drives the NC relay.
+
 ## Release ownership
 
 The Navigator is the sole ballast-release controller. Lua may continue
 publishing `RELAY` for the Navigator, but AGT firmware does not consume that
-message, drive GPIO35, persist a release latch, or advertise a release path.
+message, persist a release latch, or advertise a release path. GPIO35 is not a
+release output. The default build leaves it unconfigured; the Pololu build
+uses it only as the payload ON pulse.
 AGT sensor monitors can enter `RECOVERY` for strobe and communications behavior;
 they cannot actuate the physical release.
 
@@ -189,9 +213,12 @@ poweroff while the AGT's 30-second electrical grace continues.
 ## Persistence and reset
 
 - Mission state and surface qualification are not persisted.
-- Pi power always initializes ON.
+- Pi power always initializes ON. The default build drives the NC relay
+  closed. The Pololu build pulses ON.
 - No release state is stored by the AGT.
-- `NO_RELAYS` builds track payload-power state without driving GPIO4.
+- `NO_RELAYS` builds track payload-power state without driving GPIO4 or GPIO35.
+- The Pololu has no readback. Commanded state is RAM only and does not survive
+  reset; startup always commands ON.
 
 ## Configuration
 

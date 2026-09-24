@@ -8,11 +8,11 @@ Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-ref
 
 | GPIO | Board label | Function | Direction | Connect to |
 |------|-------------|----------|-----------|------------|
-| **4** | D4 | Relay 1 – Power mgmt | OUT | Relay module IN (Navigator/Pi, camera, lights) |
+| **4** | D4 | Payload power | OUT | Default: NC relay IN. `pololu` build: Pololu OFF pulse |
 | **11** | AD11 | PSM voltage | Analog IN | PSM V_OUT |
 | **12** | AD12 | PSM current | Analog IN | PSM I_OUT |
 | **32** | AD32 | NeoPixel data | OUT | WS2812B strip DIN (30 LEDs, external 5V) |
-| **35** | AD35 | Unused | — | Do not connect ballast release |
+| **35** | AD35 | Pololu ON, or unused | OUT | `pololu` build only. Default build: leave open. Never the ballast release |
 | **39** | J10 pin 1 (SCL4) | Meshtastic TX (NMEA) | OUT | RAK J10 RX (external GPS UART) |
 | **40** | J10 pin 2 (SDA4) | Meshtastic RX | IN | RAK J10 TX (optional) |
 | — | J10 pin 3 | 3.3V | — | RAK VCC (if powering from AGT) |
@@ -23,7 +23,8 @@ Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-ref
 
 **Notes:**
 - **J10:** AGT TX (39) → RAK RX. Baud **9600** (NMEA via SoftwareSerial). Configure RAK for external GPS on J10.
-- **Release:** Connect only to the Navigator relay; AGT GPIO35 is unused.
+- **Release:** Connect only to the Navigator relay. GPIO35 is not a release output.
+- **Payload power:** Default firmware drives a normally-closed relay from GPIO4. The `pololu` build pulses Pololu ON from GPIO35 and Pololu OFF from GPIO4. Do not connect CTRL.
 - **NeoPixels:** Data from GPIO32 only; **power strip from external 5 V** (do not use AGT 3.3 V).
 - **PSM:** GND and analog only; PSM powered from battery sense side.
 
@@ -40,7 +41,8 @@ Use this table while wiring. All pin numbers are **Artemis GPIO (D)**. Cross-ref
 | **Meshtastic RAK4603** | J10 (Qwiic I2C Port 4) | D39/D40 | NMEA GPS out (TX) to RAK J10 (external GPS), 9600 baud via SoftwareSerial |
 | **PSM Voltage** | Breakout Pins | GPIO11 (AD11) | Analog input |
 | **PSM Current** | Breakout Pins | GPIO12 (AD12) | Analog input |
-| **Relay 1 (Power)** | Breakout Pins | GPIO4 (D4) | Navigator/Pi/Camera/Lights |
+| **Relay 1 (Power)** | Breakout Pins | GPIO4 (D4) | Default NC relay: Navigator/Pi/Camera/Lights |
+| **Pololu 2813** | Breakout Pins | GPIO35 ON, GPIO4 OFF | `pololu` build only. Leave CTRL open |
 | **Release relay** | Navigator | Navigator relay output | Ballast release |
 | **NeoPixel Strip** | Breakout Pins | GPIO32 (AD32) | 30 LED WS2812B strip |
 
@@ -152,17 +154,52 @@ GND            →  GND
 - MISSION: ON
 - RECOVERY: ON until sustained surface qualification + BlueOS ACK + final grace
 
+This is the default production wiring. GPIO4 LOW or floating leaves the coil
+off, the NC contact closed, and the payload powered.
+
+#### Pololu 2813 (optional `pololu` build)
+
+Use this instead of the NC relay module, and flash `pio run -e pololu`. Do not
+mix the two drivers on one image: the default firmware holds GPIO4 as a coil
+output and will not generate Pololu pulses.
+
+```
+AGT Breakout              Pololu 2813
+────────────────────────────────────────
+GPIO35 (AD35)         →   ON
+GPIO4 (D4)            →   OFF
+GND                   →   GND
+(unconnected)             CTRL
+```
+
+ON and OFF are active-high pulses (`PAYLOAD_POWER_PULSE_MS`, 100 ms). Both AGT
+pins idle low. A high level above 1 V is enough; the Artemis drives 3.3 V.
+Leave CTRL disconnected. Do not hold ON or OFF high.
+
+- The Pololu latch retains state across an AGT USB reset or firmware flash if Pololu VIN remains continuously powered.
+- The Pololu typically defaults OFF after its own VIN is removed and reapplied.
+- Firmware startup pulses ON.
+- As with the current NC relay, an AGT reboot after surface cutoff will restore payload power.
+- There is no hardware readback confirming the Pololu's physical state.
+
+AD35 is safe for this. On the AGT schematic it is net `ARTEMIS_D35`: the
+Artemis pad to SPI header pin 5 only, with no onboard part and no pull-up.
+This firmware does not start SPI. Iridium UART remains on GPIO24/25. The
+hookup guide labels that header pin SPI CS1; SparkFun examples call the same
+pad `spiCS2`. Either name is the bare breakout, not a device on the board.
+
 #### Drop Weight Release (Navigator Only)
 
 Wire the ballast release to the Navigator relay configured by the Doris frame.
-Do not connect it to AGT GPIO35. The AGT does not configure GPIO35, consume
-Lua's `RELAY` named value, or provide a release output.
+Do not connect it to AGT GPIO35. The default build does not configure GPIO35.
+The `pololu` build configures GPIO35 only as the payload ON pulse. Neither
+build consumes Lua's `RELAY` named value or provides a release output.
 
 **Configuration:**
 ```cpp
-#define RELAY_POWER_MGMT   4   // GPIO4 - CS1
-
-pinMode(RELAY_POWER_MGMT, OUTPUT);
+#define RELAY_POWER_MGMT       4   // GPIO4 - NC coil, or Pololu OFF
+#define PAYLOAD_POWER_ON_PIN   35  // GPIO35 - Pololu ON
+#define PAYLOAD_POWER_PULSE_MS 100
 ```
 
 ---
@@ -229,8 +266,8 @@ Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 │                                                             │
 │  Breakout Pins (see TOP_VIEW for locations):               │
 │  ┌───────────────────────────────────────┐                 │
-│  │  D4 (GPIO4)    ───► Relay 1 (Power)  │                 │
-│  │  AD35 (GPIO35) ───► Unused           │                 │
+│  │  D4 (GPIO4)    ───► NC relay / Pololu OFF │             │
+│  │  AD35 (GPIO35) ───► Pololu ON, else open │             │
 │  │  AD11 (GPIO11) ◄─── PSM Voltage       │                 │
 │  │  AD12 (GPIO12) ◄─── PSM Current       │                 │
 │  │  AD32 (GPIO32) ───► NeoPixel Data     │                 │
@@ -265,8 +302,9 @@ The TOP_VIEW image shows all breakout pins with labels. Key pins for this projec
 **For Meshtastic:**
 - J10 connector (I2C Port 4): D39, D40, 3.3V, GND
 
-**For Relays:**
-- D4 (GPIO4) - AGT payload power
+**For payload power:**
+- D4 (GPIO4) - default NC relay coil, or Pololu OFF in the `pololu` build
+- AD35 (GPIO35) - Pololu ON in the `pololu` build; leave open on the default build
 - Navigator relay output - ballast release
 
 **For PSM:**

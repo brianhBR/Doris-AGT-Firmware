@@ -238,9 +238,11 @@ BlueOS ACK, or electrical cutoff.
 ## 4. Release ownership
 
 The Navigator is the only ballast-release controller. AGT firmware ignores
-Lua's `RELAY` named value, never configures GPIO35, stores no release latch in
-EEPROM, and leaves release-owner capability bit 0 clear. AGT failsafe monitoring
-may enter `RECOVERY` for communications but cannot actuate release.
+Lua's `RELAY` named value, stores no release latch in EEPROM, and leaves
+release-owner capability bit 0 clear. GPIO35 is not a release output. The
+default build does not configure it; the Pololu build uses it only as the
+payload ON pulse. AGT failsafe monitoring may enter `RECOVERY` for
+communications but cannot actuate release.
 
 ## 5. Boot and power-cycle behavior
 
@@ -280,6 +282,19 @@ Relay wiring implications while the AGT is unpowered or held in reset
 
 An AGT crash, brownout, or reset therefore restores payload power. Release is
 outside the AGT firmware and remains the Navigator's responsibility.
+
+The flowchart above is the default NC-relay build. The `pololu` environment
+uses the same boot order and the same `RelayController_*` calls. Init preloads
+GPIO35 (ON) and GPIO4 (OFF) low, then pulses ON for 100 ms. It does not pulse
+OFF, so an AGT reset while the Pololu is already ON cannot turn the payload
+off. Later `setPowerManagement(true)` calls are idempotent and do not pulse
+again. Surface cutoff pulses OFF instead of holding GPIO4 high.
+
+- The Pololu latch retains state across an AGT USB reset or firmware flash if Pololu VIN remains continuously powered.
+- The Pololu typically defaults OFF after its own VIN is removed and reapplied.
+- Firmware startup pulses ON.
+- As with the current NC relay, an AGT reboot after surface cutoff will restore payload power.
+- There is no hardware readback confirming the Pololu's physical state.
 
 ## 6. Per-state side effects
 
