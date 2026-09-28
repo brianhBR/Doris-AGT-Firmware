@@ -31,6 +31,9 @@ jobs:
       - name: Build no-relays firmware
         run: pio run -e no-relays
 
+      - name: Build Pololu 2813 firmware
+        run: pio run -e pololu
+
       - name: Build selftest firmware
         run: pio run -e selftest
 
@@ -41,9 +44,11 @@ jobs:
           path: |
             build/doris-agt.bin
             build/doris-agt-no-relays.bin
+            build/doris-agt-pololu.bin
             build/doris-agt-selftest.bin
             build/doris-agt.elf
             build/doris-agt-no-relays.elf
+            build/doris-agt-pololu.elf
             build/doris-agt-selftest.elf
           if-no-files-found: error
           retention-days: 30

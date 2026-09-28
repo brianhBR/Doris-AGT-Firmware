@@ -18,6 +18,7 @@ def copy_firmware(source, target, env):
     name_map = {
         "SparkFun_RedBoard_Artemis_ATP": "doris-agt",
         "no-relays": "doris-agt-no-relays",
+        "pololu": "doris-agt-pololu",
         "selftest": "doris-agt-selftest",
     }
     base = name_map.get(env_name, f"doris-agt-{env_name}")
