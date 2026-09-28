@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Optional `PAYLOAD_POWER_POLULU` driver (`pio run -e pololu`) for the Pololu
+  2813 power switch. GPIO35 pulses ON and GPIO4 pulses OFF; both idle low.
+  The default build is still the GPIO4 normally-closed relay.
+
 ### Changed
 - Navigator/Lua is now the sole ballast-release authority. AGT safety monitors
   may still enter `RECOVERY` for communications, but they cannot actuate
@@ -30,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   for the ACK, the final electrical grace, and completed payload cutoff.
 
 ### Fixed
+- PRE_DIVE mast LEDs no longer stay spinning green after the companion dies.
+  `MissionData_isArmed()` now requires a HEARTBEAT in the last 5 s, so a
+  latched armed bit cannot keep `READY` up when the Pi is gone.
 - GNSS time can no longer move the AGT RTC to an implausible future year or
   apply a correction larger than five minutes after synchronization. RTC
   discipline now processes each new UBX-NAV-PVT message once, validates real

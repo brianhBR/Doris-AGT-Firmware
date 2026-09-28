@@ -483,7 +483,16 @@ void loop() {
 }
 
 void setupPins() {
-#ifndef NO_RELAYS
+#if defined(NO_RELAYS)
+    // Payload pins stay unconfigured. RelayController tracks state only.
+#elif defined(PAYLOAD_POWER_POLULU)
+    // Latch both Pololu inputs low before the pads drive. A high glitch on
+    // GPIO4 while it becomes an output is an OFF pulse.
+    digitalWrite(PAYLOAD_POWER_ON_PIN, LOW);
+    digitalWrite(PAYLOAD_POWER_OFF_PIN, LOW);
+    pinMode(PAYLOAD_POWER_ON_PIN, OUTPUT);
+    pinMode(PAYLOAD_POWER_OFF_PIN, OUTPUT);
+#else
     pinMode(RELAY_POWER_MGMT, OUTPUT);
     digitalWrite(RELAY_POWER_MGMT, LOW);
 #endif
@@ -538,7 +547,8 @@ void updateLEDState() {
         return;
     }
 
-    // PRE_DIVE: Green = armed (ready to deploy), Red = not armed (do not deploy)
+    // PRE_DIVE: green only while HEARTBEAT says armed *and* is still
+    // arriving. A dead Pi must not leave the mast flashing ready.
     if (MissionData_isArmed()) {
         NeoPixelController_setMode(LED_MODE_READY);
     } else {

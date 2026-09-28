@@ -7,7 +7,8 @@ Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interf
 > powered logging dwell, confirmed BlueOS `PWR_ACK`, and a latched 30-second
 > final grace. Depth
 > can enter recovery for communications but cannot authorize power cutoff.
-> Ballast release is controlled only by the Navigator; AGT GPIO35 is unused.
+> Ballast release is controlled only by the Navigator. The default build leaves
+> GPIO35 unused. The `pololu` build uses GPIO35 as the payload ON pulse.
 
 ## Features
 
@@ -18,7 +19,7 @@ Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interf
 - **MAVLink Interface** - GPS, battery, and system time forwarding to ArduPilot Navigator via USB
 - **Battery Monitoring** - Blue Robotics PSM via analog inputs (GPIO11/12)
 - **NeoPixel Status Display** - 30 LED status indicators with recovery strobe mode
-- **Relay Control** - GPIO4 payload-power management relay
+- **Relay Control** - GPIO4 normally-closed payload relay, or optional Pololu 2813 pulses
 - **Safety Monitoring** - Low voltage, leak, and heartbeat recovery diagnostics
 
 ### Advanced Features
@@ -39,7 +40,7 @@ Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interf
 2. **ArduPilot Navigator** - Connected via USB (Serial, 57600 baud)
 3. **NeoPixel LED Strip** - 30 LEDs connected to GPIO32
 4. **Blue Robotics PSM** - Analog inputs: GPIO11 (voltage), GPIO12 (current)
-5. **Payload-power relay** (GPIO4): Power management for nonessential systems
+5. **Payload power** — default: normally-closed relay on GPIO4. Optional: Pololu 2813 (`pio run -e pololu`)
 6. **Navigator release relay**: Ballast release; not connected to the AGT
 
 ### Pin Assignments
@@ -47,8 +48,10 @@ Comprehensive firmware for the SparkFun Artemis Global Tracker with multi-interf
 | Function | Pin | Description |
 |----------|-----|-------------|
 | NeoPixel Data | GPIO32 | WS2812 LED strip control |
-| Payload power | GPIO4 | Power management relay |
-| GPIO35 | Unused | Do not connect the ballast release |
+| Payload power (default) | GPIO4 | NC relay coil, active high. LOW or floating = payload on |
+| Pololu ON (`pololu` build) | GPIO35 (AD35) | Active-high pulse, then idle low. Not a release output |
+| Pololu OFF (`pololu` build) | GPIO4 | Active-high pulse, then idle low. Same pad as the NC relay coil |
+| GPIO35 (default build) | Unused | Do not connect the ballast release |
 | Meshtastic TX | D39 (J10 pin 1) | NMEA to RAK4603 J10 RX |
 | Meshtastic RX | D40 (J10 pin 2) | From RAK4603 J10 TX (optional) |
 | MAVLink | USB Serial | To/from Navigator (57600 baud) |
@@ -96,6 +99,15 @@ There is also a `selftest` build environment for isolated hardware testing:
 ```bash
 pio run -e selftest -t upload
 ```
+
+The default build drives the normally-closed GPIO4 relay. Boards wired to a
+Pololu 2813 use the `pololu` environment instead:
+
+```bash
+pio run -e pololu -t upload
+```
+
+`no-relays` still tracks payload-power state without driving either pin.
 
 ## Configuration
 
@@ -310,7 +322,16 @@ The AGT receives and processes:
 
 ### Release Relay Not Firing
 - Diagnose the Navigator relay configuration and Lua mission command.
-- Confirm the release is not connected to AGT GPIO35.
+- Confirm the release is not connected to AGT GPIO35. GPIO35 is the Pololu ON pulse only in the `pololu` build; it is never a release output.
+
+### Pololu 2813 payload switch
+- Build and flash the `pololu` environment. The default firmware image still drives GPIO4 as an NC relay coil and will not pulse the Pololu.
+- Wire ON to GPIO35, OFF to GPIO4, and GND to AGT GND. Leave CTRL unconnected.
+- Both AGT outputs idle low. Startup pulses ON for `PAYLOAD_POWER_PULSE_MS` (100 ms). Surface cutoff pulses OFF the same way.
+- The Pololu latch retains state across an AGT USB reset or firmware flash if Pololu VIN remains continuously powered.
+- The Pololu typically defaults OFF after its own VIN is removed and reapplied.
+- Firmware startup pulses ON. As with the current NC relay, an AGT reboot after surface cutoff restores payload power.
+- There is no hardware readback confirming the Pololu’s physical state. `RelayController_getPowerManagement()` is the last commanded state.
 
 ## File Structure
 
@@ -350,7 +371,7 @@ Doris-AGT-Firmware/
 │   └── meshtastic/                 # Meshtastic protobuf stubs
 ├── utils/
 │   └── SoftwareSerial.*            # SoftwareSerial for Meshtastic NMEA
-├── platformio.ini                  # PlatformIO configuration (2 environments)
+├── platformio.ini                  # PlatformIO configuration (default, pololu, no-relays, selftest, native)
 └── README_FIRMWARE.md              # This file
 ```
 

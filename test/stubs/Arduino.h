@@ -23,11 +23,25 @@ static inline unsigned long millis() { return _stub_millis_value; }
 static inline void stub_set_millis(unsigned long v) { _stub_millis_value = v; }
 static inline void stub_advance_millis(unsigned long delta) { _stub_millis_value += delta; }
 
-static inline void delay(unsigned long) {}
+typedef void (*stub_pin_write_fn)(uint8_t pin, uint8_t val);
+typedef void (*stub_pin_mode_fn)(uint8_t pin, uint8_t mode);
+typedef void (*stub_delay_fn)(unsigned long ms);
+
+static stub_pin_write_fn stub_digital_write_hook = 0;
+static stub_pin_mode_fn stub_pin_mode_hook = 0;
+static stub_delay_fn stub_delay_hook = 0;
+
+static inline void delay(unsigned long ms) {
+    if (stub_delay_hook) stub_delay_hook(ms);
+}
 static inline void delayMicroseconds(unsigned int) {}
 
-static inline void pinMode(uint8_t, uint8_t) {}
-static inline void digitalWrite(uint8_t, uint8_t) {}
+static inline void pinMode(uint8_t pin, uint8_t mode) {
+    if (stub_pin_mode_hook) stub_pin_mode_hook(pin, mode);
+}
+static inline void digitalWrite(uint8_t pin, uint8_t val) {
+    if (stub_digital_write_hook) stub_digital_write_hook(pin, val);
+}
 static inline int  digitalRead(uint8_t) { return 0; }
 static inline int  analogRead(uint8_t) { return 0; }
 static inline void analogWrite(uint8_t, int) {}

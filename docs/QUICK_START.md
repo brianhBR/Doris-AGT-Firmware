@@ -26,9 +26,10 @@
    - Common GND
    - PSM powered from battery sense side
 
-5. **AGT payload-power relay**
-   - Control → GPIO4 (Navigator/Pi/camera/lights power)
-   - Connect ballast release only to the Navigator relay; AGT GPIO35 is unused.
+5. **AGT payload power**
+   - Default: relay control → GPIO4 (Navigator/Pi/camera/lights power), NC contact
+   - Pololu 2813 (`pio run -e pololu`): ON → GPIO35, OFF → GPIO4, CTRL unconnected
+   - Connect ballast release only to the Navigator relay. GPIO35 is not a release output.
 
 ### Power Supply
 
@@ -205,7 +206,7 @@ reset
 | Meshtastic no position | Check D39→RAK J10 RX wiring, `mesh_test_gps`, baud 9600 |
 | No NeoPixels | Check GPIO32 connection, external 5V power supply |
 | PSM reads zero | Check GPIO11/12 analog connections, `enable_psm`, `save` |
-| Relay not working | Check GPIO4/35, verify active high, check relay coil power |
+| Payload power not switching | Default build: GPIO4 NC relay, coil high = off. `pololu` build: GPIO35 ON pulse, GPIO4 OFF pulse, both idle low |
 
 ## 7. Monitoring and Debugging
 

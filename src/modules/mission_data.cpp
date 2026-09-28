@@ -87,7 +87,10 @@ void MissionData_update_autopilot_state(uint8_t mav_state, uint8_t base_mode) {
 }
 
 bool MissionData_isArmed(void) {
-    return data.armed;
+    // Last HEARTBEAT armed bit is sticky in RAM. Green READY must not
+    // survive a dead companion — require a live link (same 5 s window as
+    // MissionData_isPiConnected).
+    return data.armed && MissionData_isPiConnected();
 }
 
 void MissionData_update_sensor_health(uint32_t enabled, uint32_t health) {

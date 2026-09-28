@@ -147,12 +147,39 @@
   surface qualification, BlueOS `PWR_ACK`, and the final grace period.
 - AGT boot/reset always drives the powered state.
 
+### 7b. Pololu 2813 (optional `pololu` build)
+
+Flash `pio run -e pololu`. Do not use this wiring with the default image:
+that image holds GPIO4 as an NC relay coil.
+
+| Pololu 2813 | AGT Pin | Signal | Notes |
+|-------------|---------|--------|-------|
+| ON | GPIO35 (AD35) | Active-high pulse | Idle low. SPI header breakout, no onboard load |
+| OFF | GPIO4 (D4) | Active-high pulse | Idle low. Same pad as the legacy coil |
+| GND | GND | Ground | |
+| CTRL | — | Do not connect | Leave floating |
+| VIN / VOUT | Payload supply | Switched power | Not an AGT GPIO |
+
+Pulse width is `PAYLOAD_POWER_PULSE_MS` (100 ms). A level above 1 V registers;
+the AGT drives 3.3 V. The same surface handshake decides when to pulse OFF.
+Entering `RECOVERY` alone does not cut power.
+
+- The Pololu latch retains state across an AGT USB reset or firmware flash if Pololu VIN remains continuously powered.
+- The Pololu typically defaults OFF after its own VIN is removed and reapplied.
+- Firmware startup pulses ON.
+- As with the current NC relay, an AGT reboot after surface cutoff will restore payload power.
+- There is no hardware readback confirming the Pololu's physical state. The firmware reports the last commanded state only.
+
+An AGT reset while the Pololu is already ON pulses ON again and does not pulse
+OFF. Both outputs are latched low before they are configured as outputs so
+reset code cannot glitch GPIO4 high.
+
 ### 8. Release Relay (Navigator Only)
 
 Connect the electrolytic/galvanic ballast release only to the Navigator relay
 output configured by the Doris frame. Do not connect a release relay input to
-AGT GPIO35. AGT firmware neither configures nor drives GPIO35 and does not
-mirror Lua's `RELAY` command.
+AGT GPIO35. The default build does not drive GPIO35. The `pololu` build drives
+it only as the payload ON pulse. Neither build mirrors Lua's `RELAY` command.
 
 ## Power System
 
@@ -212,7 +239,7 @@ IMPORTANT NOTES:
 
 | GPIO | Function | Direction | Notes |
 |------|----------|-----------|-------|
-| 4 | Relay 1 Control | Output | Power management |
+| 4 | Payload power | Output | Default: NC relay coil. `pololu` build: OFF pulse, idle low |
 | 8 | GPS SCL | I2C | Built-in |
 | 9 | GPS SDA | I2C | Built-in |
 | 10 | Geofence Alert | Input | From GPS |
@@ -230,7 +257,7 @@ IMPORTANT NOTES:
 | 28 | Supercap PGOOD | Input | Charge status |
 | 32 | NeoPixel Data | Output | LED strip |
 | 34 | Bus Volt Enable | Output | Voltage monitor |
-| 35 | Relay 2 Control | Output | Release relay |
+| 35 | Pololu ON, or unused | Output | `pololu` build only. Default build leaves it unconfigured. Not a release output |
 | 39 | Meshtastic TX | SoftwareSerial | D39 on J10 (NMEA GPS out) |
 | 40 | Meshtastic RX | SoftwareSerial | D40 on J10 (optional input) |
 | 41 | Iridium Ring | Input | Ring indicator |

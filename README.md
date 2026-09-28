@@ -41,10 +41,11 @@ backstop carries no GPS term: acquisition after surfacing has taken as long as
 ### Navigator release and AGT surface power
 
 Lua and the Navigator exclusively control ballast release. The AGT ignores
-`NAMED_VALUE_FLOAT RELAY`, never drives GPIO35, does not persist release state,
-and does not advertise itself as a release path. AGT leak, voltage, and
-heartbeat monitors can enter `RECOVERY` for communications but cannot fire the
-physical release.
+`NAMED_VALUE_FLOAT RELAY`, does not persist release state, and does not
+advertise itself as a release path. GPIO35 is not a release output. The
+default build leaves it unused; the Pololu payload-power build pulses it as
+ON. AGT leak, voltage, and heartbeat monitors can enter `RECOVERY` for
+communications but cannot fire the physical release.
 
 Pi power uses a separate fail-closed protocol whose sole surface authority is
 Lua. After a real `DIVING` state, one fresh `STATE=4` report latches
@@ -53,7 +54,9 @@ telemetry and BlueOS keeps recording through that dwell. AGT then repeats
 `PWR_SHDN=1`; BlueOS flushes storage and acknowledges with `PWR_ACK=1` from
 `1/191` until `PWR_STAGE=2` confirms receipt. That ACK latches a 30-second
 electrical grace, so Linux shutdown
-silencing MAVLink cannot cancel GPIO4 cutoff. The first valid post-dive
+silencing MAVLink cannot cancel payload cutoff. On the default build that
+cutoff holds GPIO4 high; the Pololu build pulses OFF and then returns GPIO4
+low. The first valid post-dive
 `STATE=4` latches the sequence; only a power cycle cancels it. Every AGT
 boot/reset restores Pi power.
 
@@ -114,11 +117,18 @@ pattern.
 - WS2812B LED strip — 30 LEDs, RGBW, external 5 V
 
 ### Relays
-- **AGT payload-power relay** (GPIO4) — controls Navigator/Pi, camera, lights.
-  Wired through **NC**: coil OFF = devices powered (safe default through MCU
-  resets). Coil energizes only after qualified surface shutdown + BlueOS ACK.
+- **AGT payload-power relay** (GPIO4) — default build. Controls Navigator/Pi,
+  camera, and lights. Wired through **NC**: coil OFF = devices powered (safe
+  default through MCU resets). Coil energizes only after qualified surface
+  shutdown + BlueOS ACK.
+- **Pololu 2813** — optional `pololu` build, instead of the NC relay. GPIO35
+  pulses ON and GPIO4 pulses OFF; both idle low. CTRL is not connected. The
+  latch holds across an AGT USB reset or firmware flash while Pololu VIN stays
+  up, and typically comes up OFF after VIN is removed and reapplied. Firmware
+  startup pulses ON, so an AGT reboot after surface cutoff restores payload
+  power. There is no hardware readback of the switch.
 - **Navigator release relay** — the only output connected to the ballast
-  release. GPIO35 on the AGT is unused by this firmware.
+  release. GPIO35 is never the release output.
 
 ### Battery
 4S LiPo or equivalent marine battery, sized for seafloor recording + multi-day
@@ -239,8 +249,8 @@ for 10 s the AGT reclaims LED authority.
 | Mode       | Pattern                | When                                            |
 |------------|------------------------|-------------------------------------------------|
 | `STANDBY`  | Slow spinning white    | Booting / waiting for systems                   |
-| `READY`    | Spinning green         | `PRE_DIVE`, mission armed (GPS + autopilot OK)  |
-| `ERROR`    | Pulsing red            | `PRE_DIVE`, not armed — do not deploy           |
+| `READY`    | Spinning green         | `PRE_DIVE`, armed and a HEARTBEAT in the last 5 s |
+| `ERROR`    | Pulsing red            | `PRE_DIVE`, disarmed or companion link lost       |
 | `DIVING`   | Off                    | Underwater, save power                          |
 | `LUA`      | Lua-commanded          | Lua override during dive                        |
 | `RECOVERY` | Flashing white beacon  | Surface recovery strobe                         |
