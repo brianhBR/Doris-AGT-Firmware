@@ -170,6 +170,7 @@ on-board PSM analog interface exists but is disabled by default.
 |----------------------------------|-----------------------------------------------------------------------|
 | `SparkFun_RedBoard_Artemis_ATP`  | Default firmware (`pio run`)                                          |
 | `no-relays`                      | Same firmware with all relay drives no-op'd (bench testing)           |
+| `pololu`                         | Pololu 2813 payload switch (`pio run -e pololu`)                       |
 | `selftest`                       | Standalone GPS + Iridium + NeoPixel verification image                |
 | `native`                         | Host-side unit tests (`pio test -e native`) — no hardware required    |
 
@@ -186,6 +187,9 @@ pio run -t upload
 # Build the no-relay variant
 pio run -e no-relays -t upload
 
+# Pololu 2813 image
+pio run -e pololu -t upload
+
 # Self-test image
 pio run -e selftest -t upload
 
@@ -196,12 +200,12 @@ pio test -e native
 pio device monitor -b 57600
 ```
 
-CI builds the default, `no-relays`, and `selftest` images and publishes their
-`.bin` files as workflow artifacts on every push. Pushing a version tag
-(`vX.Y.Z`) additionally cuts a **GitHub Release** with the default and
-`no-relays` `.bin` files attached (named `doris-agt-vX.Y.Z.bin` /
-`doris-agt-no-relays-vX.Y.Z.bin`). The tag is embedded as `FIRMWARE_VERSION`
-and reported over MAVLink.
+CI builds the default, `no-relays`, `pololu`, and `selftest` images and
+publishes their `.bin` files as workflow artifacts on every push. Pushing a
+version tag (`vX.Y.Z`) additionally cuts a **GitHub Release** with the default,
+`no-relays`, and `pololu` `.bin` files attached (named `doris-agt-vX.Y.Z.bin`,
+`doris-agt-no-relays-vX.Y.Z.bin`, and `doris-agt-pololu-vX.Y.Z.bin`). The tag
+is embedded as `FIRMWARE_VERSION` and reported over MAVLink.
 
 ```bash
 # Cut a release: tag and push

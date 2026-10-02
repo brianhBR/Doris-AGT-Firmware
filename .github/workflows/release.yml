@@ -33,12 +33,16 @@ jobs:
       - name: Build no-relays firmware
         run: pio run -e no-relays
 
+      - name: Build Pololu 2813 firmware
+        run: pio run -e pololu
+
       - name: Stage release binaries
         run: |
           mkdir -p release
           VERSION="${GITHUB_REF_NAME}"
           cp build/doris-agt.bin           "release/doris-agt-${VERSION}.bin"
           cp build/doris-agt-no-relays.bin "release/doris-agt-no-relays-${VERSION}.bin"
+          cp build/doris-agt-pololu.bin    "release/doris-agt-pololu-${VERSION}.bin"
           ls -l release
 
       - name: Publish GitHub Release
@@ -48,4 +52,5 @@ jobs:
           files: |
             release/doris-agt-${{ github.ref_name }}.bin
             release/doris-agt-no-relays-${{ github.ref_name }}.bin
+            release/doris-agt-pololu-${{ github.ref_name }}.bin
           fail_on_unmatched_files: true
